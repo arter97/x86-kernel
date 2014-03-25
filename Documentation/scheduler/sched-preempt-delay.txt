@@ -1,0 +1,121 @@
+=================================
+What is preemption delay feature?
+=================================
+
+There are times when a userspace task is executing a critical section
+which gates a number of other tasks that want access to the same
+critical section. If the task holding the lock that guards this critical
+section is preempted by the scheduler in the middle of its critical
+section because its timeslice is up, scheduler ends up scheduling other
+threads which immediately try to grab the lock to enter the critical
+section. This only results in lots of context changes are tasks wake up
+and go to sleep immediately again. If on the other hand, the original
+task were allowed to run for an extra timeslice, it could have completed
+executing its critical section allowing other tasks to make progress
+when they get scheduled. Preemption delay feature allows a task to
+request scheduler to grant it one extra timeslice, if possible.
+
+
+==================================
+Using the preemption delay feature
+==================================
+
+This feature is enabled in the kernel by setting
+CONFIG_SCHED_PREEMPT_DELAY in kernel configuration. Once this feature is
+enabled, the userspace process communicates with the kernel using a
+4-byte memory location in its address space. It first gives the kernel
+address for this memory location by writing its address to
+/proc/<tgid>/task/<tid>/sched_preempt_delay. This memory location is
+interpreted as a sequence of 4 bytes:
+
+	byte[0] = flag to request preemption delay
+	byte[1] = flag from kernel indicating preemption delay was granted
+	byte[2] = reserved for future use
+	byte[3] = reserved for future use
+
+Task requests a preemption delay by writing a non-zero value to the
+first byte. Scheduler checks this value before preempting the task.
+Scheduler can choose to grant one and only an additional time slice to
+the task for each delay request but this delay is not guaranteed.
+If scheduler does grant an additional timeslice, it will set the flag
+in second byte. Upon completion of the section of code where the task
+wants preemption delay, task should check the second byte. If the flag
+in second byte is set, it should clear this flag and call sched_yield()
+so as to not hog the processor. If a thread was granted additional
+timeslice and it fails to call sched_yield(), scheduler will penalize
+it by denying its next request for additional timeslice. Following sample
+code illustrates the use:
+
+int main()
+{
+	int fd, fsz;
+	unsigned char buf[256];
+	unsigned char preempt_delay[4];
+
+	sprintf(buf, “/proc/%lu/task/%lu/sched_preempt_delay”, getpid(),
+							syscall(SYS_gettid));
+	fd = open(buf, O_RDWR);
+
+	preempt_delay[0] = preempt_delay[1] = 0;
+
+	/* Tell kernel where the flag lives */
+	*(unsigned int **)buf = &preempt_delay;
+	write(fd, buf, sizeof(unsigned int *));
+
+	while (/* some condition is true */) {
+		/* do some work and get ready to enter critical section */
+		preempt_delay[0] = 1;
+		/*
+		 * Obtain lock for critical section
+		 */
+		/*
+		 * critical section
+		 */
+		/*
+		 * Release lock for critical section
+		 */
+		preempt_delay[0] = 0;
+		/* Give the CPU up if required */
+		if (preempt_delay[1]) {
+			preempt_delay[1] = 0;
+			sched_yield();
+		}
+		/* do some more work */
+	}
+	/*
+	 * Tell kernel we are done asking for preemption delay
+	 */
+	*(unsigned int **)buf = 0;
+	write(fd, buf, sizeof(unsigned int *));
+	close(fd);
+}
+
+
+====================
+Scheduler statistics
+====================
+
+Preemption delay features adds a new field to scheduler statictics -
+nr_preempt_delayed. This is a per thread statistic that tracks the
+number of times a thread was granted amnesty from preemption when it
+requested for one. "cat /proc/<pid>/task/<tid>/sched" will list this
+number along with other scheduler statistics.
+
+
+=====
+Notes
+=====
+
+1. /proc/<tgid>/task/<tid>/sched_preempt_delay can be written to only
+   by the thread that corresponds to this file.
+
+2. /proc/<tgid>/task/<tid>/sched_preempt_delay can be written with valid
+   memory address once. To write a new memory address, the previous
+   memory address must be cleared first by writing NULL. Each new
+   memory address requires validation in the kernel and update of
+   pointers. Changing this address too many times creates too much
+   overhead.
+
+2. Reading /proc/<tgid>/task/<tid>/sched_preempt_delay returns the
+   current memory location address thread is using to communicate with
+   the kernel.

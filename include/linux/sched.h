@@ -445,6 +445,7 @@ struct sched_statistics {
 	u64				nr_wakeups_affine_attempts;
 	u64				nr_wakeups_passive;
 	u64				nr_wakeups_idle;
+	u64			nr_preempt_delayed;
 #endif
 };
 
@@ -780,6 +781,13 @@ struct task_struct {
 	unsigned			sched_migrated:1;
 #ifdef CONFIG_PSI
 	unsigned			sched_psi_wake_requeue:1;
+#endif
+#ifdef CONFIG_SCHED_PREEMPT_DELAY
+	struct preempt_delay {
+		u32 __user *delay_req;		/* delay request flag pointer */
+		unsigned char delay_granted:1;	/* currently in delay */
+		unsigned char yield_penalty:1;	/* failure to yield penalty */
+	} sched_preempt_delay;
 #endif
 
 	/* Force alignment to the next boundary: */
@@ -1364,6 +1372,13 @@ struct task_struct {
 	 * Do not put anything below here!
 	 */
 };
+
+#if defined(CONFIG_SCHED_PREEMPT_DELAY) && defined(CONFIG_PROC_FS)
+extern void sched_preempt_delay_show(struct seq_file *m,
+					struct task_struct *task);
+extern void sched_preempt_delay_set(struct task_struct *task,
+					unsigned char *val);
+#endif
 
 static inline struct pid *task_pid(struct task_struct *task)
 {

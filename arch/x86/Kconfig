@@ -1040,6 +1040,18 @@ config SCHED_MC_PRIO
 
 	  If unsure say Y here.
 
+config SCHED_PREEMPT_DELAY
+	def_bool n
+	prompt "Scheduler preemption delay support"
+	depends on PROC_FS && PREEMPT_NOTIFIERS
+	help
+	  Say Y here if you want to be able to delay scheduler preemption
+	  when possible by setting a flag in a memory location after
+	  sharing the address of this location by writing to
+	  /proc/<tgid>/task/<tid>/sched_preempt_delay. See
+	  Documentation/scheduler/sched-preempt-delay.txt for details.
+	  If in doubt, say "N".
+
 config UP_LATE_INIT
 	def_bool y
 	depends on !SMP && X86_LOCAL_APIC

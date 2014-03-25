@@ -6095,6 +6095,14 @@ static void do_sched_yield(void)
 
 	rq = this_rq_lock_irq(&rf);
 
+#ifdef CONFIG_SCHED_PREEMPT_DELAY
+	/*
+	 * Clear the penalty flag for current task to reward it for
+	 * palying by the rules
+	 */
+	current->sched_preempt_delay.yield_penalty = 0;
+#endif
+
 	schedstat_inc(rq->yld_count);
 	current->sched_class->yield_task(rq);
 

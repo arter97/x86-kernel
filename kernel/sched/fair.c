@@ -506,6 +506,119 @@ find_matching_se(struct sched_entity **se, struct sched_entity **pse)
 
 #endif	/* CONFIG_FAIR_GROUP_SCHED */
 
+#ifdef CONFIG_SCHED_PREEMPT_DELAY
+/*
+ * delay_resched_curr(): Check if the task about to be preempted has
+ *	requested an additional time slice. If it has, grant it additional
+ *	timeslice once.
+ */
+static void
+delay_resched_curr(struct rq *rq)
+{
+	struct task_struct *curr = rq->curr;
+	struct sched_entity *se;
+	int cpu = cpu_of(rq);
+	u32 __user *delay_req;
+	unsigned int delay_req_flag;
+	unsigned char *delay_flag;
+
+	/*
+	 * Check if task is using pre-emption delay feature. If address
+	 * for preemption delay request flag is not set, this task is
+	 * not using preemption delay feature, we can reschedule without
+	 * any delay
+	 */
+	if (cpu != smp_processor_id())
+		goto resched_now;
+
+	delay_req = curr->sched_preempt_delay.delay_req;
+
+	if (delay_req == NULL)
+		goto resched_now;
+
+	/*
+	 * Pre-emption delay will  be granted only once. If this task
+	 * has already been granted delay, rechedule now
+	 */
+	if (curr->sched_preempt_delay.delay_granted) {
+		curr->sched_preempt_delay.delay_granted = 0;
+		goto resched_now;
+	}
+
+	/*
+	 * Get the value of preemption delay request flag from userspace.
+	 * Task had already passed us the address where the flag is stored
+	 * in userspace earlier. This flag is just like the PROCESS_PRIVATE
+	 * futex, leverage the futex code here to read the flag. If there
+	 * is a page fault accessing this flag in userspace, that means
+	 * userspace has not touched this flag recently and we can
+	 * assume no preemption delay is needed.
+	 *
+	 * If task is not requesting additional timeslice, resched now
+	 */
+	if (delay_req) {
+		int ret;
+
+		pagefault_disable();
+		ret = __copy_from_user_inatomic(&delay_req_flag, delay_req,
+				sizeof(u32));
+		pagefault_enable();
+		delay_flag = (char*)&delay_req_flag;
+		if (ret || !delay_flag[0])
+			goto resched_now;
+	} else {
+		goto resched_now;
+	}
+
+	/*
+	 * Current thread has requested preemption delay and has not
+	 * been granted an extension yet. If this thread failed to yield
+	 * processor after being granted amnesty last time, penalize it
+	 * by not granting this delay request, otherwise give it an extra
+	 * timeslice.
+	 */
+	if (curr->sched_preempt_delay.yield_penalty) {
+		curr->sched_preempt_delay.yield_penalty = 0;
+		goto resched_now;
+	}
+
+grant_delay:
+	se = &curr->se;
+	curr->sched_preempt_delay.delay_granted = 1;
+
+	/*
+	 * Set the penalty flag for failing to yield the processor after
+	 * being granted immunity. This flag will be cleared in
+	 * sched_yield() if the thread indeed calls sched_yield
+	 */
+	curr->sched_preempt_delay.yield_penalty = 1;
+
+	/*
+	 * Let the thread know it got amnesty and it should call
+	 * sched_yield() when it is done to avoid penalty next time
+	 * it wants amnesty. We need to write to userspace location.
+	 * Since we just read from this location, chances are extremley
+	 * low we might page fault. If we do page fault, we will ignore
+	 * it and accept the cost of failed write in form of unnecessary
+	 * penalty for userspace task for not yielding processor.
+	 * This is a highly unlikely scenario.
+	 */
+	delay_flag[0] = 0;
+	delay_flag[1] = 1;
+	pagefault_disable();
+	__copy_to_user_inatomic(delay_req, &delay_req_flag, sizeof(u32));
+	pagefault_enable();
+
+	schedstat_inc(se.statistics.nr_preempt_delayed);
+	return;
+
+resched_now:
+	resched_curr(rq);
+}
+#else
+#define delay_resched_curr(curr) resched_curr(curr)
+#endif /* CONFIG_SCHED_PREEMPT_DELAY */
+
 static __always_inline
 void account_cfs_rq_runtime(struct cfs_rq *cfs_rq, u64 delta_exec);
 
@@ -4391,7 +4504,7 @@ check_preempt_tick(struct cfs_rq *cfs_rq, struct sched_entity *curr)
 	ideal_runtime = sched_slice(cfs_rq, curr);
 	delta_exec = curr->sum_exec_runtime - curr->prev_sum_exec_runtime;
 	if (delta_exec > ideal_runtime) {
-		resched_curr(rq_of(cfs_rq));
+		delay_resched_curr(rq_of(cfs_rq));
 		/*
 		 * The current task ran long enough, ensure it doesn't get
 		 * re-elected due to buddy favours.
@@ -4415,7 +4528,7 @@ check_preempt_tick(struct cfs_rq *cfs_rq, struct sched_entity *curr)
 		return;
 
 	if (delta > ideal_runtime)
-		resched_curr(rq_of(cfs_rq));
+		delay_resched_curr(rq_of(cfs_rq));
 }
 
 static void
@@ -7011,7 +7124,7 @@ static void check_preempt_wakeup(struct rq *rq, struct task_struct *p, int wake_
 	return;
 
 preempt:
-	resched_curr(rq);
+	delay_resched_curr(rq);
 	/*
 	 * Only set the backward buddy when the current task is still
 	 * on the rq. This can happen when a wakeup gets interleaved

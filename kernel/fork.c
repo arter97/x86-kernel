@@ -2486,6 +2486,11 @@ pid_t kernel_clone(struct kernel_clone_args *args)
 		init_completion(&vfork);
 		get_task_struct(p);
 	}
+#if CONFIG_SCHED_PREEMPT_DELAY
+		p->sched_preempt_delay.delay_req = NULL;
+		p->sched_preempt_delay.delay_granted = 0;
+		p->sched_preempt_delay.yield_penalty = 0;
+#endif
 
 	wake_up_new_task(p);
 

@@ -1482,6 +1482,92 @@ static const struct file_operations proc_pid_sched_operations = {
 
 #endif
 
+#ifdef CONFIG_SCHED_PREEMPT_DELAY
+static int
+tid_preempt_delay_show(struct seq_file *m, void *v)
+{
+	struct inode *inode = m->private;
+	struct task_struct *task = get_proc_task(inode);
+	unsigned char *delay_req;
+
+	if (!task)
+		return -ENOENT;
+
+	delay_req = (unsigned char *)task->sched_preempt_delay.delay_req;
+	seq_printf(m, "0x%-p\n", delay_req);
+
+	put_task_struct(task);
+	return 0;
+}
+
+static ssize_t
+tid_preempt_delay_write(struct file *file, const char __user *buf,
+			  size_t count, loff_t *offset)
+{
+	struct inode *inode = file_inode(file);
+	struct task_struct *task = get_proc_task(inode);
+	u32 __user *delay_req;
+	int retval;
+
+	if (!task) {
+		retval = -ENOENT;
+		goto out;
+	}
+
+	/*
+	 * A thread can write only to its corresponding preempt_delay
+	 * proc file
+	 */
+	if (current != task) {
+		retval =  -EPERM;
+		goto out;
+	}
+
+	delay_req = *(u32 __user **)buf;
+
+	/*
+	 * Do not allow write if pointer is currently set
+	 */
+	if (task->sched_preempt_delay.delay_req && (delay_req != NULL)) {
+		retval = -EINVAL;
+		goto out;
+	}
+
+	/*
+	 * Validate the pointer.
+	 */
+	if (unlikely(!access_ok(delay_req, sizeof(u32)))) {
+		retval = -EFAULT;
+		goto out;
+	}
+
+	task->sched_preempt_delay.delay_req = delay_req;
+
+	/* zero out flags */
+	put_user(0, delay_req);
+
+	retval = count;
+
+out:
+	put_task_struct(task);
+	return retval;
+}
+
+static int
+tid_preempt_delay_open(struct inode *inode, struct file *filp)
+{
+	return single_open(filp, tid_preempt_delay_show, inode);
+}
+
+static const struct file_operations proc_tid_preempt_delay_ops = {
+	.open		= tid_preempt_delay_open,
+	.read		= seq_read,
+	.write		= tid_preempt_delay_write,
+	.llseek		= seq_lseek,
+	.release	= single_release,
+};
+#endif
+
 #ifdef CONFIG_SCHED_AUTOGROUP
 /*
  * Print out autogroup related information:
@@ -3591,6 +3677,9 @@ static const struct pid_entry tid_base_stuff[] = {
 #endif
 #ifdef CONFIG_PROC_PID_ARCH_STATUS
 	ONE("arch_status", S_IRUGO, proc_pid_arch_status),
+#endif
+#ifdef CONFIG_SCHED_PREEMPT_DELAY
+	REG("sched_preempt_delay", S_IRUGO|S_IWUSR, proc_tid_preempt_delay_ops),
 #endif
 };
 

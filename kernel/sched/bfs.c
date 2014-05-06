@@ -142,14 +142,22 @@ void print_scheduler_version(void)
  * Value is in ms and set to a minimum of 6ms. Scales with number of cpus.
  * Tunable via /proc interface.
  */
+#ifdef CONFIG_ZEN_INTERACTIVE
+int rr_interval __read_mostly = 3;
+#else
 int rr_interval __read_mostly = 6;
+#endif
 
 /*
  * sched_iso_cpu - sysctl which determines the cpu percentage SCHED_ISO tasks
  * are allowed to run five seconds as real time tasks. This is the total over
  * all online cpus.
  */
+#ifdef CONFIG_ZEN_INTERACTIVE
+int sched_iso_cpu __read_mostly = 25;
+#else
 int sched_iso_cpu __read_mostly = 70;
+#endif
 
 /*
  * The relative length of deadline for each priority(nice) level.

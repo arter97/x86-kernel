@@ -277,6 +277,7 @@ int check_acl(struct inode *inode, int mask)
 
 	return -EAGAIN;
 }
+EXPORT_SYMBOL(check_acl);
 
 /*
  * This does the basic permission checking

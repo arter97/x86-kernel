@@ -1,8 +1,8 @@
 VERSION = 3
 PATCHLEVEL = 18
 SUBLEVEL = 0
-EXTRAVERSION =
-NAME = Diseased Newt
+EXTRAVERSION = -zen
+NAME = The Holey Teapot
 
 # *DOCUMENTATION*
 # To see a list of typical targets execute "make help"

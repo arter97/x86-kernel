@@ -3409,10 +3409,9 @@ static int ata_eh_maybe_retry_flush(struct ata_device *dev)
  *	@policy: the link power management policy
  *	@r_failed_dev: out parameter for failed device
  *
- *	Enable SATA Interface power management.  This will enable
- *	Device Interface Power Management (DIPM) for min_power
- * 	policy, and then call driver specific callbacks for
- *	enabling Host Initiated Power management.
+ *	Enable SATA Interface power management.  This will enable Device
+ *	Interface Power Management (DIPM) and then call driver specific
+ *	callbacks for enabling Host Initiated Power management.
  *
  *	LOCKING:
  *	EH context.
@@ -3437,10 +3436,8 @@ static int ata_eh_set_lpm(struct ata_link *link, enum ata_lpm_policy policy,
 		return 0;
 
 	/*
-	 * DIPM is enabled only for MIN_POWER and FIRMWARE as some devices
-	 * misbehave when the host NACKs transition to SLUMBER.  Order
-	 * device and link configurations such that the host always allows
-	 * DIPM requests.
+	 * Order device and link configurations such that the host always
+	 * allows DIPM requests.
 	 */
 	ata_for_each_dev(dev, link, ENABLED) {
 		bool hipm = ata_id_has_hipm(dev->id);
@@ -3458,7 +3455,7 @@ static int ata_eh_set_lpm(struct ata_link *link, enum ata_lpm_policy policy,
 			hints &= ~ATA_LPM_HIPM;
 
 		/* disable DIPM before changing link config */
-		if (policy != ATA_LPM_MIN_POWER && dipm) {
+		if (policy < ATA_LPM_MED_POWER && dipm) {
 			err_mask = ata_dev_set_feature(dev,
 					SETFEATURES_SATA_DISABLE, SATA_DIPM);
 			if (err_mask && err_mask != AC_ERR_DEV) {
@@ -3499,11 +3496,12 @@ static int ata_eh_set_lpm(struct ata_link *link, enum ata_lpm_policy policy,
 	if (ap && ap->slave_link)
 		ap->slave_link->lpm_policy = policy;
 
-	/* host config updated, enable DIPM if transitioning to MIN_POWER or
-	 * FIRMWARE when enabled by firmware
+	/*
+	 * host config updated, enable DIPM if transitioning to MED_POWER,
+	 * MIN_POWER or FIRMWARE when enabled by firmware
 	 */
 	ata_for_each_dev(dev, link, ENABLED) {
-		if ((policy == ATA_LPM_MIN_POWER && !no_dipm &&
+		if ((policy >= ATA_LPM_MED_POWER && !no_dipm &&
 		     ata_id_has_dipm(dev->id)) ||
 		    (policy == ATA_LPM_FIRMWARE && dev->init_dipm == 1)) {
 			err_mask = ata_dev_set_feature(dev,

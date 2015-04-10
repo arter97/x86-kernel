@@ -698,6 +698,18 @@ static void ahci_power_up(struct ata_port *ap)
 	writel(cmd | PORT_CMD_ICC_ACTIVE, port_mmio + PORT_CMD);
 }
 
+/*
+ * We have four configration policies:
+ *
+ * MAX_POWER	all AHCI power management features are disabled
+ * FIRMWARE	AHCI power management features are programmed to the state
+ *		initially programmed by the system firmware
+ * MED_POWER	AHCI power management features are programmed as described in
+ *		http://www.intel.com/content/dam/doc/reference-guide/sata-devices-implementation-recommendations.pdf
+ *		ie ALPM is enabled, ALPE is disabled, aggressive device sleep
+ *		is enabled if the system firmware had enabled it
+ * MIN_POWER	All AHCI power management features are enabled
+ */
 static int ahci_set_lpm(struct ata_link *link, enum ata_lpm_policy policy,
 			unsigned int hints)
 {
@@ -764,6 +776,7 @@ static int ahci_set_lpm(struct ata_link *link, enum ata_lpm_policy policy,
 			ahci_set_aggressive_devslp(ap, true);
 			break;
 		case ATA_LPM_FIRMWARE:
+		case ATA_LPM_MED_POWER:
 			ahci_set_aggressive_devslp(ap, ppriv->init_devslp);
 			break;
 		default:

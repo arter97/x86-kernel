@@ -703,6 +703,7 @@ static int ahci_set_lpm(struct ata_link *link, enum ata_lpm_policy policy,
 {
 	struct ata_port *ap = link->ap;
 	struct ahci_host_priv *hpriv = ap->host->private_data;
+	struct ahci_port_priv *ppriv = ap->private_data;
 	struct ahci_port_priv *pp = ap->private_data;
 	void __iomem *port_mmio = ahci_port_base(ap);
 
@@ -723,10 +724,10 @@ static int ahci_set_lpm(struct ata_link *link, enum ata_lpm_policy policy,
 
 	if (hpriv->cap & HOST_CAP_ALPM) {
 		u32 cmd = readl(port_mmio + PORT_CMD);
+		if (!(hints & ATA_LPM_WAKE_ONLY))
+			cmd &= ~(PORT_CMD_ASP | PORT_CMD_ALPE);
 
 		if (policy == ATA_LPM_MAX_POWER || !(hints & ATA_LPM_HIPM)) {
-			if (!(hints & ATA_LPM_WAKE_ONLY))
-				cmd &= ~(PORT_CMD_ASP | PORT_CMD_ALPE);
 			cmd |= PORT_CMD_ICC_ACTIVE;
 
 			writel(cmd, port_mmio + PORT_CMD);
@@ -737,6 +738,13 @@ static int ahci_set_lpm(struct ata_link *link, enum ata_lpm_policy policy,
 
 			if (hints & ATA_LPM_WAKE_ONLY)
 				return 0;
+		} else if (policy == ATA_LPM_FIRMWARE) {
+			if (ppriv->init_alpe)
+				cmd |= PORT_CMD_ALPE;
+			if (ppriv->init_asp)
+				cmd |= PORT_CMD_ASP;
+
+			writel(cmd, port_mmio + PORT_CMD);
 		} else {
 			cmd |= PORT_CMD_ALPE;
 			if (policy == ATA_LPM_MIN_POWER)
@@ -751,10 +759,17 @@ static int ahci_set_lpm(struct ata_link *link, enum ata_lpm_policy policy,
 	if ((hpriv->cap2 & HOST_CAP2_SDS) &&
 	    (hpriv->cap2 & HOST_CAP2_SADM) &&
 	    (link->device->flags & ATA_DFLAG_DEVSLP)) {
-		if (policy == ATA_LPM_MIN_POWER)
+		switch (policy) {
+		case ATA_LPM_MIN_POWER:
 			ahci_set_aggressive_devslp(ap, true);
-		else
+			break;
+		case ATA_LPM_FIRMWARE:
+			ahci_set_aggressive_devslp(ap, ppriv->init_devslp);
+			break;
+		default:
 			ahci_set_aggressive_devslp(ap, false);
+			break;
+		}
 	}
 
 	if (policy == ATA_LPM_MAX_POWER) {
@@ -2028,6 +2043,7 @@ static void ahci_post_internal_cmd(struct ata_queued_cmd *qc)
 static void ahci_set_aggressive_devslp(struct ata_port *ap, bool sleep)
 {
 	struct ahci_host_priv *hpriv = ap->host->private_data;
+	struct ahci_port_priv *ppriv = ap->private_data;
 	void __iomem *port_mmio = ahci_port_base(ap);
 	struct ata_device *dev = ap->link.device;
 	u32 devslp, dm, dito, mdat, deto;
@@ -2063,26 +2079,32 @@ static void ahci_set_aggressive_devslp(struct ata_port *ap, bool sleep)
 	if (rc)
 		return;
 
-	dm = (devslp & PORT_DEVSLP_DM_MASK) >> PORT_DEVSLP_DM_OFFSET;
-	dito = devslp_idle_timeout / (dm + 1);
-	if (dito > 0x3ff)
-		dito = 0x3ff;
-
-	/* Use the nominal value 10 ms if the read MDAT is zero,
-	 * the nominal value of DETO is 20 ms.
-	 */
-	if (dev->devslp_timing[ATA_LOG_DEVSLP_VALID] &
-	    ATA_LOG_DEVSLP_VALID_MASK) {
-		mdat = dev->devslp_timing[ATA_LOG_DEVSLP_MDAT] &
-		       ATA_LOG_DEVSLP_MDAT_MASK;
-		if (!mdat)
-			mdat = 10;
-		deto = dev->devslp_timing[ATA_LOG_DEVSLP_DETO];
-		if (!deto)
-			deto = 20;
+	if (ppriv->init_devslp) {
+		dito = ppriv->init_dito;
+		deto = ppriv->init_deto;
+		mdat = ppriv->init_mdat;
 	} else {
-		mdat = 10;
-		deto = 20;
+		dm = (devslp & PORT_DEVSLP_DM_MASK) >> PORT_DEVSLP_DM_OFFSET;
+		dito = devslp_idle_timeout / (dm + 1);
+		if (dito > 0x3ff)
+			dito = 0x3ff;
+
+		/* Use the nominal value 10 ms if the read MDAT is zero,
+		 * the nominal value of DETO is 20 ms.
+		 */
+		if (dev->devslp_timing[ATA_LOG_DEVSLP_VALID] &
+		    ATA_LOG_DEVSLP_VALID_MASK) {
+			mdat = dev->devslp_timing[ATA_LOG_DEVSLP_MDAT] &
+				ATA_LOG_DEVSLP_MDAT_MASK;
+			if (!mdat)
+				mdat = 10;
+			deto = dev->devslp_timing[ATA_LOG_DEVSLP_DETO];
+			if (!deto)
+				deto = 20;
+		} else {
+			mdat = 10;
+			deto = 20;
+		}
 	}
 
 	devslp |= ((dito << PORT_DEVSLP_DITO_OFFSET) |

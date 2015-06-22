@@ -893,6 +893,12 @@ config HID_SENSOR_CUSTOM_SENSOR
 	  standard sensors.
 	  Select this config option for custom/generic sensor support.
 
+config HID_HUIONTABLET
+	tristate "Huion tablet"	
+	depends on USB_HID
+	---help---
+	Support for Huion tablet.
+
 endmenu
 
 endif # HID

@@ -3351,7 +3351,7 @@ static void serial8250_console_putchar(struct uart_port *port, int ch)
  *	The console_lock must be held when we get here.
  */
 static void serial8250_console_write(struct uart_8250_port *up, const char *s,
-				     unsigned int count)
+				     unsigned int count, unsigned int loglevel)
 {
 	struct uart_port *port = &up->port;
 	unsigned long flags;
@@ -3425,11 +3425,11 @@ static void serial8250_console_write(struct uart_8250_port *up, const char *s,
 }
 
 static void univ8250_console_write(struct console *co, const char *s,
-				   unsigned int count)
+				   unsigned int count, unsigned int loglevel)
 {
 	struct uart_8250_port *up = &serial8250_ports[co->index];
 
-	serial8250_console_write(up, s, count);
+	serial8250_console_write(up, s, count, loglevel);
 }
 
 static unsigned int probe_baud(struct uart_port *port)

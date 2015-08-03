@@ -612,10 +612,11 @@ re_read:
 	daemon_sleep = le32_to_cpu(sb->daemon_sleep) * HZ;
 	write_behind = le32_to_cpu(sb->write_behind);
 	sectors_reserved = le32_to_cpu(sb->sectors_reserved);
-	/* XXX: This is an ugly hack to ensure that we don't use clustering
-	   in case dm-raid is in use and the nodes written in bitmap_sb
-	   is erroneous.
-	*/
+	/* XXX: This is a hack to ensure that we don't use clustering
+	 *  in case:
+	 *	- dm-raid is in use and
+	 *	- the nodes written in bitmap_sb is erroneous.
+	 */
 	if (!bitmap->mddev->sync_super) {
 		nodes = le32_to_cpu(sb->nodes);
 		strlcpy(bitmap->mddev->bitmap_info.cluster_name,

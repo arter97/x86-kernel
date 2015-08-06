@@ -52,7 +52,8 @@
 #define KDBUS_CONN_ACTIVE_BIAS	(INT_MIN + 2)
 #define KDBUS_CONN_ACTIVE_NEW	(INT_MIN + 1)
 
-static struct kdbus_conn *kdbus_conn_new(struct kdbus_ep *ep, bool privileged,
+static struct kdbus_conn *kdbus_conn_new(struct kdbus_ep *ep,
+					 struct file *file,
 					 struct kdbus_cmd_hello *hello,
 					 const char *name,
 					 const struct kdbus_creds *creds,
@@ -72,6 +73,8 @@ static struct kdbus_conn *kdbus_conn_new(struct kdbus_ep *ep, bool privileged,
 	bool is_policy_holder;
 	bool is_activator;
 	bool is_monitor;
+	bool privileged;
+	bool owner;
 	struct kvec kvec;
 	int ret;
 
@@ -80,6 +83,9 @@ static struct kdbus_conn *kdbus_conn_new(struct kdbus_ep *ep, bool privileged,
 		u64 type;
 		struct kdbus_bloom_parameter bloom;
 	} bloom_item;
+
+	privileged = kdbus_ep_is_privileged(ep, file);
+	owner = kdbus_ep_is_owner(ep, file);
 
 	is_monitor = hello->flags & KDBUS_HELLO_MONITOR;
 	is_activator = hello->flags & KDBUS_HELLO_ACTIVATOR;
@@ -97,9 +103,9 @@ static struct kdbus_conn *kdbus_conn_new(struct kdbus_ep *ep, bool privileged,
 		return ERR_PTR(-EINVAL);
 	if (is_monitor && ep->user)
 		return ERR_PTR(-EOPNOTSUPP);
-	if (!privileged && (is_activator || is_policy_holder || is_monitor))
+	if (!owner && (is_activator || is_policy_holder || is_monitor))
 		return ERR_PTR(-EPERM);
-	if ((creds || pids || seclabel) && !privileged)
+	if (!owner && (creds || pids || seclabel))
 		return ERR_PTR(-EPERM);
 
 	ret = kdbus_sanitize_attach_flags(hello->attach_flags_send,
@@ -129,12 +135,13 @@ static struct kdbus_conn *kdbus_conn_new(struct kdbus_ep *ep, bool privileged,
 	atomic_set(&conn->request_count, 0);
 	atomic_set(&conn->lost_count, 0);
 	INIT_DELAYED_WORK(&conn->work, kdbus_reply_list_scan_work);
-	conn->cred = get_current_cred();
+	conn->cred = get_cred(file->f_cred);
 	conn->pid = get_pid(task_pid(current));
 	get_fs_root(current->fs, &conn->root_path);
 	init_waitqueue_head(&conn->wait);
 	kdbus_queue_init(&conn->queue);
 	conn->privileged = privileged;
+	conn->owner = owner;
 	conn->ep = kdbus_ep_ref(ep);
 	conn->id = atomic64_inc_return(&bus->domain->last_id);
 	conn->flags = hello->flags;
@@ -214,11 +221,21 @@ static struct kdbus_conn *kdbus_conn_new(struct kdbus_ep *ep, bool privileged,
 	 * Note that limits are always accounted against the real UID, not
 	 * the effective UID (cred->user always points to the accounting of
 	 * cred->uid, not cred->euid).
+	 * In case the caller is privileged, we allow changing the accounting
+	 * to the faked user.
 	 */
 	if (ep->user) {
 		conn->user = kdbus_user_ref(ep->user);
 	} else {
-		conn->user = kdbus_user_lookup(ep->bus->domain, current_uid());
+		kuid_t uid;
+
+		if (conn->meta_fake && uid_valid(conn->meta_fake->uid) &&
+		    conn->privileged)
+			uid = conn->meta_fake->uid;
+		else
+			uid = conn->cred->uid;
+
+		conn->user = kdbus_user_lookup(ep->bus->domain, uid);
 		if (IS_ERR(conn->user)) {
 			ret = PTR_ERR(conn->user);
 			conn->user = NULL;
@@ -1123,7 +1140,7 @@ static int kdbus_conn_reply(struct kdbus_conn *src,
 	mutex_unlock(&dst->lock);
 
 	if (!reply) {
-		ret = -EPERM;
+		ret = -EBADSLT;
 		goto exit;
 	}
 
@@ -1418,7 +1435,7 @@ bool kdbus_conn_policy_own_name(struct kdbus_conn *conn,
 			return false;
 	}
 
-	if (conn->privileged)
+	if (conn->owner)
 		return true;
 
 	res = kdbus_policy_query(&conn->ep->bus->policy_db, conn_creds,
@@ -1448,7 +1465,7 @@ bool kdbus_conn_policy_talk(struct kdbus_conn *conn,
 					 to, KDBUS_POLICY_TALK))
 		return false;
 
-	if (conn->privileged)
+	if (conn->owner)
 		return true;
 	if (uid_eq(conn_creds->euid, to->cred->uid))
 		return true;
@@ -1567,12 +1584,12 @@ bool kdbus_conn_policy_see_notification(struct kdbus_conn *conn,
 /**
  * kdbus_cmd_hello() - handle KDBUS_CMD_HELLO
  * @ep:			Endpoint to operate on
- * @privileged:		Whether the caller is privileged
+ * @file:		File this connection is opened on
  * @argp:		Command payload
  *
  * Return: NULL or newly created connection on success, ERR_PTR on failure.
  */
-struct kdbus_conn *kdbus_cmd_hello(struct kdbus_ep *ep, bool privileged,
+struct kdbus_conn *kdbus_cmd_hello(struct kdbus_ep *ep, struct file *file,
 				   void __user *argp)
 {
 	struct kdbus_cmd_hello *cmd;
@@ -1607,7 +1624,7 @@ struct kdbus_conn *kdbus_cmd_hello(struct kdbus_ep *ep, bool privileged,
 
 	item_name = argv[1].item ? argv[1].item->str : NULL;
 
-	c = kdbus_conn_new(ep, privileged, cmd, item_name,
+	c = kdbus_conn_new(ep, file, cmd, item_name,
 			   argv[2].item ? &argv[2].item->creds : NULL,
 			   argv[3].item ? &argv[3].item->pids : NULL,
 			   argv[4].item ? argv[4].item->str : NULL,

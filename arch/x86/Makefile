@@ -136,7 +136,13 @@ else
                 $(call cc-option,-march=skylake,$(call cc-option,-mtune=skylake))
         cflags-$(CONFIG_MATOM) += $(call cc-option,-march=bonnell) \
                 $(call cc-option,-mtune=bonnell,$(call cc-option,-mtune=generic))
-        cflags-$(CONFIG_GENERIC_CPU) += $(call cc-option,-mtune=generic)
+
+	ifdef CONFIG_MNATIVE
+		cflags-$(CONFIG_MNATIVE) += $(call cc-option,-mtune=native)
+	else
+		cflags-$(CONFIG_GENERIC_CPU) += $(call cc-option,-mtune=generic)
+	endif
+
         KBUILD_CFLAGS += $(cflags-y)
 
         KBUILD_CFLAGS += -mno-red-zone

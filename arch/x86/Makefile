@@ -111,7 +111,13 @@ else
                 $(call cc-option,-march=core2,$(call cc-option,-mtune=generic))
 	cflags-$(CONFIG_MATOM) += $(call cc-option,-march=atom) \
 		$(call cc-option,-mtune=atom,$(call cc-option,-mtune=generic))
-        cflags-$(CONFIG_GENERIC_CPU) += $(call cc-option,-mtune=generic)
+
+	ifdef CONFIG_X86_MARCH_NATIVE
+		cflags-$(CONFIG_X86_MARCH_NATIVE) += $(call cc-option,-mtune=native)
+	else
+		cflags-$(CONFIG_GENERIC_CPU) += $(call cc-option,-mtune=generic)
+	endif
+
         KBUILD_CFLAGS += $(cflags-y)
 
         KBUILD_CFLAGS += -mno-red-zone

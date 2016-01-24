@@ -1,8 +1,8 @@
 VERSION = 4
 PATCHLEVEL = 4
 SUBLEVEL = 0
-EXTRAVERSION =
-NAME = Blurry Fish Butt
+EXTRAVERSION = -zen
+NAME = Bloat Rage
 
 # *DOCUMENTATION*
 # To see a list of typical targets execute "make help"
@@ -1344,6 +1344,7 @@ $(help-board-dirs): help-%:
 %docs: scripts_basic FORCE
 	$(Q)$(MAKE) $(build)=scripts build_docproc build_check-lc_ctype
 	$(Q)$(MAKE) $(build)=Documentation/DocBook $@
+	$(Q)$(MAKE) $(build)=Documentation/kdbus $@
 
 else # KBUILD_EXTMOD
 

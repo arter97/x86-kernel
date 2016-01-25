@@ -1,6 +1,6 @@
 #
 # Automatically generated file; DO NOT EDIT.
-# Linux/x86 4.1.15-zen Kernel Configuration
+# Linux/x86 4.1.16-zen Kernel Configuration
 #
 CONFIG_64BIT=y
 CONFIG_X86_64=y
@@ -508,6 +508,7 @@ CONFIG_ZSWAP=y
 CONFIG_ZPOOL=y
 CONFIG_ZBUD=y
 CONFIG_ZSMALLOC=y
+# CONFIG_PGTABLE_MAPPING is not set
 # CONFIG_ZSMALLOC_STAT is not set
 CONFIG_DIRECT_RECLAIM_FILE_PAGES_ONLY=y
 CONFIG_FIX_INACTIVE_RATIO=y

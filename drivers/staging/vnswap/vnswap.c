@@ -350,16 +350,15 @@ int vnswap_find_free_area_in_backing_storage(int *nand_offset)
 }
 
 /* refer req_bio_endio() */
-void vnswap_bio_end_read(struct bio *bio, int err)
+void vnswap_bio_end_read(struct bio *bio)
 {
-	const int uptodate = test_bit(BIO_UPTODATE, &bio->bi_flags);
 	struct bio *original_bio = (struct bio *) bio->bi_private;
 	unsigned long flags;
 
-	dprintk("%s %d: (uptodate,error,bi_iter.bi_size) = (%d, %d, %d)\n",
-			__func__, __LINE__, uptodate, err, bio->bi_iter.bi_size);
+	dprintk("%s %d: (uptodate,error,bi_iter.bi_size) = (%d, %d)\n",
+			__func__, __LINE__, bio->bi_error, bio->bi_iter.bi_size);
 
-	if (!uptodate || err) {
+	if (bio->bi_error) {
 		atomic_inc(&vnswap_device->stats.vnswap_bio_end_fail_r1_num);
 		pr_err("%s %d: (error, bio->bi_iter.bi_size, original_bio->bi_iter.bi_size," \
 				"bio->bi_vcnt, original_bio->bi_vcnt, " \
@@ -368,7 +367,7 @@ void vnswap_bio_end_read(struct bio *bio, int err)
 				"vnswap_bio_end_fail_r1_num ~" \
 				"vnswap_bio_end_fail_r3_num) =" \
 				"(%d, %d, %d, %d, %d, %d, %d, %d, %d, %d)\n",
-				__func__, __LINE__, err, bio->bi_iter.bi_size,
+				__func__, __LINE__, bio->bi_error, bio->bi_iter.bi_size,
 				original_bio->bi_iter.bi_size,
 				bio->bi_vcnt, original_bio->bi_vcnt,
 				bio->bi_iter.bi_idx,
@@ -403,7 +402,7 @@ void vnswap_bio_end_read(struct bio *bio, int err)
 					"vnswap_bio_end_fail_r1_num ~ " \
 					"vnswap_bio_end_fail_r3_num) = " \
 					"(%d, %d, %d, %d, %d, %d, %d, %d, %d, %d)\n",
-					__func__, __LINE__, err, bio->bi_iter.bi_size,
+					__func__, __LINE__, bio->bi_error, bio->bi_iter.bi_size,
 					original_bio->bi_iter.bi_size,
 					bio->bi_vcnt, original_bio->bi_vcnt,
 					bio->bi_iter.bi_idx,
@@ -433,7 +432,7 @@ void vnswap_bio_end_read(struct bio *bio, int err)
 					"vnswap_bio_end_fail_r1_num ~ " \
 					"vnswap_bio_end_fail_r3_num) = " \
 					"(%d, %d, %d, %d, %d, %d, %d, %d, %d, %d)\n",
-					__func__, __LINE__, err, bio->bi_iter.bi_size,
+					__func__, __LINE__, bio->bi_error, bio->bi_iter.bi_size,
 					original_bio->bi_iter.bi_size,
 					bio->bi_vcnt, original_bio->bi_vcnt,
 					bio->bi_iter.bi_idx, original_bio->bi_iter.bi_idx,
@@ -451,9 +450,8 @@ void vnswap_bio_end_read(struct bio *bio, int err)
 			goto out_bio_put;
 		}
 
-		set_bit(BIO_UPTODATE, &original_bio->bi_flags);
 		spin_unlock_irqrestore(&vnswap_original_bio_lock, flags);
-		bio_endio(original_bio, 0);
+		bio_endio(original_bio);
 	}
 
 out_bio_put:
@@ -461,15 +459,15 @@ out_bio_put:
 }
 
 /* refer req_bio_endio() */
-void vnswap_bio_end_write(struct bio *bio, int err)
+void vnswap_bio_end_write(struct bio *bio)
 {
 	struct bio *original_bio = (struct bio *) bio->bi_private;
 	unsigned long flags;
 
 	dprintk("%s %d: (error, bi_iter.bi_size) = (%d, %d)\n",
-			__func__, __LINE__, err, bio->bi_iter.bi_size);
+			__func__, __LINE__, bio->bi_error, bio->bi_iter.bi_size);
 
-	if (err) {
+	if (bio->bi_error) {
 		atomic_inc(&vnswap_device->stats.vnswap_bio_end_fail_w1_num);
 		pr_err("%s %d: (error, bio->bi_iter.bi_size, original_bio->bi_iter.bi_size, " \
 				"bio->bi_vcnt," \
@@ -478,7 +476,7 @@ void vnswap_bio_end_write(struct bio *bio, int err)
 				"vnswap_bio_end_fail_w1_num ~ " \
 				"vnswap_bio_end_fail_w3_num) = " \
 				"(%d, %d, %d, %d, %d, %d, %d, %d, %d, %d)\n",
-				__func__, __LINE__, err, bio->bi_iter.bi_size,
+				__func__, __LINE__, bio->bi_error, bio->bi_iter.bi_size,
 				original_bio->bi_iter.bi_size,
 				bio->bi_vcnt, original_bio->bi_vcnt,
 				bio->bi_iter.bi_idx,
@@ -513,7 +511,7 @@ void vnswap_bio_end_write(struct bio *bio, int err)
 					"vnswap_bio_end_fail_w1_num ~ " \
 					"vnswap_bio_end_fail_w3_num) = " \
 					"(%d, %d, %d, %d, %d, %d, %d, %d, %d, %d)\n",
-					__func__, __LINE__, err, bio->bi_iter.bi_size,
+					__func__, __LINE__, bio->bi_error, bio->bi_iter.bi_size,
 					original_bio->bi_iter.bi_size,
 					bio->bi_vcnt, original_bio->bi_vcnt,
 					bio->bi_iter.bi_idx,
@@ -543,7 +541,7 @@ void vnswap_bio_end_write(struct bio *bio, int err)
 					"vnswap_bio_end_fail_w1_num ~ " \
 					"vnswap_bio_end_fail_w3_num) = " \
 					"(%d, %d, %d, %d, %d, %d, %d, %d, %d, %d)\n",
-					__func__, __LINE__, err, bio->bi_iter.bi_size,
+					__func__, __LINE__, bio->bi_error, bio->bi_iter.bi_size,
 					original_bio->bi_iter.bi_size,
 					bio->bi_vcnt, original_bio->bi_vcnt,
 					bio->bi_iter.bi_idx,
@@ -562,10 +560,9 @@ void vnswap_bio_end_write(struct bio *bio, int err)
 			goto out_bio_put;
 		}
 
-		set_bit(BIO_UPTODATE, &original_bio->bi_flags);
 		spin_unlock_irqrestore(&vnswap_original_bio_lock,
 			flags);
-		bio_endio(original_bio, 0);
+		bio_endio(original_bio);
 	}
 
 out_bio_put:
@@ -835,10 +832,8 @@ void __vnswap_make_request(struct vnswap *vnswap,
 		index++;
 	}
 
-	if (is_swap_header_page) {
-		set_bit(BIO_UPTODATE, &bio->bi_flags);
-		bio_endio(bio, 0);
-	}
+	if (is_swap_header_page)
+		bio_endio(bio);
 
 	return;
 
@@ -867,7 +862,7 @@ static inline int vnswap_valid_io_request(struct vnswap *vnswap,
 /*
  * Handler function for all vnswap I/O requests.
  */
-void vnswap_make_request(struct request_queue *queue, struct bio *bio)
+blk_qc_t vnswap_make_request(struct request_queue *queue, struct bio *bio)
 {
 	struct vnswap *vnswap = queue->queuedata;
 
@@ -900,10 +895,11 @@ void vnswap_make_request(struct request_queue *queue, struct bio *bio)
 	}
 
 	__vnswap_make_request(vnswap, bio, bio_data_dir(bio));
-	return;
+	return BLK_QC_T_NONE;
 
 error:
 	bio_io_error(bio);
+	return BLK_QC_T_NONE;
 }
 
 void vnswap_slot_free_notify(struct block_device *bdev, unsigned long index)

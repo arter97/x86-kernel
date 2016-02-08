@@ -601,21 +601,6 @@ config ZSMALLOC_STAT
 	  information to userspace via debugfs.
 	  If unsure, say N.
 
-config DIRECT_RECLAIM_FILE_PAGES_ONLY
-	bool "Reclaim file pages only on direct reclaim path"
-	depends on ZSWAP
-	default n
-
-config FIX_INACTIVE_RATIO
-	bool "Fix active:inactive anon ratio to 1:1"
-	depends on ZSWAP
-	default n
-
-config TIGHT_PGDAT_BALANCE
-	bool "Set more tight balanced condition to kswapd"
-	depends on ZSWAP
-	default n
-
 config GENERIC_EARLY_IOREMAP
 	bool
 

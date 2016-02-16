@@ -6,7 +6,6 @@ TARGETS += firmware
 TARGETS += ftrace
 TARGETS += futex
 TARGETS += kcmp
-TARGETS += kdbus
 TARGETS += lib
 TARGETS += membarrier
 TARGETS += memfd

@@ -1058,14 +1058,14 @@ int cap_mmap_addr(unsigned long addr)
 	}
 	return ret;
 }
-EXPORT_SYMBOL(cap_mmap_addr);
+EXPORT_SYMBOL_GPL(cap_mmap_addr);
 
 int cap_mmap_file(struct file *file, unsigned long reqprot,
 		  unsigned long prot, unsigned long flags)
 {
 	return 0;
 }
-EXPORT_SYMBOL(cap_mmap_file);
+EXPORT_SYMBOL_GPL(cap_mmap_file);
 
 #ifdef CONFIG_SECURITY
 

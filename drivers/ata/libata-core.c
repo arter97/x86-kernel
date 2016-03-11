@@ -2086,10 +2086,6 @@ static int ata_dev_config_ncq(struct ata_device *dev,
 	unsigned int err_mask;
 	char *aa_desc = "";
 
-	// Liquorix - disable NCQ to improve responsiveness at the cost of throughput.
-	snprintf(desc, desc_sz, "NCQ (disabled)");
-	return 0;
-
 	if (!ata_id_has_ncq(dev->id)) {
 		desc[0] = '\0';
 		return 0;

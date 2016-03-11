@@ -38,6 +38,10 @@ config ZEN_INTERACTIVE
 	    Mem dirty before bg writeback..:  10 %  ->  20 %
 	    Mem dirty before sync writeback:  20 %  ->  50 %
 
+	  -- Block Layer --
+	    NCQ Queue Depth................:  31    ->  8
+	    Block Layer Queue Depth........:  128   ->  16
+
 	  --- CPU Scheduler ---
 	    Scheduling latency.............:   6    ->   3    ms
 	    Minimal granularity............:   0.75 ->   0.3  ms

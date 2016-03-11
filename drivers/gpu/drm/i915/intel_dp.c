@@ -6249,6 +6249,19 @@ void intel_dp_mst_resume(struct drm_device *dev)
 
 			ret = drm_dp_mst_topology_mgr_resume(&intel_dig_port->dp.mst_mgr);
 			if (ret != 0) {
+				/*
+				 * For some reason, some laptops can't bring
+				 * their MST docks back up immediately after
+				 * resume and need to wait a short period of
+				 * time before aux transactions with the dock
+				 * become functional again. Until we find a
+				 * proper fix for this, this workaround should
+				 * suffice
+				 */
+				msleep(30);
+				ret = drm_dp_mst_topology_mgr_resume(&intel_dig_port->dp.mst_mgr);
+			}
+			if (ret != 0) {
 				intel_dp_check_mst_status(&intel_dig_port->dp);
 			}
 		}

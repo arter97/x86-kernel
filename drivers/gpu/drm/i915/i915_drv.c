@@ -781,11 +781,11 @@ static int i915_drm_resume(struct drm_device *dev)
 		dev_priv->display.hpd_irq_setup(dev);
 	spin_unlock_irq(&dev_priv->irq_lock);
 
+	intel_dp_mst_resume(dev);
+
 	drm_modeset_lock_all(dev);
 	intel_display_resume(dev);
 	drm_modeset_unlock_all(dev);
-
-	intel_dp_mst_resume(dev);
 
 	/*
 	 * ... but also need to make sure that hotplug processing

@@ -601,7 +601,8 @@ static int ata_acpi_filter_tf(struct ata_device *dev,
 	    tf->feature == SETFEATURES_SATA_ENABLE) {
 		/* inhibit enabling DIPM */
 		if (dev->gtf_filter & ATA_ACPI_FILTER_DIPM &&
-		    tf->nsect == SATA_DIPM)
+		    tf->nsect == SATA_DIPM &&
+		    dev->link->lpm_policy != ATA_LPM_FIRMWARE)
 			return 1;
 
 		/* inhibit FPDMA non-zero offset */

@@ -1692,10 +1692,16 @@ static int ahci_init_one(struct pci_dev *pdev, const struct pci_device_id *ent)
 		if (ap->flags & ATA_FLAG_EM)
 			ap->em_message_type = hpriv->em_msg_type;
 
+		rc = ahci_setup_port_privdata(ap);
+		if (rc)
+			return rc;
 
 		/* disabled/not-implemented port */
 		if (!(hpriv->port_map & (1 << i)))
 			ap->ops = &ata_dummy_port_ops;
+
+		if (pdev->vendor == PCI_VENDOR_ID_INTEL)
+			ap->target_lpm_policy = ATA_LPM_FIRMWARE;
 	}
 
 	/* apply workaround for ASUS P5W DH Deluxe mainboard */

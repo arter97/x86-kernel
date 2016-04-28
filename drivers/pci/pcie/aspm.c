@@ -68,7 +68,7 @@ struct pcie_link_state {
 	struct aspm_latency acceptable[8];
 };
 
-static int aspm_disabled, aspm_force;
+static int aspm_disabled, aspm_force = 1;
 static bool aspm_support_enabled = true;
 static DEFINE_MUTEX(aspm_lock);
 static LIST_HEAD(link_list);
@@ -928,9 +928,9 @@ static int __init pcie_aspm_disable(char *str)
 		aspm_disabled = 1;
 		aspm_support_enabled = false;
 		printk(KERN_INFO "PCIe ASPM is disabled\n");
-	} else if (!strcmp(str, "force")) {
-		aspm_force = 1;
-		printk(KERN_INFO "PCIe ASPM is forcibly enabled\n");
+	} else if (!strcmp(str, "default")) {
+		aspm_force = 0;
+		printk(KERN_INFO "PCIe ASPM is set to default\n");
 	}
 	return 1;
 }

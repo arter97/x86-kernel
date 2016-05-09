@@ -107,9 +107,6 @@ struct intel_ringbuffer {
 	int space;
 	int size;
 	int effective_size;
-	int reserved_size;
-	int reserved_tail;
-	bool reserved_in_use;
 
 	/** We track the position of the requests in the ring buffer, and
 	 * when each is retired we increment last_retired_head as the GPU
@@ -156,7 +153,8 @@ struct  intel_engine_cs {
 #define I915_NUM_ENGINES 5
 #define _VCS(n) (VCS + (n))
 	unsigned int exec_id;
-	unsigned int guc_id;
+	unsigned int hw_id;
+	unsigned int guc_id; /* XXX same as hw_id? */
 	u32		mmio_base;
 	struct		drm_device *dev;
 	struct intel_ringbuffer *buffer;
@@ -269,7 +267,6 @@ struct  intel_engine_cs {
 	struct tasklet_struct irq_tasklet;
 	spinlock_t execlist_lock; /* used inside tasklet, use spin_lock_bh */
 	struct list_head execlist_queue;
-	struct list_head execlist_retired_req_list;
 	unsigned int fw_domains;
 	unsigned int next_context_status_buffer;
 	unsigned int idle_lite_restore_wa;
@@ -459,7 +456,6 @@ static inline void intel_ring_advance(struct intel_engine_cs *engine)
 }
 int __intel_ring_space(int head, int tail, int size);
 void intel_ring_update_space(struct intel_ringbuffer *ringbuf);
-int intel_ring_space(struct intel_ringbuffer *ringbuf);
 bool intel_engine_stopped(struct intel_engine_cs *engine);
 
 int __must_check intel_engine_idle(struct intel_engine_cs *engine);
@@ -488,26 +484,15 @@ static inline u32 intel_ring_get_tail(struct intel_ringbuffer *ringbuf)
 /*
  * Arbitrary size for largest possible 'add request' sequence. The code paths
  * are complex and variable. Empirical measurement shows that the worst case
- * is ILK at 136 words. Reserving too much is better than reserving too little
- * as that allows for corner cases that might have been missed. So the figure
- * has been rounded up to 160 words.
+ * is BDW at 192 bytes (6 + 6 + 36 dwords), then ILK at 136 bytes. However,
+ * we need to allocate double the largest single packet within that emission
+ * to account for tail wraparound (so 6 + 6 + 72 dwords for BDW).
  */
-#define MIN_SPACE_FOR_ADD_REQUEST	160
+#define MIN_SPACE_FOR_ADD_REQUEST 336
 
-/*
- * Reserve space in the ring to guarantee that the i915_add_request() call
- * will always have sufficient room to do its stuff. The request creation
- * code calls this automatically.
- */
-void intel_ring_reserved_space_reserve(struct intel_ringbuffer *ringbuf, int size);
-/* Cancel the reservation, e.g. because the request is being discarded. */
-void intel_ring_reserved_space_cancel(struct intel_ringbuffer *ringbuf);
-/* Use the reserved space - for use by i915_add_request() only. */
-void intel_ring_reserved_space_use(struct intel_ringbuffer *ringbuf);
-/* Finish with the reserved space - for use by i915_add_request() only. */
-void intel_ring_reserved_space_end(struct intel_ringbuffer *ringbuf);
-
-/* Legacy ringbuffer specific portion of reservation code: */
-int intel_ring_reserve_space(struct drm_i915_gem_request *request);
+static inline u32 intel_hws_seqno_address(struct intel_engine_cs *engine)
+{
+	return engine->status_page.gfx_addr + I915_GEM_HWS_INDEX_ADDR;
+}
 
 #endif /* _INTEL_RINGBUFFER_H_ */

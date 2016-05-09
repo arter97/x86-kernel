@@ -185,6 +185,7 @@ intel_pch_rawclk(struct drm_i915_private *dev_priv)
 static int
 intel_vlv_hrawclk(struct drm_i915_private *dev_priv)
 {
+	/* RAWCLK_FREQ_VLV register updated from power well code */
 	return vlv_get_cck_clock_hpll(dev_priv, "hrawclk",
 				      CCK_DISPLAY_REF_CLOCK_CONTROL);
 }
@@ -218,7 +219,7 @@ intel_g4x_hrawclk(struct drm_i915_private *dev_priv)
 	}
 }
 
-static void intel_update_rawclk(struct drm_i915_private *dev_priv)
+void intel_update_rawclk(struct drm_i915_private *dev_priv)
 {
 	if (HAS_PCH_SPLIT(dev_priv))
 		dev_priv->rawclk_freq = intel_pch_rawclk(dev_priv);
@@ -2309,7 +2310,7 @@ err_pm:
 	return ret;
 }
 
-static void intel_unpin_fb_obj(struct drm_framebuffer *fb, unsigned int rotation)
+void intel_unpin_fb_obj(struct drm_framebuffer *fb, unsigned int rotation)
 {
 	struct drm_i915_gem_object *obj = intel_fb_obj(fb);
 	struct i915_ggtt_view view;
@@ -5328,18 +5329,13 @@ static void intel_update_cdclk(struct drm_device *dev)
 			 dev_priv->cdclk_freq);
 
 	/*
-	 * Program the gmbus_freq based on the cdclk frequency.
-	 * BSpec erroneously claims we should aim for 4MHz, but
-	 * in fact 1MHz is the correct frequency.
+	 * 9:0 CMBUS [sic] CDCLK frequency (cdfreq):
+	 * Programmng [sic] note: bit[9:2] should be programmed to the number
+	 * of cdclk that generates 4MHz reference clock freq which is used to
+	 * generate GMBus clock. This will vary with the cdclk freq.
 	 */
-	if (IS_VALLEYVIEW(dev) || IS_CHERRYVIEW(dev)) {
-		/*
-		 * Program the gmbus_freq based on the cdclk frequency.
-		 * BSpec erroneously claims we should aim for 4MHz, but
-		 * in fact 1MHz is the correct frequency.
-		 */
+	if (IS_VALLEYVIEW(dev_priv) || IS_CHERRYVIEW(dev_priv))
 		I915_WRITE(GMBUSFREQ_VLV, DIV_ROUND_UP(dev_priv->cdclk_freq, 1000));
-	}
 
 	if (dev_priv->max_cdclk_freq == 0)
 		intel_update_max_cdclk(dev);
@@ -8026,9 +8022,6 @@ static void i9xx_get_pfit_config(struct intel_crtc *crtc,
 
 	pipe_config->gmch_pfit.control = tmp;
 	pipe_config->gmch_pfit.pgm_ratios = I915_READ(PFIT_PGM_RATIOS);
-	if (INTEL_INFO(dev)->gen < 5)
-		pipe_config->gmch_pfit.lvds_border_bits =
-			I915_READ(LVDS) & LVDS_BORDER_ENABLE;
 }
 
 static void vlv_crtc_clock_get(struct intel_crtc *crtc,
@@ -9681,6 +9674,8 @@ static void broadwell_set_cdclk(struct drm_device *dev, int cdclk)
 	sandybridge_pcode_write(dev_priv, HSW_PCODE_DE_WRITE_FREQ_REQ, data);
 	mutex_unlock(&dev_priv->rps.hw_lock);
 
+	I915_WRITE(CDCLK_FREQ, DIV_ROUND_CLOSEST(cdclk, 1000) - 1);
+
 	intel_update_cdclk(dev);
 
 	WARN(cdclk != dev_priv->cdclk_freq,
@@ -10318,10 +10313,10 @@ intel_framebuffer_create_for_mode(struct drm_device *dev,
 	struct drm_i915_gem_object *obj;
 	struct drm_mode_fb_cmd2 mode_cmd = { 0 };
 
-	obj = i915_gem_alloc_object(dev,
+	obj = i915_gem_object_create(dev,
 				    intel_framebuffer_size_for_mode(mode, bpp));
-	if (obj == NULL)
-		return ERR_PTR(-ENOMEM);
+	if (IS_ERR(obj))
+		return ERR_CAST(obj);
 
 	mode_cmd.width = mode->hdisplay;
 	mode_cmd.height = mode->vdisplay;
@@ -10807,31 +10802,27 @@ struct drm_display_mode *intel_crtc_mode_get(struct drm_device *dev,
 	return mode;
 }
 
-void intel_mark_busy(struct drm_device *dev)
+void intel_mark_busy(struct drm_i915_private *dev_priv)
 {
-	struct drm_i915_private *dev_priv = dev->dev_private;
-
 	if (dev_priv->mm.busy)
 		return;
 
 	intel_runtime_pm_get(dev_priv);
 	i915_update_gfx_val(dev_priv);
-	if (INTEL_INFO(dev)->gen >= 6)
+	if (INTEL_GEN(dev_priv) >= 6)
 		gen6_rps_busy(dev_priv);
 	dev_priv->mm.busy = true;
 }
 
-void intel_mark_idle(struct drm_device *dev)
+void intel_mark_idle(struct drm_i915_private *dev_priv)
 {
-	struct drm_i915_private *dev_priv = dev->dev_private;
-
 	if (!dev_priv->mm.busy)
 		return;
 
 	dev_priv->mm.busy = false;
 
-	if (INTEL_INFO(dev)->gen >= 6)
-		gen6_rps_idle(dev->dev_private);
+	if (INTEL_GEN(dev_priv) >= 6)
+		gen6_rps_idle(dev_priv);
 
 	intel_runtime_pm_put(dev_priv);
 }
@@ -11399,7 +11390,7 @@ static void intel_mmio_flip_work_func(struct work_struct *work)
 		WARN_ON(__i915_wait_request(mmio_flip->req,
 					    false, NULL,
 					    &mmio_flip->i915->rps.mmioflips));
-		i915_gem_request_unreference__unlocked(mmio_flip->req);
+		i915_gem_request_unreference(mmio_flip->req);
 	}
 
 	/* For framebuffer backed by dmabuf, wait for fence */
@@ -15455,7 +15446,6 @@ void intel_modeset_init(struct drm_device *dev)
 	}
 
 	intel_update_czclk(dev_priv);
-	intel_update_rawclk(dev_priv);
 	intel_update_cdclk(dev);
 
 	intel_shared_dpll_init(dev);

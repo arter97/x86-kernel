@@ -2449,6 +2449,8 @@ enum skl_disp_power_wells {
 #define   DPLL_MD_VGA_UDI_MULTIPLIER_MASK	0x0000003f
 #define   DPLL_MD_VGA_UDI_MULTIPLIER_SHIFT	0
 
+#define RAWCLK_FREQ_VLV		_MMIO(VLV_DISPLAY_BASE + 0x6024)
+
 #define _FPA0	0x6040
 #define _FPA1	0x6044
 #define _FPB0	0x6048
@@ -6089,7 +6091,14 @@ enum skl_disp_power_wells {
 #define  VLV_B0_WA_L3SQCREG1_VALUE		0x00D30000
 
 #define GEN8_L3SQCREG1				_MMIO(0xB100)
-#define  BDW_WA_L3SQCREG1_DEFAULT		0x784000
+/*
+ * Note that on CHV the following has an off-by-one error wrt. to BSpec.
+ * Using the formula in BSpec leads to a hang, while the formula here works
+ * fine and matches the formulas for all other platforms. A BSpec change
+ * request has been filed to clarify this.
+ */
+#define  L3_GENERAL_PRIO_CREDITS(x)		(((x) >> 1) << 19)
+#define  L3_HIGH_PRIO_CREDITS(x)		(((x) >> 1) << 14)
 
 #define GEN7_L3CNTLREG1				_MMIO(0xB01C)
 #define  GEN7_WA_FOR_GEN7_L3_CONTROL			0x3C47FF8C
@@ -7514,6 +7523,8 @@ enum skl_disp_power_wells {
 /* For each transcoder, we need to select the corresponding port clock */
 #define  TRANS_CLK_SEL_DISABLED		(0x0<<29)
 #define  TRANS_CLK_SEL_PORT(x)		(((x)+1)<<29)
+
+#define CDCLK_FREQ			_MMIO(0x46200)
 
 #define _TRANSA_MSA_MISC		0x60410
 #define _TRANSB_MSA_MISC		0x61410

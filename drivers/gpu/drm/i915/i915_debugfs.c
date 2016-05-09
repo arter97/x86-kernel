@@ -2001,7 +2001,7 @@ static int i915_context_status(struct seq_file *m, void *unused)
 		    ctx->legacy_hw_ctx.rcs_state == NULL)
 			continue;
 
-		seq_puts(m, "HW context ");
+		seq_printf(m, "HW context %u ", ctx->hw_id);
 		describe_ctx(m, ctx);
 		if (ctx == dev_priv->kernel_context)
 			seq_printf(m, "(kernel context) ");
@@ -2043,14 +2043,12 @@ static void i915_dump_lrc_obj(struct seq_file *m,
 	struct drm_i915_gem_object *ctx_obj = ctx->engine[engine->id].state;
 	unsigned long ggtt_offset = 0;
 
+	seq_printf(m, "CONTEXT: %s %u\n", engine->name, ctx->hw_id);
+
 	if (ctx_obj == NULL) {
-		seq_printf(m, "Context on %s with no gem object\n",
-			   engine->name);
+		seq_puts(m, "\tNot allocated\n");
 		return;
 	}
-
-	seq_printf(m, "CONTEXT: %s %u\n", engine->name,
-		   intel_execlists_ctx_id(ctx, engine));
 
 	if (!i915_gem_obj_ggtt_bound(ctx_obj))
 		seq_puts(m, "\tNot bound in GGTT\n");
@@ -2097,9 +2095,8 @@ static int i915_dump_lrc(struct seq_file *m, void *unused)
 		return ret;
 
 	list_for_each_entry(ctx, &dev_priv->context_list, link)
-		if (ctx != dev_priv->kernel_context)
-			for_each_engine(engine, dev_priv)
-				i915_dump_lrc_obj(m, ctx, engine);
+		for_each_engine(engine, dev_priv)
+			i915_dump_lrc_obj(m, ctx, engine);
 
 	mutex_unlock(&dev->struct_mutex);
 
@@ -2170,8 +2167,8 @@ static int i915_execlists(struct seq_file *m, void *data)
 
 		seq_printf(m, "\t%d requests in queue\n", count);
 		if (head_req) {
-			seq_printf(m, "\tHead request id: %u\n",
-				   intel_execlists_ctx_id(head_req->ctx, engine));
+			seq_printf(m, "\tHead request context: %u\n",
+				   head_req->ctx->hw_id);
 			seq_printf(m, "\tHead request tail: %u\n",
 				   head_req->tail);
 		}
@@ -2913,20 +2910,6 @@ static void intel_dp_info(struct seq_file *m,
 		intel_panel_info(m, &intel_connector->panel);
 }
 
-static void intel_dp_mst_info(struct seq_file *m,
-			  struct intel_connector *intel_connector)
-{
-	struct intel_encoder *intel_encoder = intel_connector->encoder;
-	struct intel_dp_mst_encoder *intel_mst =
-		enc_to_mst(&intel_encoder->base);
-	struct intel_digital_port *intel_dig_port = intel_mst->primary;
-	struct intel_dp *intel_dp = &intel_dig_port->dp;
-	bool has_audio = drm_dp_mst_port_has_audio(&intel_dp->mst_mgr,
-					intel_connector->port);
-
-	seq_printf(m, "\taudio support: %s\n", yesno(has_audio));
-}
-
 static void intel_hdmi_info(struct seq_file *m,
 			    struct intel_connector *intel_connector)
 {
@@ -2970,8 +2953,6 @@ static void intel_connector_info(struct seq_file *m,
 			intel_hdmi_info(m, intel_connector);
 		else if (intel_encoder->type == INTEL_OUTPUT_LVDS)
 			intel_lvds_info(m, intel_connector);
-		else if (intel_encoder->type == INTEL_OUTPUT_DP_MST)
-			intel_dp_mst_info(m, intel_connector);
 	}
 
 	seq_printf(m, "\tmodes:\n");

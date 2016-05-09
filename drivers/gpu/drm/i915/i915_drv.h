@@ -66,7 +66,7 @@
 
 #define DRIVER_NAME		"i915"
 #define DRIVER_DESC		"Intel Graphics"
-#define DRIVER_DATE		"20160425"
+#define DRIVER_DATE		"20160508"
 
 #undef WARN_ON
 /* Many gcc seem to no see through this and fall over :( */
@@ -851,6 +851,9 @@ struct intel_context {
 	struct i915_ctx_hang_stats hang_stats;
 	struct i915_hw_ppgtt *ppgtt;
 
+	/* Unique identifier for this context, used by the hw for tracking */
+	unsigned hw_id;
+
 	/* Legacy ring buffer submission */
 	struct {
 		struct drm_i915_gem_object *rcs_state;
@@ -865,6 +868,7 @@ struct intel_context {
 		struct i915_vma *lrc_vma;
 		u64 lrc_desc;
 		uint32_t *lrc_reg_state;
+		bool initialised;
 	} engine[I915_NUM_ENGINES];
 
 	struct list_head link;
@@ -1488,6 +1492,7 @@ struct intel_vbt_data {
 		bool present;
 		bool active_low_pwm;
 		u8 min_brightness;	/* min_brightness/255 of max */
+		enum intel_backlight_type type;
 	} backlight;
 
 	/* MIPI DSI */
@@ -1837,6 +1842,13 @@ struct drm_i915_private {
 	struct i915_gem_mm mm;
 	DECLARE_HASHTABLE(mm_structs, 7);
 	struct mutex mm_lock;
+
+	/* The hw wants to have a stable context identifier for the lifetime
+	 * of the context (for OA, PASID, faults, etc). This is limited
+	 * in execlists to 21 bits.
+	 */
+	struct ida context_hw_ida;
+#define MAX_CONTEXT_HW_ID (1<<21) /* exclusive */
 
 	/* Kernel Modesetting */
 
@@ -2278,6 +2290,9 @@ struct drm_i915_gem_request {
 	/** Position in the ringbuffer of the end of the whole request */
 	u32 tail;
 
+	/** Preallocate space in the ringbuffer for the emitting the request */
+	u32 reserved_space;
+
 	/**
 	 * Context and ring buffer related to this request
 	 * Contexts are refcounted, so when this request is associated with a
@@ -2290,6 +2305,17 @@ struct drm_i915_gem_request {
 	 */
 	struct intel_context *ctx;
 	struct intel_ringbuffer *ringbuf;
+
+	/**
+	 * Context related to the previous request.
+	 * As the contexts are accessed by the hardware until the switch is
+	 * completed to a new context, the hardware may still be writing
+	 * to the context object after the breadcrumb is visible. We must
+	 * not unpin/unbind/prune that object whilst still active and so
+	 * we keep the previous context pinned until the following (this)
+	 * request is retired.
+	 */
+	struct intel_context *previous_context;
 
 	/** Batch buffer related to this request if any (used for
 	    error state dump only) */
@@ -2327,6 +2353,8 @@ struct drm_i915_gem_request {
 	/** Execlists no. of times this request has been sent to the ELSP */
 	int elsp_submitted;
 
+	/** Execlists context hardware id. */
+	unsigned ctx_hw_id;
 };
 
 struct drm_i915_gem_request * __must_check
@@ -2359,21 +2387,7 @@ i915_gem_request_reference(struct drm_i915_gem_request *req)
 static inline void
 i915_gem_request_unreference(struct drm_i915_gem_request *req)
 {
-	WARN_ON(!mutex_is_locked(&req->engine->dev->struct_mutex));
 	kref_put(&req->ref, i915_gem_request_free);
-}
-
-static inline void
-i915_gem_request_unreference__unlocked(struct drm_i915_gem_request *req)
-{
-	struct drm_device *dev;
-
-	if (!req)
-		return;
-
-	dev = req->engine->dev;
-	if (kref_put_mutex(&req->ref, i915_gem_request_free, &dev->struct_mutex))
-		mutex_unlock(&dev->struct_mutex);
 }
 
 static inline void i915_gem_request_assign(struct drm_i915_gem_request **pdst,
@@ -2740,6 +2754,8 @@ extern int i915_max_ioctl;
 extern int i915_suspend_switcheroo(struct drm_device *dev, pm_message_t state);
 extern int i915_resume_switcheroo(struct drm_device *dev);
 
+int intel_sanitize_enable_ppgtt(struct drm_device *dev, int enable_ppgtt);
+
 /* i915_dma.c */
 void __printf(3, 4)
 __i915_printk(struct drm_i915_private *dev_priv, const char *level,
@@ -2923,7 +2939,7 @@ void *i915_gem_object_alloc(struct drm_device *dev);
 void i915_gem_object_free(struct drm_i915_gem_object *obj);
 void i915_gem_object_init(struct drm_i915_gem_object *obj,
 			 const struct drm_i915_gem_object_ops *ops);
-struct drm_i915_gem_object *i915_gem_alloc_object(struct drm_device *dev,
+struct drm_i915_gem_object *i915_gem_object_create(struct drm_device *dev,
 						  size_t size);
 struct drm_i915_gem_object *i915_gem_object_create_from_data(
 		struct drm_device *dev, const void *data, size_t size);
@@ -3147,7 +3163,6 @@ bool i915_gem_clflush_object(struct drm_i915_gem_object *obj, bool force);
 int __must_check i915_gem_init(struct drm_device *dev);
 int i915_gem_init_engines(struct drm_device *dev);
 int __must_check i915_gem_init_hw(struct drm_device *dev);
-int i915_gem_l3_remap(struct drm_i915_gem_request *req, int slice);
 void i915_gem_init_swizzling(struct drm_device *dev);
 void i915_gem_cleanup_engines(struct drm_device *dev);
 int __must_check i915_gpu_idle(struct drm_device *dev);
@@ -3215,8 +3230,6 @@ bool i915_gem_obj_ggtt_bound_view(struct drm_i915_gem_object *o,
 bool i915_gem_obj_bound(struct drm_i915_gem_object *o,
 			struct i915_address_space *vm);
 
-unsigned long i915_gem_obj_size(struct drm_i915_gem_object *o,
-				struct i915_address_space *vm);
 struct i915_vma *
 i915_gem_obj_to_vma(struct drm_i915_gem_object *obj,
 		    struct i915_address_space *vm);
@@ -3251,14 +3264,8 @@ static inline bool i915_gem_obj_ggtt_bound(struct drm_i915_gem_object *obj)
 	return i915_gem_obj_ggtt_bound_view(obj, &i915_ggtt_view_normal);
 }
 
-static inline unsigned long
-i915_gem_obj_ggtt_size(struct drm_i915_gem_object *obj)
-{
-	struct drm_i915_private *dev_priv = to_i915(obj->base.dev);
-	struct i915_ggtt *ggtt = &dev_priv->ggtt;
-
-	return i915_gem_obj_size(obj, &ggtt->base);
-}
+unsigned long
+i915_gem_obj_ggtt_size(struct drm_i915_gem_object *obj);
 
 static inline int __must_check
 i915_gem_obj_ggtt_pin(struct drm_i915_gem_object *obj,
@@ -3270,12 +3277,6 @@ i915_gem_obj_ggtt_pin(struct drm_i915_gem_object *obj,
 
 	return i915_gem_object_pin(obj, &ggtt->base,
 				   alignment, flags | PIN_GLOBAL);
-}
-
-static inline int
-i915_gem_object_ggtt_unbind(struct drm_i915_gem_object *obj)
-{
-	return i915_vma_unbind(i915_gem_obj_to_ggtt(obj));
 }
 
 void i915_gem_object_ggtt_unpin_view(struct drm_i915_gem_object *obj,
@@ -3301,10 +3302,10 @@ void i915_gem_object_save_bit_17_swizzle(struct drm_i915_gem_object *obj);
 
 /* i915_gem_context.c */
 int __must_check i915_gem_context_init(struct drm_device *dev);
+void i915_gem_context_lost(struct drm_i915_private *dev_priv);
 void i915_gem_context_fini(struct drm_device *dev);
 void i915_gem_context_reset(struct drm_device *dev);
 int i915_gem_context_open(struct drm_device *dev, struct drm_file *file);
-int i915_gem_context_enable(struct drm_i915_gem_request *req);
 void i915_gem_context_close(struct drm_device *dev, struct drm_file *file);
 int i915_switch_context(struct drm_i915_gem_request *req);
 struct intel_context *
@@ -3441,7 +3442,7 @@ void i915_get_extra_instdone(struct drm_device *dev, uint32_t *instdone);
 const char *i915_cache_level_str(struct drm_i915_private *i915, int type);
 
 /* i915_cmd_parser.c */
-int i915_cmd_parser_get_version(void);
+int i915_cmd_parser_get_version(struct drm_i915_private *dev_priv);
 int i915_cmd_parser_init_ring(struct intel_engine_cs *engine);
 void i915_cmd_parser_fini_ring(struct intel_engine_cs *engine);
 bool i915_needs_cmd_parser(struct intel_engine_cs *engine);
@@ -3584,6 +3585,24 @@ void intel_sbi_write(struct drm_i915_private *dev_priv, u16 reg, u32 value,
 		     enum intel_sbi_destination destination);
 u32 vlv_flisdsi_read(struct drm_i915_private *dev_priv, u32 reg);
 void vlv_flisdsi_write(struct drm_i915_private *dev_priv, u32 reg, u32 val);
+
+/* intel_dpio_phy.c */
+void chv_set_phy_signal_level(struct intel_encoder *encoder,
+			      u32 deemph_reg_value, u32 margin_reg_value,
+			      bool uniq_trans_scale);
+void chv_data_lane_soft_reset(struct intel_encoder *encoder,
+			      bool reset);
+void chv_phy_pre_pll_enable(struct intel_encoder *encoder);
+void chv_phy_pre_encoder_enable(struct intel_encoder *encoder);
+void chv_phy_release_cl2_override(struct intel_encoder *encoder);
+void chv_phy_post_pll_disable(struct intel_encoder *encoder);
+
+void vlv_set_phy_signal_level(struct intel_encoder *encoder,
+			      u32 demph_reg_value, u32 preemph_reg_value,
+			      u32 uniqtranscale_reg_value, u32 tx3_demph);
+void vlv_phy_pre_pll_enable(struct intel_encoder *encoder);
+void vlv_phy_pre_encoder_enable(struct intel_encoder *encoder);
+void vlv_phy_reset_lanes(struct intel_encoder *encoder);
 
 int intel_gpu_freq(struct drm_i915_private *dev_priv, int val);
 int intel_freq_opcode(struct drm_i915_private *dev_priv, int val);

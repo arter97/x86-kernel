@@ -204,7 +204,7 @@ static int i915_getparam(struct drm_device *dev, void *data,
 		value = 1;
 		break;
 	case I915_PARAM_CMD_PARSER_VERSION:
-		value = i915_cmd_parser_get_version();
+		value = i915_cmd_parser_get_version(dev_priv);
 		break;
 	case I915_PARAM_HAS_COHERENT_PHYS_GTT:
 		value = 1;
@@ -425,6 +425,41 @@ static const struct vga_switcheroo_client_ops i915_switcheroo_ops = {
 	.can_switch = i915_switcheroo_can_switch,
 };
 
+static void i915_gem_fini(struct drm_device *dev)
+{
+	/*
+	 * Neither the BIOS, ourselves or any other kernel
+	 * expects the system to be in execlists mode on startup,
+	 * so we need to reset the GPU back to legacy mode. And the only
+	 * known way to disable logical contexts is through a GPU reset.
+	 *
+	 * So in order to leave the system in a known default configuration,
+	 * always reset the GPU upon unload. Afterwards we then clean up the
+	 * GEM state tracking, flushing off the requests and leaving the
+	 * system in a known idle state.
+	 *
+	 * Note that is of the upmost importance that the GPU is idle and
+	 * all stray writes are flushed *before* we dismantle the backing
+	 * storage for the pinned objects.
+	 *
+	 * However, since we are uncertain that reseting the GPU on older
+	 * machines is a good idea, we don't - just in case it leaves the
+	 * machine in an unusable condition.
+	 */
+	if (HAS_HW_CONTEXTS(dev)) {
+		int reset = intel_gpu_reset(dev, ALL_ENGINES);
+		WARN_ON(reset && reset != -ENODEV);
+	}
+
+	mutex_lock(&dev->struct_mutex);
+	i915_gem_reset(dev);
+	i915_gem_cleanup_engines(dev);
+	i915_gem_context_fini(dev);
+	mutex_unlock(&dev->struct_mutex);
+
+	WARN_ON(!list_empty(&to_i915(dev)->context_list));
+}
+
 static int i915_load_modeset_init(struct drm_device *dev)
 {
 	struct drm_i915_private *dev_priv = dev->dev_private;
@@ -453,6 +488,9 @@ static int i915_load_modeset_init(struct drm_device *dev)
 	ret = vga_switcheroo_register_client(dev->pdev, &i915_switcheroo_ops, false);
 	if (ret)
 		goto cleanup_vga_client;
+
+	/* must happen before intel_power_domains_init_hw() on VLV/CHV */
+	intel_update_rawclk(dev_priv);
 
 	intel_power_domains_init_hw(dev_priv, false);
 
@@ -506,10 +544,7 @@ static int i915_load_modeset_init(struct drm_device *dev)
 	return 0;
 
 cleanup_gem:
-	mutex_lock(&dev->struct_mutex);
-	i915_gem_cleanup_engines(dev);
-	i915_gem_context_fini(dev);
-	mutex_unlock(&dev->struct_mutex);
+	i915_gem_fini(dev);
 cleanup_irq:
 	intel_guc_ucode_fini(dev);
 	drm_irq_uninstall(dev);
@@ -933,6 +968,19 @@ static void intel_device_info_runtime_init(struct drm_device *dev)
 			 info->has_subslice_pg ? "y" : "n");
 	DRM_DEBUG_DRIVER("has EU power gating: %s\n",
 			 info->has_eu_pg ? "y" : "n");
+
+	i915.enable_execlists =
+		intel_sanitize_enable_execlists(dev, i915.enable_execlists);
+
+	/*
+	 * i915.enable_ppgtt is read-only, so do an early pass to validate the
+	 * user's requested state against the hardware/driver capabilities.  We
+	 * do this now so that we can print out any log messages once rather
+	 * than every time we check intel_enable_ppgtt().
+	 */
+	i915.enable_ppgtt =
+		intel_sanitize_enable_ppgtt(dev, i915.enable_ppgtt);
+	DRM_DEBUG_DRIVER("ppgtt mode: %i\n", i915.enable_ppgtt);
 }
 
 static void intel_init_dpio(struct drm_i915_private *dev_priv)
@@ -1456,10 +1504,7 @@ int i915_driver_unload(struct drm_device *dev)
 	flush_workqueue(dev_priv->wq);
 
 	intel_guc_ucode_fini(dev);
-	mutex_lock(&dev->struct_mutex);
-	i915_gem_cleanup_engines(dev);
-	i915_gem_context_fini(dev);
-	mutex_unlock(&dev->struct_mutex);
+	i915_gem_fini(dev);
 	intel_fbc_cleanup_cfb(dev_priv);
 
 	intel_power_domains_fini(dev_priv);

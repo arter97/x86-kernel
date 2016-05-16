@@ -157,7 +157,11 @@ else
                 $(call cc-option,-mtune=bonnell,$(call cc-option,-mtune=generic))
 
 	ifndef CONFIG_MNATIVE
-		cflags-$(CONFIG_GENERIC_CPU) += $(call cc-option,-mtune=generic)
+		ifeq ($(CONFIG_OPTIMIZE_SPECIFICALLY),y)
+			include arch/x86/Makefile.spec
+		else
+			cflags-$(CONFIG_GENERIC_CPU) += $(call cc-option,-mtune=generic)
+		endif
 	endif
 
         KBUILD_CFLAGS += $(cflags-y)

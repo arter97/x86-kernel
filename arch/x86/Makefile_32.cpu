@@ -61,7 +61,11 @@ cflags-$(CONFIG_MGEODEGX1)	+= -march=pentium-mmx
 cflags-$(CONFIG_MGEODE_LX)	+= $(call cc-option,-march=geode,-march=pentium-mmx)
 # add at the end to overwrite eventual tuning options from earlier
 # cpu entries
+ifneq ($CONFIG_OPTIMIZE_SPECIFICALLY,y)
 cflags-$(CONFIG_X86_GENERIC) 	+= $(call tune,generic,$(call tune,i686))
+else
+include arch/x86/Makefile.spec
+endif
 
 # Bug fix for binutils: this option is required in order to keep
 # binutils from generating NOPL instructions against our will.

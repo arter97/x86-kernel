@@ -461,6 +461,36 @@ config X86_GENERIC
 	  This is really intended for distributors who need more
 	  generic optimizations.
 
+config OPTIMIZE_SPECIFICALLY
+	bool "Use cflags retrived from -march=native for specific CPU"
+	depends on !X86_MARCH_NATIVE
+	default n
+	help
+	  This option will expose CONFIG_OPTIMIZE_SPECIFICALLY_FOR config that
+	  will virtually apply -march=native for that specific CPU.
+
+	  Only very specific CPUs are supported.
+	  Say Y if you're sure, and only if you use the very latest gcc.
+
+choice
+	prompt "Specify CPU"
+	default OPTIMIZE_FOR_6200U
+	depends on OPTIMIZE_SPECIFICALLY
+	help
+	  Specify CPU for CONFIG_OPTIMIZE_SPECIFICALLY.
+	  Invalid, unsupported CPU will break the build.
+
+	config OPTIMIZE_FOR_6700HQ
+		bool "Intel Core i7-6700HQ (Skylake)"
+
+	config OPTIMIZE_FOR_6200U
+		bool "Intel Core i5-6200U (Skylake)"
+
+	config OPTIMIZE_FOR_5820K
+		bool "Intel Core i7-5820K (Haswell)"
+
+endchoice
+
 #
 # Define implied options from the CPU selection here
 config X86_INTERNODE_CACHE_SHIFT

@@ -48,7 +48,11 @@ endif
 
 # add at the end to overwrite eventual tuning options from earlier
 # cpu entries
+ifneq ($CONFIG_OPTIMIZE_SPECIFICALLY,y)
 cflags-$(CONFIG_X86_GENERIC) 	+= $(call tune,generic,$(call tune,i686))
+else
+include arch/x86/Makefile.spec
+endif
 
 # Work around the pentium-mmx code generator madness of gcc4.4.x which
 # does stack alignment by generating horrible code _before_ the mcount

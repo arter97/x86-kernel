@@ -140,7 +140,11 @@ else
 	ifdef CONFIG_MNATIVE
 		cflags-$(CONFIG_MNATIVE) += $(call cc-option,-mtune=native)
 	else
-		cflags-$(CONFIG_GENERIC_CPU) += $(call cc-option,-mtune=generic)
+		ifeq ($(CONFIG_OPTIMIZE_SPECIFICALLY),y)
+			include arch/x86/Makefile.spec
+		else
+			cflags-$(CONFIG_GENERIC_CPU) += $(call cc-option,-mtune=generic)
+		endif
 	endif
 
         KBUILD_CFLAGS += $(cflags-y)

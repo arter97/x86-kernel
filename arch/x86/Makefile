@@ -112,10 +112,14 @@ else
 	cflags-$(CONFIG_MATOM) += $(call cc-option,-march=atom) \
 		$(call cc-option,-mtune=atom,$(call cc-option,-mtune=generic))
 
-	ifdef CONFIG_X86_MARCH_NATIVE
+	ifeq ($(CONFIG_X86_MARCH_NATIVE),y)
 		cflags-$(CONFIG_X86_MARCH_NATIVE) += $(call cc-option,-mtune=native)
 	else
-		cflags-$(CONFIG_GENERIC_CPU) += $(call cc-option,-mtune=generic)
+		ifeq ($(CONFIG_OPTIMIZE_SPECIFICALLY),y)
+			include arch/x86/Makefile.spec
+		else
+			cflags-$(CONFIG_GENERIC_CPU) += $(call cc-option,-mtune=generic)
+		endif
 	endif
 
         KBUILD_CFLAGS += $(cflags-y)

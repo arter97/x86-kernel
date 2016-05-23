@@ -6033,6 +6033,7 @@ enum skl_disp_power_wells {
 #define CHICKEN_PAR1_1		_MMIO(0x42080)
 #define  DPA_MASK_VBLANK_SRD	(1 << 15)
 #define  FORCE_ARB_IDLE_PLANES	(1 << 14)
+#define  SKL_EDP_PSR_FIX_RDWRAP	(1 << 3)
 
 #define _CHICKEN_PIPESL_1_A	0x420b0
 #define _CHICKEN_PIPESL_1_B	0x420b4
@@ -7566,14 +7567,15 @@ enum skl_disp_power_wells {
 #define  CDCLK_FREQ_540			(1<<26)
 #define  CDCLK_FREQ_337_308		(2<<26)
 #define  CDCLK_FREQ_675_617		(3<<26)
-#define  CDCLK_FREQ_DECIMAL_MASK	(0x7ff)
-
 #define  BXT_CDCLK_CD2X_DIV_SEL_MASK	(3<<22)
 #define  BXT_CDCLK_CD2X_DIV_SEL_1	(0<<22)
 #define  BXT_CDCLK_CD2X_DIV_SEL_1_5	(1<<22)
 #define  BXT_CDCLK_CD2X_DIV_SEL_2	(2<<22)
 #define  BXT_CDCLK_CD2X_DIV_SEL_4	(3<<22)
+#define  BXT_CDCLK_CD2X_PIPE(pipe)	((pipe)<<20)
+#define  BXT_CDCLK_CD2X_PIPE_NONE	BXT_CDCLK_CD2X_PIPE(3)
 #define  BXT_CDCLK_SSA_PRECHARGE_ENABLE	(1<<16)
+#define  CDCLK_FREQ_DECIMAL_MASK	(0x7ff)
 
 /* LCPLL_CTL */
 #define LCPLL1_CTL		_MMIO(0x46010)

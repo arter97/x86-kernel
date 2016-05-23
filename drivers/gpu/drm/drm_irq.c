@@ -303,6 +303,37 @@ static void drm_update_vblank_count(struct drm_device *dev, unsigned int pipe,
 	store_vblank(dev, pipe, diff, &t_vblank, cur_vblank);
 }
 
+/**
+ * drm_accurate_vblank_count - retrieve the master vblank counter
+ * @crtc: which counter to retrieve
+ *
+ * This function is similar to @drm_crtc_vblank_count but this
+ * function interpolates to handle a race with vblank irq's.
+ *
+ * This is mostly useful for hardware that can obtain the scanout
+ * position, but doesn't have a frame counter.
+ */
+u32 drm_accurate_vblank_count(struct drm_crtc *crtc)
+{
+	struct drm_device *dev = crtc->dev;
+	unsigned int pipe = drm_crtc_index(crtc);
+	u32 vblank;
+	unsigned long flags;
+
+	WARN(!dev->driver->get_vblank_timestamp,
+	     "This function requires support for accurate vblank timestamps.");
+
+	spin_lock_irqsave(&dev->vblank_time_lock, flags);
+
+	drm_update_vblank_count(dev, pipe, 0);
+	vblank = drm_vblank_count(dev, pipe);
+
+	spin_unlock_irqrestore(&dev->vblank_time_lock, flags);
+
+	return vblank;
+}
+EXPORT_SYMBOL(drm_accurate_vblank_count);
+
 /*
  * Disable vblank irq's on crtc, make sure that last vblank count
  * of hardware and corresponding consistent software vblank counter
@@ -863,10 +894,7 @@ int drm_calc_vbltimestamp_from_scanoutpos(struct drm_device *dev,
 	/* Subtract time delta from raw timestamp to get final
 	 * vblank_time timestamp for end of vblank.
 	 */
-	if (delta_ns < 0)
-		etime = ktime_add_ns(etime, -delta_ns);
-	else
-		etime = ktime_sub_ns(etime, delta_ns);
+	etime = ktime_sub_ns(etime, delta_ns);
 	*vblank_time = ktime_to_timeval(etime);
 
 	DRM_DEBUG_VBL("crtc %u : v 0x%x p(%d,%d)@ %ld.%ld -> %ld.%ld [e %d us, %d rep]\n",

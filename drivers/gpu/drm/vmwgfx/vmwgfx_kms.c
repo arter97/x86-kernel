@@ -2143,13 +2143,13 @@ int vmw_kms_fbdev_init_data(struct vmw_private *dev_priv,
 void vmw_kms_del_active(struct vmw_private *dev_priv,
 			struct vmw_display_unit *du)
 {
-	mutex_lock(&dev_priv->global_kms_state_mutex);
+	lockdep_assert_held_once(&dev_priv->dev->mode_config.mutex);
+
 	if (du->active_implicit) {
 		if (--(dev_priv->num_implicit) == 0)
 			dev_priv->implicit_fb = NULL;
 		du->active_implicit = false;
 	}
-	mutex_unlock(&dev_priv->global_kms_state_mutex);
 }
 
 /**
@@ -2165,7 +2165,8 @@ void vmw_kms_add_active(struct vmw_private *dev_priv,
 			struct vmw_display_unit *du,
 			struct vmw_framebuffer *vfb)
 {
-	mutex_lock(&dev_priv->global_kms_state_mutex);
+	lockdep_assert_held_once(&dev_priv->dev->mode_config.mutex);
+
 	WARN_ON_ONCE(!dev_priv->num_implicit && dev_priv->implicit_fb);
 
 	if (!du->active_implicit && du->is_implicit) {
@@ -2173,7 +2174,6 @@ void vmw_kms_add_active(struct vmw_private *dev_priv,
 		du->active_implicit = true;
 		dev_priv->num_implicit++;
 	}
-	mutex_unlock(&dev_priv->global_kms_state_mutex);
 }
 
 /**
@@ -2190,13 +2190,16 @@ bool vmw_kms_crtc_flippable(struct vmw_private *dev_priv,
 			    struct drm_crtc *crtc)
 {
 	struct vmw_display_unit *du = vmw_crtc_to_du(crtc);
-	bool ret;
 
-	mutex_lock(&dev_priv->global_kms_state_mutex);
-	ret = !du->is_implicit || dev_priv->num_implicit == 1;
-	mutex_unlock(&dev_priv->global_kms_state_mutex);
+	lockdep_assert_held_once(&dev_priv->dev->mode_config.mutex);
 
-	return ret;
+	if (!du->is_implicit)
+		return true;
+
+	if (dev_priv->num_implicit != 1)
+		return false;
+
+	return true;
 }
 
 /**
@@ -2211,18 +2214,16 @@ void vmw_kms_update_implicit_fb(struct vmw_private *dev_priv,
 	struct vmw_display_unit *du = vmw_crtc_to_du(crtc);
 	struct vmw_framebuffer *vfb;
 
-	mutex_lock(&dev_priv->global_kms_state_mutex);
+	lockdep_assert_held_once(&dev_priv->dev->mode_config.mutex);
 
 	if (!du->is_implicit)
-		goto out_unlock;
+		return;
 
 	vfb = vmw_framebuffer_to_vfb(crtc->primary->fb);
 	WARN_ON_ONCE(dev_priv->num_implicit != 1 &&
 		     dev_priv->implicit_fb != vfb);
 
 	dev_priv->implicit_fb = vfb;
-out_unlock:
-	mutex_unlock(&dev_priv->global_kms_state_mutex);
 }
 
 /**

@@ -92,7 +92,7 @@ the virtual deadline mechanism is explained.
 Virtual deadline.
 
 The key to achieving low latency, scheduling fairness, and "nice level"
-distribution in BFS is entirely in the virtual deadline mechanism. The one
+distribution in BFS is entirely in the virtual deadline mechanism. The related
 tunable in BFS is the rr_interval, or "round robin interval". This is the
 maximum time two SCHED_OTHER (or SCHED_NORMAL, the common scheduling policy)
 tasks of the same nice level will be running for, or looking at it the other
@@ -226,8 +226,7 @@ of both CPUs (due to the global runqueue) and heavily loaded machines (due to
 O(n) lookup) at this stage. Note that in terms of scalability, the number of
 _logical_ CPUs matters, not the number of _physical_ CPUs. Thus, a dual (2x)
 quad core (4X) hyperthreaded (2X) machine is effectively a 16X. Newer benchmark
-results are very promising indeed, without needing to tweak any knobs, features
-or options. Benchmark contributions are most welcome.
+results are very promising indeed. Benchmark contributions are most welcome.
 
 
 Features
@@ -242,12 +241,13 @@ to this, BFS also uses sub-tick accounting. What BFS does _not_ now feature is
 support for CGROUPS. The average user should neither need to know what these
 are, nor should they need to be using them to have good desktop behaviour.
 
-rr_interval
-
-There is only one "scheduler" tunable, the round robin interval. This can be
-accessed in
+There are two "scheduler" tunables, the round robin interval and the
+interactive flag. These can be accessed in
 
 	/proc/sys/kernel/rr_interval
+	/proc/sys/kernel/interactive
+
+rr_interval value
 
 The value is in milliseconds, and the default value is set to 6ms. Valid values
 are from 1 to 1000. Decreasing the value will decrease latencies at the cost of
@@ -264,6 +264,16 @@ performance of BFS to other schedulers. Worst case latencies being higher than
 Experimentation has shown that rr intervals being increased up to 300 can
 improve throughput but beyond that, scheduling noise from elsewhere prevents
 further demonstrable throughput.
+
+interactive flag
+
+This is a simple boolean that can be set to 1 or 0, set to 1 by default. This
+sacrifices some of the interactive performance by giving tasks a degree of
+soft affinity for logical CPUs when it will lead to improved throughput, but
+enabling it also sacrifices the completely deterministic nature with respect
+to latency that BFS otherwise normally provides, and subsequently leads to
+slightly higher latencies and a noticeably less interactive system.
+
 
 Isochronous scheduling.
 

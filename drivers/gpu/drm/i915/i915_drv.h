@@ -1932,6 +1932,8 @@ struct drm_i915_private {
 	struct i915_suspend_saved_registers regfile;
 	struct vlv_s0ix_state vlv_s0ix_state;
 
+	bool skl_sagv_enabled;
+
 	struct {
 		/*
 		 * Raw watermark latency values:

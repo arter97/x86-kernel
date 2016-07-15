@@ -3516,7 +3516,6 @@ skl_wm_flush_pipe(struct drm_i915_private *dev_priv, enum pipe pipe, int pass)
 		I915_WRITE(PLANE_SURF(pipe, plane),
 			   I915_READ(PLANE_SURF(pipe, plane)));
 	}
-	I915_WRITE(CURBASE(pipe), I915_READ(CURBASE(pipe)));
 }
 
 static bool

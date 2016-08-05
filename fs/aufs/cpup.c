@@ -344,9 +344,9 @@ int au_copy_file(struct file *dst, struct file *src, loff_t len)
 	dst->f_pos = 0;
 	err = au_do_copy_file(dst, src, len, buf, blksize);
 	if (do_kfree)
-		kfree(buf);
+		au_delayed_kfree(buf);
 	else
-		free_page((unsigned long)buf);
+		au_delayed_free_page((unsigned long)buf);
 
 out:
 	return err;
@@ -506,7 +506,7 @@ static int au_do_cpup_symlink(struct path *h_path, struct dentry *h_src,
 		sym.k[symlen] = 0;
 		err = vfsub_symlink(h_dir, h_path, sym.k);
 	}
-	free_page((unsigned long)sym.k);
+	au_delayed_free_page((unsigned long)sym.k);
 
 out:
 	return err;
@@ -877,7 +877,7 @@ out_rev:
 	}
 out_parent:
 	dput(dst_parent);
-	kfree(a);
+	au_delayed_kfree(a);
 out:
 	return err;
 }

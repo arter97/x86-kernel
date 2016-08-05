@@ -50,7 +50,10 @@ struct au_finfo {
 	struct au_fidir		*fi_hdir;	/* for dir only */
 
 	struct hlist_node	fi_hlist;
-	struct file		*fi_file;	/* very ugly */
+	union {
+		struct file		*fi_file;	/* very ugly */
+		struct llist_node	fi_lnode;	/* delayed free */
+	};
 } ____cacheline_aligned_in_smp;
 
 /* ---------------------------------------------------------------------- */
@@ -101,7 +104,7 @@ int aufs_release_nondir(struct inode *inode __maybe_unused, struct file *file);
 struct file *au_read_pre(struct file *file, int keep_fi);
 
 /* finfo.c */
-void au_hfput(struct au_hfile *hf, struct file *file);
+void au_hfput(struct au_hfile *hf, int execed);
 void au_set_h_fptr(struct file *file, aufs_bindex_t bindex,
 		   struct file *h_file);
 
@@ -110,7 +113,7 @@ struct au_fidir *au_fidir_alloc(struct super_block *sb);
 int au_fidir_realloc(struct au_finfo *finfo, int nbr);
 
 void au_fi_init_once(void *_fi);
-void au_finfo_fin(struct file *file);
+void au_finfo_fin(struct file *file, int atonce);
 int au_finfo_init(struct file *file, struct au_fidir *fidir);
 
 /* ioctl.c */

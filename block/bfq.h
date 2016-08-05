@@ -1,5 +1,5 @@
 /*
- * BFQ-v8 for 4.7.0: data structures and common functions prototypes.
+ * BFQ-v8r1 for 4.7.0: data structures and common functions prototypes.
  *
  * Based on ideas and code from CFQ:
  * Copyright (C) 2003 Jens Axboe <axboe@kernel.dk>
@@ -31,6 +31,13 @@
 #define BFQ_WEIGHT_LEGACY_DFL	100
 #define BFQ_DEFAULT_GRP_IOPRIO	0
 #define BFQ_DEFAULT_GRP_CLASS	IOPRIO_CLASS_BE
+
+/*
+ * Soft real-time applications are extremely more latency sensitive
+ * than interactive ones. Over-raise the weight of the former to
+ * privilege them against the latter.
+ */
+#define BFQ_SOFTRT_WEIGHT_FACTOR	100
 
 struct bfq_entity;
 
@@ -86,7 +93,7 @@ struct bfq_sched_data {
  *                             with a given weight.
  */
 struct bfq_weight_counter {
-	short int weight; /* weight of the entities this counter refers to */
+	unsigned int weight; /* weight of the entities this counter refers to */
 	unsigned int num_active; /* nr of active entities with this weight */
 	/*
 	 * Weights tree member (see bfq_data's @queue_weights_tree and
@@ -151,11 +158,11 @@ struct bfq_entity {
 	/* budget, used also to calculate F_i: F_i = S_i + @budget / @weight */
 	int budget;
 
-	unsigned short weight; 	/* weight of the queue */
-	unsigned short new_weight; /* next weight if a change is in progress */
+	unsigned int weight; 	/* weight of the queue */
+	unsigned int new_weight; /* next weight if a change is in progress */
 
 	/* original weight, used to implement weight boosting */
-	unsigned short orig_weight;
+	unsigned int orig_weight;
 
 	/* parent entity, for hierarchical scheduling */
 	struct bfq_entity *parent;
@@ -699,7 +706,7 @@ struct bfq_group_data {
 	/* must be the first member */
 	struct blkcg_policy_data pd;
 
-	unsigned short weight;
+	unsigned int weight;
 };
 
 /**

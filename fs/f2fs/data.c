@@ -29,13 +29,13 @@
 #include "trace.h"
 #include <trace/events/f2fs.h>
 
-static void f2fs_read_end_io(struct bio *bio, int err)
+static void f2fs_read_end_io(struct bio *bio)
 {
 	struct bio_vec *bvec;
 	int i;
 
 	if (f2fs_bio_encrypted(bio)) {
-		if (err) {
+		if (bio->bi_error) {
 			fscrypt_release_ctx(bio->bi_private);
 		} else {
 			fscrypt_decrypt_bio_pages(bio->bi_private, bio);
@@ -46,7 +46,7 @@ static void f2fs_read_end_io(struct bio *bio, int err)
 	bio_for_each_segment_all(bvec, bio, i) {
 		struct page *page = bvec->bv_page;
 
-		if (!err) {
+		if (!bio->bi_error) {
 			if (!PageUptodate(page))
 				SetPageUptodate(page);
 		} else {
@@ -58,7 +58,7 @@ static void f2fs_read_end_io(struct bio *bio, int err)
 	bio_put(bio);
 }
 
-static void f2fs_write_end_io(struct bio *bio, int err)
+static void f2fs_write_end_io(struct bio *bio)
 {
 	struct f2fs_sb_info *sbi = bio->bi_private;
 	struct bio_vec *bvec;
@@ -69,7 +69,7 @@ static void f2fs_write_end_io(struct bio *bio, int err)
 
 		fscrypt_pullback_bio_page(&page, true);
 
-		if (unlikely(err)) {
+		if (unlikely(bio->bi_error)) {
 			set_bit(AS_EIO, &page->mapping->flags);
 			f2fs_stop_checkpoint(sbi, true);
 		}

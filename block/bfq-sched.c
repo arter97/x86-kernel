@@ -627,7 +627,7 @@ __bfq_entity_update_weight_prio(struct bfq_service_tree *old_st,
 
 	if (entity->prio_changed) {
 		struct bfq_queue *bfqq = bfq_entity_to_bfqq(entity);
-		unsigned short prev_weight, new_weight;
+		unsigned int prev_weight, new_weight;
 		struct bfq_data *bfqd = NULL;
 		struct rb_root *root;
 #ifdef CONFIG_BFQ_GROUP_IOSCHED
@@ -660,7 +660,7 @@ __bfq_entity_update_weight_prio(struct bfq_service_tree *old_st,
 				else
 					entity->new_weight = BFQ_MAX_WEIGHT;
 			}
-		       	entity->orig_weight = entity->new_weight;
+			entity->orig_weight = entity->new_weight;
 			if (bfqq)
 				bfqq->ioprio =
 				  bfq_weight_to_ioprio(entity->orig_weight);
@@ -689,6 +689,13 @@ __bfq_entity_update_weight_prio(struct bfq_service_tree *old_st,
 		 * associated with its new weight.
 		 */
 		if (prev_weight != new_weight) {
+			if (bfqq)
+				bfq_log_bfqq(bfqq->bfqd, bfqq,
+					     "weight changed %d %d(%d %d)",
+					     prev_weight, new_weight,
+					     entity->orig_weight,
+					     bfqq->wr_coeff);
+
 			root = bfqq ? &bfqd->queue_weights_tree :
 				      &bfqd->group_weights_tree;
 			bfq_weights_tree_remove(bfqd, entity, root);
@@ -1419,7 +1426,7 @@ static void bfq_del_bfqq_busy(struct bfq_data *bfqd, struct bfq_queue *bfqq,
 	bfqg_stats_update_dequeue(bfqq_group(bfqq));
 
 	BUG_ON(bfqq->entity.budget < 0);
-	
+
 	bfq_deactivate_bfqq(bfqd, bfqq, requeue);
 
 	BUG_ON(bfqq->entity.budget < 0);

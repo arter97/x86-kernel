@@ -1079,12 +1079,15 @@ static void bfq_update_bfqq_wr_on_rq_arrival(struct bfq_data *bfqd,
 {
 	if (old_wr_coeff == 1 && wr_or_deserves_wr) {
 		/* start a weight-raising period */
-		bfqq->wr_coeff = bfqd->bfq_wr_coeff;
-		if (interactive) /* update wr duration */
+		if (interactive) {
+			bfqq->wr_coeff = bfqd->bfq_wr_coeff;
 			bfqq->wr_cur_max_time = bfq_wr_duration(bfqd);
-		else
+		} else {
+			bfqq->wr_coeff = bfqd->bfq_wr_coeff *
+				BFQ_SOFTRT_WEIGHT_FACTOR;
 			bfqq->wr_cur_max_time =
 				bfqd->bfq_wr_rt_max_time;
+		}
 		/*
 		 * If needed, further reduce budget to make sure it is
 		 * close to bfqq's backlog, so as to reduce the
@@ -1164,6 +1167,8 @@ static void bfq_update_bfqq_wr_on_rq_arrival(struct bfq_data *bfqd,
 			bfqq->last_wr_start_finish = jiffies;
 			bfqq->wr_cur_max_time =
 				bfqd->bfq_wr_rt_max_time;
+			bfqq->wr_coeff = bfqd->bfq_wr_coeff *
+				BFQ_SOFTRT_WEIGHT_FACTOR;
 			bfq_log_bfqq(bfqd, bfqq,
 				     "switching to soft_rt wr, or "
 				     " just moving forward duration");
@@ -1323,7 +1328,7 @@ static void bfq_bfqq_handle_idle_busy_switch(struct bfq_data *bfqd,
 	 * function bfq_bfqq_update_budg_for_activation).
 	 */
 	if (bfqd->in_service_queue && bfqq_wants_to_preempt &&
-	    bfqd->in_service_queue->wr_coeff == 1 &&
+	    bfqd->in_service_queue->wr_coeff < bfqq->wr_coeff &&
 	    next_queue_may_preempt(bfqd)) {
 		struct bfq_queue *in_serv =
 			bfqd->in_service_queue;
@@ -2807,6 +2812,8 @@ static void bfq_bfqq_expire(struct bfq_data *bfqd,
 	      bfq_bfqq_budget_left(bfqq) >=  entity->budget / 3)))
 		bfq_bfqq_charge_time(bfqd, bfqq, delta);
 
+	BUG_ON(bfqq->entity.budget < bfqq->entity.service);
+
 	if (reason == BFQ_BFQQ_TOO_IDLE &&
 	    entity->service <= 2 * entity->budget / 10 )
 		bfq_clear_bfqq_IO_bound(bfqq);
@@ -2868,7 +2875,10 @@ static void bfq_bfqq_expire(struct bfq_data *bfqd,
 	 * Increase, decrease or leave budget unchanged according to
 	 * reason.
 	 */
+	BUG_ON(bfqq->entity.budget < bfqq->entity.service);
 	__bfq_bfqq_recalc_budget(bfqd, bfqq, reason);
+	BUG_ON(bfqq->next_rq == NULL &&
+	       bfqq->entity.budget < bfqq->entity.service);
 	__bfq_bfqq_expire(bfqd, bfqq);
 
 	BUG_ON(!bfq_bfqq_busy(bfqq) && reason == BFQ_BFQQ_BUDGET_EXHAUSTED &&
@@ -3337,6 +3347,7 @@ static int bfq_dispatch_request(struct bfq_data *bfqd,
 		 */
 		if (!bfqd->rq_in_driver)
 			bfq_schedule_dispatch(bfqd);
+		BUG_ON(bfqq->entity.budget < bfqq->entity.service);
 		goto expire;
 	}
 
@@ -3458,7 +3469,8 @@ static int bfq_dispatch_requests(struct request_queue *q, int force)
 	bfq_log_bfqq(bfqd, bfqq, "dispatched %s request",
 			bfq_bfqq_sync(bfqq) ? "sync" : "async");
 
-	BUG_ON(bfqq->entity.budget < bfqq->entity.service);
+	BUG_ON(bfqq->next_rq == NULL &&
+	       bfqq->entity.budget < bfqq->entity.service);
 	return 1;
 }
 
@@ -4687,7 +4699,7 @@ static ssize_t bfq_max_budget_store(struct elevator_queue *e,
 	return ret;
 }
 
-/* 
+/*
  * Leaving this name to preserve name compatibility with cfq
  * parameters, but this timeout is used for both sync and async.
  */
@@ -4819,7 +4831,7 @@ static struct blkcg_policy blkcg_policy_bfq = {
 static int __init bfq_init(void)
 {
 	int ret;
-	char msg[50] = "BFQ I/O-scheduler: v8-rc6";
+	char msg[50] = "BFQ I/O-scheduler: v8r1";
 
 	/*
 	 * Can be 0 on HZ < 1000 setups.

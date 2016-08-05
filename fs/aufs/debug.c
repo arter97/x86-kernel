@@ -323,7 +323,7 @@ void au_dpri_sb(struct super_block *sb)
 	au_br_count_init(&a->fake);
 	err = do_pri_br(-1, &a->fake);
 	au_br_count_fin(&a->fake);
-	kfree(a);
+	au_delayed_kfree(a);
 	dpri("dev 0x%x\n", sb->s_dev);
 	if (err || !au_test_aufs(sb))
 		return;
@@ -331,9 +331,8 @@ void au_dpri_sb(struct super_block *sb)
 	sbinfo = au_sbi(sb);
 	if (!sbinfo)
 		return;
-	dpri("nw %lld, gen %u, kobj %d\n",
-	     percpu_counter_sum(&sbinfo->si_nowait.nw_len),
-	     sbinfo->si_generation,
+	dpri("nw %d, gen %u, kobj %d\n",
+	     atomic_read(&sbinfo->si_nowait.nw_len), sbinfo->si_generation,
 	     atomic_read(&sbinfo->si_kobj.kref.refcount));
 	for (bindex = 0; bindex <= sbinfo->si_bbot; bindex++)
 		do_pri_br(bindex, sbinfo->si_branch[0 + bindex]);

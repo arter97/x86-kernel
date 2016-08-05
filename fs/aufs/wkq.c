@@ -41,7 +41,7 @@ static void wkq_func(struct work_struct *wk)
 	else {
 		kobject_put(wkinfo->kobj);
 		module_put(THIS_MODULE); /* todo: ?? */
-		kfree(wkinfo);
+		au_delayed_kfree(wkinfo);
 	}
 }
 
@@ -64,7 +64,7 @@ static int au_wkq_comp_alloc(struct au_wkinfo *wkinfo, struct completion **comp)
 
 static void au_wkq_comp_free(struct completion *comp)
 {
-	kfree(comp);
+	au_delayed_kfree(comp);
 }
 
 #else
@@ -145,7 +145,7 @@ int au_wkq_nowait(au_wkq_func_t func, void *args, struct super_block *sb,
 	int err;
 	struct au_wkinfo *wkinfo;
 
-	percpu_counter_inc(&au_sbi(sb)->si_nowait.nw_len);
+	atomic_inc(&au_sbi(sb)->si_nowait.nw_len);
 
 	/*
 	 * wkq_func() must free this wkinfo.
@@ -175,14 +175,9 @@ int au_wkq_nowait(au_wkq_func_t func, void *args, struct super_block *sb,
 
 void au_nwt_init(struct au_nowait_tasks *nwt)
 {
-	percpu_counter_init(&nwt->nw_len, 0, GFP_NOFS);
+	atomic_set(&nwt->nw_len, 0);
+	/* smp_mb(); */ /* atomic_set */
 	init_waitqueue_head(&nwt->nw_wq);
-}
-
-void au_nwt_fin(struct au_nowait_tasks *nwt)
-{
-	AuDebugOn(percpu_counter_sum(&nwt->nw_len));
-	percpu_counter_destroy(&nwt->nw_len);
 }
 
 void au_wkq_fin(void)

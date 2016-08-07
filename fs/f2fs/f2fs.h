@@ -142,42 +142,6 @@ struct f2fs_mount_info {
 #define F2FS_CLEAR_FEATURE(sb, mask)					\
 	F2FS_SB(sb)->raw_super->feature &= ~cpu_to_le32(mask)
 
-static inline void inode_lock(struct inode *inode)
-{
-	mutex_lock(&inode->i_mutex);
-}
-
-static inline void inode_unlock(struct inode *inode)
-{
-	mutex_unlock(&inode->i_mutex);
-}
-
-/**
- * wq_has_sleeper - check if there are any waiting processes
- * @wq: wait queue head
- *
- * Returns true if wq has waiting processes
- *
- * Please refer to the comment for waitqueue_active.
- */
-static inline bool wq_has_sleeper(wait_queue_head_t *wq)
-{
-	/*   
-	 * We need to be sure we are in sync with the
-	 * add_wait_queue modifications to the wait queue.
-	 *
-	 * This memory barrier should be paired with one on the
-	 * waiting side.
-	 */
-	smp_mb();
-	return waitqueue_active(wq);
-}
-
-static inline void inode_nohighmem(struct inode *inode)
-{
-	mapping_set_gfp_mask(inode->i_mapping, GFP_USER);
-}
-
 /*
  * For checkpoint manager
  */

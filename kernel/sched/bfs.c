@@ -1379,8 +1379,19 @@ static void try_preempt(struct task_struct *p, struct rq *this_rq)
 	else
 		return;
 
+	/* See if this task can preempt the task on the current CPU first. */
+	cpu = cpu_of(this_rq);
+	if (cpumask_test_cpu(cpu, &tmp)) {
+		if (smt_should_schedule(p, cpu) && can_preempt(p, this_rq->rq_prio, this_rq->rq_deadline)) {
+			resched_curr(this_rq);
+			return;
+		}
+		cpumask_clear_cpu(cpu, &tmp);
+	}
+
 	highest_prio = latest_deadline = 0;
 
+	/* Now look for the CPU with the latest deadline */
 	for_each_cpu(cpu, &tmp) {
 		struct rq *rq;
 		int rq_prio;
@@ -1404,8 +1415,17 @@ static void try_preempt(struct task_struct *p, struct rq *this_rq)
 		if (!smt_should_schedule(p, cpu))
 			return;
 #endif
-		if (can_preempt(p, highest_prio, highest_prio_rq->rq_deadline))
+		if (can_preempt(p, highest_prio, latest_deadline)) {
+			/*
+			 * If we have decided this task should preempt this CPU,
+			 * set the task's CPU to match so there is no discrepancy
+			 * in earliest_deadline_task which biases away tasks with
+			 * a different CPU set. This means waking tasks are
+			 * treated differently to rescheduling tasks.
+			 */
+			set_task_cpu(p, cpu);
 			resched_curr(highest_prio_rq);
+		}
 	}
 }
 static int __set_cpus_allowed_ptr(struct task_struct *p,

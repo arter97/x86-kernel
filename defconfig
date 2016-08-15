@@ -1,6 +1,6 @@
 #
 # Automatically generated file; DO NOT EDIT.
-# Linux/x86 4.4.16-zen Kernel Configuration
+# Linux/x86 4.4.17-zen Kernel Configuration
 #
 CONFIG_64BIT=y
 CONFIG_X86_64=y
@@ -649,7 +649,7 @@ CONFIG_CPU_FREQ_GOV_CONSERVATIVE=y
 #
 # CPU frequency scaling drivers
 #
-CONFIG_X86_INTEL_PSTATE=y
+# CONFIG_X86_INTEL_PSTATE is not set
 CONFIG_X86_PCC_CPUFREQ=m
 CONFIG_X86_ACPI_CPUFREQ=m
 CONFIG_X86_ACPI_CPUFREQ_CPB=y

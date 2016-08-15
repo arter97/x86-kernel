@@ -538,8 +538,7 @@ static void move_encrypted_block(struct inode *inode, block_t bidx)
 	struct f2fs_io_info fio = {
 		.sbi = F2FS_I_SB(inode),
 		.type = DATA,
-		.op = REQ_OP_READ,
-		.op_flags = READ_SYNC,
+		.rw = READ_SYNC,
 		.encrypted_page = NULL,
 	};
 	struct dnode_of_data dn;
@@ -613,8 +612,7 @@ static void move_encrypted_block(struct inode *inode, block_t bidx)
 	/* allocate block address */
 	f2fs_wait_on_page_writeback(dn.node_page, NODE, true);
 
-	fio.op = REQ_OP_WRITE;
-	fio.op_flags = WRITE_SYNC;
+	fio.rw = WRITE_SYNC;
 	fio.new_blkaddr = newaddr;
 	f2fs_submit_page_mbio(&fio);
 
@@ -651,8 +649,7 @@ static void move_data_page(struct inode *inode, block_t bidx, int gc_type)
 		struct f2fs_io_info fio = {
 			.sbi = F2FS_I_SB(inode),
 			.type = DATA,
-			.op = REQ_OP_WRITE,
-			.op_flags = WRITE_SYNC,
+			.rw = WRITE_SYNC,
 			.page = page,
 			.encrypted_page = NULL,
 		};
@@ -744,8 +741,7 @@ next_step:
 
 			start_bidx = start_bidx_of_node(nofs, inode);
 			data_page = get_read_data_page(inode,
-					start_bidx + ofs_in_node, REQ_RAHEAD,
-					true);
+					start_bidx + ofs_in_node, READA, true);
 			if (IS_ERR(data_page)) {
 				iput(inode);
 				continue;

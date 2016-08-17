@@ -639,9 +639,7 @@ static int crypto_gcm_create_common(struct crypto_template *tmpl,
 
 	ghash_alg = crypto_find_alg(ghash_name, &crypto_ahash_type,
 				    CRYPTO_ALG_TYPE_HASH,
-				    CRYPTO_ALG_TYPE_AHASH_MASK |
-				    crypto_requires_sync(algt->type,
-							 algt->mask));
+				    CRYPTO_ALG_TYPE_AHASH_MASK);
 	if (IS_ERR(ghash_alg))
 		return PTR_ERR(ghash_alg);
 

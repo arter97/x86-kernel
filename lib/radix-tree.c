@@ -274,11 +274,10 @@ radix_tree_node_alloc(struct radix_tree_root *root)
 
 		/*
 		 * Even if the caller has preloaded, try to allocate from the
-		 * cache first for the new node to get accounted to the memory
-		 * cgroup.
+		 * cache first for the new node to get accounted.
 		 */
 		ret = kmem_cache_alloc(radix_tree_node_cachep,
-				       gfp_mask | __GFP_NOWARN);
+				       gfp_mask | __GFP_ACCOUNT | __GFP_NOWARN);
 		if (ret)
 			goto out;
 
@@ -301,7 +300,8 @@ radix_tree_node_alloc(struct radix_tree_root *root)
 		kmemleak_update_trace(ret);
 		goto out;
 	}
-	ret = kmem_cache_alloc(radix_tree_node_cachep, gfp_mask);
+	ret = kmem_cache_alloc(radix_tree_node_cachep,
+			       gfp_mask | __GFP_ACCOUNT);
 out:
 	BUG_ON(radix_tree_is_internal_node(ret));
 	return ret;
@@ -347,12 +347,6 @@ static int __radix_tree_preload(gfp_t gfp_mask)
 	struct radix_tree_preload *rtp;
 	struct radix_tree_node *node;
 	int ret = -ENOMEM;
-
-	/*
-	 * Nodes preloaded by one cgroup can be be used by another cgroup, so
-	 * they should never be accounted to any particular memory cgroup.
-	 */
-	gfp_mask &= ~__GFP_ACCOUNT;
 
 	preempt_disable();
 	rtp = this_cpu_ptr(&radix_tree_preloads);

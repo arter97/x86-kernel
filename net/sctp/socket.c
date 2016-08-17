@@ -4301,7 +4301,6 @@ int sctp_transport_walk_start(struct rhashtable_iter *iter)
 
 	err = rhashtable_walk_start(iter);
 	if (err && err != -EAGAIN) {
-		rhashtable_walk_stop(iter);
 		rhashtable_walk_exit(iter);
 		return err;
 	}

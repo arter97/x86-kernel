@@ -44,11 +44,13 @@ struct rq {
 	struct sched_domain *sd;
 	int *cpu_locality; /* CPU relative cache distance */
 #ifdef CONFIG_SCHED_SMT
-	bool (*siblings_idle)(int cpu);
+	cpumask_t thread_mask;
+	bool (*siblings_idle)(struct rq *rq);
 	/* See if all smt siblings are idle */
 #endif /* CONFIG_SCHED_SMT */
 #ifdef CONFIG_SCHED_MC
-	bool (*cache_idle)(int cpu);
+	cpumask_t core_mask;
+	bool (*cache_idle)(struct rq *rq);
 	/* See if all cache siblings are idle */
 #endif /* CONFIG_SCHED_MC */
 	u64 last_niffy; /* Last time this RQ updated grq.niffies */
@@ -201,10 +203,22 @@ static inline void cpufreq_trigger(u64 time, unsigned long util)
 
        data = rcu_dereference_sched(*this_cpu_ptr(&cpufreq_update_util_data));
        if (data)
-               data->func(data, time, util, 0);
+               data->func(data, time, util, 1);
+}
+
+static inline void other_cpufreq_trigger(int cpu, u64 time, unsigned long util)
+{
+       struct update_util_data *data;
+
+       data = rcu_dereference_sched(*per_cpu_ptr(&cpufreq_update_util_data, cpu));
+       if (data)
+               data->func(data, time, util, 1);
 }
 #else
 static inline void cpufreq_trigger(u64 time, unsigned long util)
+{
+}
+static inline void other_cpufreq_trigger(int cpu, u64 time, unsigned long util)
 {
 }
 #endif /* CONFIG_CPU_FREQ */

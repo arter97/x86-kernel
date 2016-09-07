@@ -1084,14 +1084,17 @@ config CGROUP_WRITEBACK
 
 menuconfig CGROUP_SCHED
 	bool "CPU controller"
-	depends on !SCHED_BFS
 	default n
 	help
 	  This feature lets CPU scheduler recognize task groups and control CPU
 	  bandwidth allocation to such task groups. It uses cgroups to group
-	  tasks.
+	  tasks. In combination with BFS this is purely a STUB to create the
+	  files associated with the CPU controller cgroup but most of the
+	  controls do nothing. This is useful for working in environments and
+	  with applications that will only work if this control group is
+	  present.
 
-if CGROUP_SCHED
+if CGROUP_SCHED && !SCHED_BFS
 config FAIR_GROUP_SCHED
 	bool "Group scheduling for SCHED_OTHER"
 	depends on CGROUP_SCHED

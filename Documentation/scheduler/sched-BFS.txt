@@ -13,14 +13,14 @@ one workload cause massive detriment to another.
 
 Design summary.
 
-BFS is best described as a single runqueue, O(n) lookup, earliest effective
-virtual deadline first design, loosely based on EEVDF (earliest eligible virtual
-deadline first) and my previous Staircase Deadline scheduler. Each component
-shall be described in order to understand the significance of, and reasoning for
-it. The codebase when the first stable version was released was approximately
-9000 lines less code than the existing mainline linux kernel scheduler (in
-2.6.31). This does not even take into account the removal of documentation and
-the cgroups code that is not used.
+BFS is best described as a single runqueue, O(log n) insertion, O(1) lookup,
+earliest effective virtual deadline first design, loosely based on EEVDF
+(earliest eligible virtual deadline first) and my previous Staircase Deadline
+scheduler. Each component shall be described in order to understand the
+significance of, and reasoning for it. The codebase when the first stable
+version was released was approximately 9000 lines less code than the existing
+mainline linux kernel scheduler (in 2.6.31). This does not even take into
+account the removal of documentation and the cgroups code that is not used.
 
 Design reasoning.
 
@@ -62,12 +62,13 @@ Design details.
 
 Task insertion.
 
-BFS inserts tasks into each relevant queue as an O(1) insertion into a double
-linked list. On insertion, *every* running queue is checked to see if the newly
-queued task can run on any idle queue, or preempt the lowest running task on the
-system. This is how the cross-CPU scheduling of BFS achieves significantly lower
-latency per extra CPU the system has. In this case the lookup is, in the worst
-case scenario, O(n) where n is the number of CPUs on the system.
+BFS inserts tasks into each relevant queue as an O(log n) insertion into a
+customised skip list (as described by William Pugh). At the time of insertion,
+*every* running queue is checked to see if the newly queued task can run on any
+idle queue, or preempt the lowest running task on the system. This is how the
+cross-CPU scheduling of BFS achieves significantly lower latency per extra CPU
+the system has. In this case the lookup is, in the worst case scenario, O(k)
+where k is the number of online CPUs on the system.
 
 Data protection.
 
@@ -117,7 +118,7 @@ higher priority than a currently running task on any cpu by virtue of the fact
 that it has an earlier virtual deadline than the currently running task. The
 earlier deadline is the key to which task is next chosen for the first and
 second cases. Once a task is descheduled, it is put back on the queue, and an
-O(n) lookup of all queued-but-not-running tasks is done to determine which has
+O(1) lookup of all queued-but-not-running tasks is done to determine which has
 the earliest deadline and that task is chosen to receive CPU next.
 
 The CPU proportion of different nice tasks works out to be approximately the
@@ -134,26 +135,40 @@ Task lookup.
 
 BFS has 103 priority queues. 100 of these are dedicated to the static priority
 of realtime tasks, and the remaining 3 are, in order of best to worst priority,
-SCHED_ISO (isochronous), SCHED_NORMAL, and SCHED_IDLEPRIO (idle priority
-scheduling). When a task of these priorities is queued, a bitmap of running
-priorities is set showing which of these priorities has tasks waiting for CPU
-time. When a CPU is made to reschedule, the lookup for the next task to get
-CPU time is performed in the following way:
+SCHED_ISO (isochronous), SCHED_NORMAL/SCHED_BATCH, and SCHED_IDLEPRIO (idle
+priority scheduling).
 
-First the bitmap is checked to see what static priority tasks are queued. If
-any realtime priorities are found, the corresponding queue is checked and the
-first task listed there is taken (provided CPU affinity is suitable) and lookup
-is complete. If the priority corresponds to a SCHED_ISO task, they are also
-taken in FIFO order (as they behave like SCHED_RR). If the priority corresponds
-to either SCHED_NORMAL or SCHED_IDLEPRIO, then the lookup becomes O(n). At this
-stage, every task in the runlist that corresponds to that priority is checked
-to see which has the earliest set deadline, and (provided it has suitable CPU
-affinity) it is taken off the runqueue and given the CPU. If a task has an
-expired deadline, it is taken and the rest of the lookup aborted (as they are
-chosen in FIFO order).
+When a task of these priorities is queued, it is added to the skiplist with a
+different sorting value according to the type of task. For realtime tasks and
+isochronous tasks, it is their static priority. For SCHED_NORMAL and
+SCHED_BATCH tasks it is their virtual deadline value. For SCHED_IDLEPRIO tasks
+it is their virtual deadline value offset by an impossibly large value to ensure
+they never go before normal tasks. When isochronous or idleprio tasks do not
+meet the conditions that allow them to run with their special scheduling they
+are queued as per the remainder of the SCHED_NORMAL tasks.
 
-Thus, the lookup is O(n) in the worst case only, where n is as described
-earlier, as tasks may be chosen before the whole task list is looked over.
+Lookup is performed by selecting the very first entry in the "level 0" skiplist
+as it will always be the lowest priority task having been sorted while being
+entered into the skiplist. This is usually an O(1) operation, however if there
+are tasks with limited affinity set and they are not able to run on the current
+CPU, the next in the list is checked and so on.
+
+Thus, the lookup for the common case is O(1) and O(n) in the worst case when
+the system has nothing but selectively affined tasks that can never run on the
+current CPU.
+
+
+Task removal.
+
+Removal of tasks in the skip list is an O(k) operation where 0 <= k < 16,
+corresponding with the "levels" in the skip list. 16 was chosen as the upper
+limit in the skiplist as it guarantees O(log n) insertion for up to 64k
+currently active tasks and most systems do not usually allow more than 32k
+tasks, and 16 levels makes the skiplist lookup components fit in 2 cachelines.
+The skiplist level chosen when inserting a task is pseudo-random but a minor
+optimisation is used to limit the max level based on the absolute number of
+queued tasks since high levels afford no advantage at low numbers of queued
+tasks yet increase overhead.
 
 
 Scalability.
@@ -217,17 +232,14 @@ following preference (if idle):
 
 This shows the SMT or "hyperthread" awareness in the design as well which will
 choose a real idle core first before a logical SMT sibling which already has
-tasks on the physical CPU.
-
-Early benchmarking of BFS suggested scalability dropped off at the 16 CPU mark.
-However this benchmarking was performed on an earlier design that was far less
-scalable than the current one so it's hard to know how scalable it is in terms
-of both CPUs (due to the global runqueue) and heavily loaded machines (due to
-O(n) lookup) at this stage. Note that in terms of scalability, the number of
-_logical_ CPUs matters, not the number of _physical_ CPUs. Thus, a dual (2x)
-quad core (4X) hyperthreaded (2X) machine is effectively a 16X. Newer benchmark
-results are very promising indeed. Benchmark contributions are most welcome.
-
+tasks on the physical CPU. Early benchmarking of BFS suggested scalability
+dropped off at the 16 CPU mark. However this benchmarking was performed on an
+earlier design that was far less scalable than the current one so it's hard to
+know how scalable it is in terms of number of CPUs (due to the global
+runqueue). Note that in terms of scalability, the number of _logical_ CPUs
+matters, not the number of _physical_ CPUs. Thus, a dual (2x) quad core (4X)
+hyperthreaded (2X) machine is effectively a 16X. Newer benchmark results are
+very promising indeed. Benchmark contributions are most welcome.
 
 Features
 
@@ -240,6 +252,9 @@ and iso_cpu tunables, and the SCHED_ISO and SCHED_IDLEPRIO policies. In addition
 to this, BFS also uses sub-tick accounting. What BFS does _not_ now feature is
 support for CGROUPS. The average user should neither need to know what these
 are, nor should they need to be using them to have good desktop behaviour.
+Rudimentary support for the CPU controller CGROUP in the form of filesystem
+stubs for the expected CGROUP structure to allow applications that demand their
+presence to work but they do not have any functionality.
 
 There are two "scheduler" tunables, the round robin interval and the
 interactive flag. These can be accessed in

@@ -24,6 +24,8 @@ struct rq {
 	int rq_prio;
 	bool rq_running; /* There is a task running */
 	int soft_affined; /* Running or queued tasks with this set as their rq */
+	u64 load_update; /* When we last updated load */
+	unsigned long load_avg; /* Rolling load average */
 #ifdef CONFIG_SMT_NICE
 	struct mm_struct *rq_mm;
 	int rq_smt_bias; /* Policy/nice level bias across smt siblings */
@@ -201,9 +203,11 @@ static inline void cpufreq_trigger(u64 time, unsigned long util)
 {
        struct update_util_data *data;
 
+       if (util > SCHED_CAPACITY_SCALE)
+	       util = SCHED_CAPACITY_SCALE;
        data = rcu_dereference_sched(*this_cpu_ptr(&cpufreq_update_util_data));
        if (data)
-               data->func(data, time, util, 1);
+               data->func(data, time, util, SCHED_CAPACITY_SCALE);
 }
 
 static inline void other_cpufreq_trigger(int cpu, u64 time, unsigned long util)
@@ -212,12 +216,13 @@ static inline void other_cpufreq_trigger(int cpu, u64 time, unsigned long util)
 
        data = rcu_dereference_sched(*per_cpu_ptr(&cpufreq_update_util_data, cpu));
        if (data)
-               data->func(data, time, util, 1);
+               data->func(data, time, util, SCHED_CAPACITY_SCALE);
 }
 #else
 static inline void cpufreq_trigger(u64 time, unsigned long util)
 {
 }
+
 static inline void other_cpufreq_trigger(int cpu, u64 time, unsigned long util)
 {
 }

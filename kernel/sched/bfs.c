@@ -137,7 +137,7 @@
 
 void print_scheduler_version(void)
 {
-	printk(KERN_INFO "BFS CPU scheduler v0.480 by Con Kolivas.\n");
+	printk(KERN_INFO "BFS CPU scheduler v0.490 by Con Kolivas.\n");
 }
 
 /*
@@ -586,6 +586,7 @@ static bool isoprio_suitable(void)
  */
 static void enqueue_task(struct task_struct *p, struct rq *rq)
 {
+	unsigned int randseed;
 	u64 sl_id;
 
 	if (!rt_task(p)) {
@@ -612,10 +613,16 @@ static void enqueue_task(struct task_struct *p, struct rq *rq)
 		sl_id = p->prio;
 	else {
 		sl_id = p->deadline;
+		/* Set it to cope with 4 left shifts with locality_diff */
 		if (p->prio == IDLE_PRIO)
-			sl_id |= 0xF000000000000000;
+			sl_id |= 0x0F00000000000000;
 	}
-	p->node = skiplist_insert(grq.node, grq.sl, sl_id, p, grq.niffies);
+	/*
+	 * Some architectures don't have better than microsecond resolution
+	 * so mask out ~microseconds as the random seed for skiplist insertion.
+	 */
+	randseed = (grq.niffies >> 10) & 0xFFFFFFFF;
+	p->node = skiplist_insert(grq.node, grq.sl, sl_id, p, randseed);
 	sched_info_queued(rq, p);
 }
 
@@ -670,6 +677,113 @@ static inline int queued_notrunning(void)
 	return grq.qnr;
 }
 
+#ifdef CONFIG_SMT_NICE
+static const cpumask_t *thread_cpumask(int cpu);
+
+/* Find the best real time priority running on any SMT siblings of cpu and if
+ * none are running, the static priority of the best deadline task running.
+ * The lookups to the other runqueues is done lockless as the occasional wrong
+ * value would be harmless. */
+static int best_smt_bias(struct rq *this_rq)
+{
+	int other_cpu, best_bias = 0;
+
+	for_each_cpu(other_cpu, &this_rq->thread_mask) {
+		struct rq *rq = cpu_rq(other_cpu);
+
+		if (rq_idle(rq))
+			continue;
+		if (!rq->online)
+			continue;
+		if (!rq->rq_mm)
+			continue;
+		if (likely(rq->rq_smt_bias > best_bias))
+			best_bias = rq->rq_smt_bias;
+	}
+	return best_bias;
+}
+
+static int task_prio_bias(struct task_struct *p)
+{
+	if (rt_task(p))
+		return 1 << 30;
+	else if (task_running_iso(p))
+		return 1 << 29;
+	else if (task_running_idle(p))
+		return 0;
+	return MAX_PRIO - p->static_prio;
+}
+
+static bool smt_always_schedule(struct task_struct __maybe_unused *p, struct rq __maybe_unused *this_rq)
+{
+	return true;
+}
+
+static bool (*smt_schedule)(struct task_struct *p, struct rq *this_rq) = &smt_always_schedule;
+
+/* We've already decided p can run on CPU, now test if it shouldn't for SMT
+ * nice reasons. */
+static bool smt_should_schedule(struct task_struct *p, struct rq *this_rq)
+{
+	int best_bias, task_bias;
+
+	/* Kernel threads always run */
+	if (unlikely(!p->mm))
+		return true;
+	if (rt_task(p))
+		return true;
+	if (!idleprio_suitable(p))
+		return true;
+	best_bias = best_smt_bias(this_rq);
+	/* The smt siblings are all idle or running IDLEPRIO */
+	if (best_bias < 1)
+		return true;
+	task_bias = task_prio_bias(p);
+	if (task_bias < 1)
+		return false;
+	if (task_bias >= best_bias)
+		return true;
+	/* Dither 25% cpu of normal tasks regardless of nice difference */
+	if (best_bias % 4 == 1)
+		return true;
+	/* Sorry, you lose */
+	return false;
+}
+
+static unsigned long cpu_load_avg(struct rq *rq)
+{
+	return rq->soft_affined * SCHED_CAPACITY_SCALE;
+}
+
+/*
+ * This is the proportion of SCHED_CAPACITY_SCALE (1024) used when each thread
+ * of a CPU with SMT siblings is in use.
+ */
+#define SCHED_SMT_LOAD (890)
+
+/*
+ * Load of a CPU with smt siblings should be considered to be the load from all
+ * the SMT siblings, thus will be >1 if both threads are in use since they are
+ * not full cores.
+ */
+static unsigned long smt_load_avg(struct rq *rq)
+{
+	unsigned long load = rq->soft_affined * SCHED_SMT_LOAD;
+	int cpu;
+
+	for_each_cpu(cpu, thread_cpumask(rq->cpu))
+		load += cpu_rq(cpu)->soft_affined * SCHED_SMT_LOAD;
+	return load;
+}
+
+static unsigned long (*rq_load_avg)(struct rq *rq) = &cpu_load_avg;
+#else
+#define smt_schedule(p, this_rq) (true)
+static inline unsigned long rq_load_avg(struct rq *rq)
+{
+	return rq->soft_affined * SCHED_CAPACITY_SCALE;
+}
+#endif
 #ifdef CONFIG_SMP
 /*
  * The cpu_idle_map stores a bitmap of all the CPUs currently idle to
@@ -758,7 +872,7 @@ static int best_mask_cpu(int best_cpu, struct rq *rq, cpumask_t *tmpmask)
 #ifdef CONFIG_SCHED_SMT
 		if (locality == 1)
 			ranking |= CPUIDLE_DIFF_THREAD;
-		else if (!(tmp_rq->siblings_idle(tmp_rq)))
+		if (!(tmp_rq->siblings_idle(tmp_rq)))
 			ranking |= CPUIDLE_THREAD_BUSY;
 #endif
 		if (scaling_rq(tmp_rq))
@@ -785,82 +899,6 @@ bool cpus_share_cache(int this_cpu, int that_cpu)
 
 	return (this_rq->cpu_locality[that_cpu] < 3);
 }
-
-#ifdef CONFIG_SMT_NICE
-static const cpumask_t *thread_cpumask(int cpu);
-
-/* Find the best real time priority running on any SMT siblings of cpu and if
- * none are running, the static priority of the best deadline task running.
- * The lookups to the other runqueues is done lockless as the occasional wrong
- * value would be harmless. */
-static int best_smt_bias(struct rq *this_rq)
-{
-	int other_cpu, best_bias = 0;
-
-	for_each_cpu(other_cpu, &this_rq->thread_mask) {
-		struct rq *rq = cpu_rq(other_cpu);
-
-		if (rq_idle(rq))
-			continue;
-		if (!rq->online)
-			continue;
-		if (!rq->rq_mm)
-			continue;
-		if (likely(rq->rq_smt_bias > best_bias))
-			best_bias = rq->rq_smt_bias;
-	}
-	return best_bias;
-}
-
-static int task_prio_bias(struct task_struct *p)
-{
-	if (rt_task(p))
-		return 1 << 30;
-	else if (task_running_iso(p))
-		return 1 << 29;
-	else if (task_running_idle(p))
-		return 0;
-	return MAX_PRIO - p->static_prio;
-}
-
-static bool smt_always_schedule(struct task_struct __maybe_unused *p, struct rq __maybe_unused *this_rq)
-{
-	return true;
-}
-
-static bool (*smt_schedule)(struct task_struct *p, struct rq *this_rq) = &smt_always_schedule;
-
-/* We've already decided p can run on CPU, now test if it shouldn't for SMT
- * nice reasons. */
-static bool smt_should_schedule(struct task_struct *p, struct rq *this_rq)
-{
-	int best_bias, task_bias;
-
-	/* Kernel threads always run */
-	if (unlikely(!p->mm))
-		return true;
-	if (rt_task(p))
-		return true;
-	if (!idleprio_suitable(p))
-		return true;
-	best_bias = best_smt_bias(this_rq);
-	/* The smt siblings are all idle or running IDLEPRIO */
-	if (best_bias < 1)
-		return true;
-	task_bias = task_prio_bias(p);
-	if (task_bias < 1)
-		return false;
-	if (task_bias >= best_bias)
-		return true;
-	/* Dither 25% cpu of normal tasks regardless of nice difference */
-	if (best_bias % 4 == 1)
-		return true;
-	/* Sorry, you lose */
-	return false;
-}
-#else
-#define smt_schedule(p, this_rq) (true)
-#endif
 
 static bool resched_best_idle(struct task_struct *p)
 {
@@ -980,6 +1018,26 @@ static int effective_prio(struct task_struct *p)
 }
 
 /*
+ * Update the load average for feeding into cpu frequency governors. Use a rolling
+ * average with ~ time constant of 32ms
+ */
+static void update_load_avg(struct rq *rq)
+{
+	/* rq clock can go backwards so skip update if that happens */
+	if (likely(rq->clock > rq->load_update)) {
+		unsigned long us_interval = (rq->clock - rq->load_update) >> 10;
+		long load;
+
+		load = rq->load_avg - (rq->load_avg * us_interval * 80 / 32768 / 128);
+		if (unlikely(load < 0))
+			load = 0;
+		load += rq->soft_affined * rq_load_avg(rq) * us_interval * 80 / 32768 / 128;
+		rq->load_avg = load;
+	}
+	rq->load_update = rq->clock;
+}
+
+/*
  * activate_task - move a task to the runqueue. Enter with grq locked.
  */
 static void activate_task(struct task_struct *p, struct rq *rq)
@@ -1005,7 +1063,8 @@ static void activate_task(struct task_struct *p, struct rq *rq)
 	p->on_rq = 1;
 	grq.nr_running++;
 	inc_qnr();
-	cpufreq_trigger(grq.niffies, rq->soft_affined);
+	update_load_avg(rq);
+	cpufreq_trigger(grq.niffies, rq->load_avg);
 }
 
 static inline void clear_sticky(struct task_struct *p);
@@ -1022,13 +1081,15 @@ static inline void deactivate_task(struct task_struct *p, struct rq *rq)
 	p->on_rq = 0;
 	grq.nr_running--;
 	clear_sticky(p);
-	cpufreq_trigger(grq.niffies, rq->soft_affined);
+	update_load_avg(rq);
+	cpufreq_trigger(grq.niffies, rq->load_avg);
 }
 
 #ifdef CONFIG_SMP
 void set_task_cpu(struct task_struct *p, unsigned int cpu)
 {
 	unsigned int tcpu;
+
 #ifdef CONFIG_LOCKDEP
 	/*
 	 * The caller should hold grq lock.
@@ -1047,13 +1108,21 @@ void set_task_cpu(struct task_struct *p, unsigned int cpu)
 	 */
 	smp_wmb();
 	if (p->on_rq) {
+		struct rq *rq;
+
 		/*
 		 * set_task_cpu can be set on other CPUs so call cpufreq_trigger
 		 * explicitly telling it what CPU is being updated as the value
 		 * of soft_affined has changed.
 		 */
-		other_cpufreq_trigger(tcpu, grq.niffies, --task_rq(p)->soft_affined);
-		other_cpufreq_trigger(cpu, grq.niffies, ++cpu_rq(cpu)->soft_affined);
+		rq = task_rq(p);
+		rq->soft_affined--;
+		update_load_avg(rq);
+		other_cpufreq_trigger(tcpu, grq.niffies, rq->load_avg);
+		rq = cpu_rq(cpu);
+		rq->soft_affined++;
+		update_load_avg(rq);
+		other_cpufreq_trigger(cpu, grq.niffies, rq->load_avg);
 	}
 	task_thread_info(p)->cpu = cpu;
 }
@@ -1414,7 +1483,7 @@ static void try_preempt(struct task_struct *p, struct rq *this_rq)
 
 	/* See if this task can preempt the task on the current CPU first. */
 	pcpu = cpu_of(this_rq);
-	if (!sched_interactive && cpumask_test_cpu(pcpu, &tmp)) {
+	if (likely(cpumask_test_cpu(pcpu, &tmp))) {
 		if (smt_schedule(p, this_rq) && can_preempt(p, this_rq->rq_prio, this_rq->rq_deadline)) {
 			resched_curr(this_rq);
 			return;
@@ -3105,16 +3174,12 @@ void scheduler_tick(void)
 	/* grq lock not grabbed, so only update rq clock */
 	update_rq_clock(rq);
 	update_cpu_clock_tick(rq, rq->curr);
+	update_load_avg(rq);
+	cpufreq_trigger(grq.niffies, rq->load_avg);
 	if (!rq_idle(rq))
 		task_running_tick(rq);
-	else {
-		/*
-		 * Trigger cpufreq update while we're idle. Soft affined will
-		 * be zero unless we have uninterruptible tasks.
-		 */
-		cpufreq_trigger(grq.niffies, rq->soft_affined);
+	else
 		no_iso_tick();
-	}
 	rq->last_tick = rq->clock;
 	perf_event_task_tick();
 }
@@ -3487,6 +3552,8 @@ static void wake_smt_siblings(struct rq *this_rq)
 		struct rq *rq;
 
 		rq = cpu_rq(other_cpu);
+		if (!rq->online)
+			continue;
 		if (rq_idle(rq)) {
 			struct task_struct *p = rq->curr;
 
@@ -7145,6 +7212,9 @@ void __init sched_init_smp(void)
 {
 	struct sched_domain *sd;
 	int cpu, other_cpu;
+#ifdef CONFIG_SCHED_SMT
+	bool smt_threads = false;
+#endif
 
 	cpumask_var_t non_isolated_cpus;
 
@@ -7217,13 +7287,17 @@ void __init sched_init_smp(void)
 			cpumask_copy(&rq->thread_mask, thread_cpumask(cpu));
 			cpumask_clear_cpu(cpu, &rq->thread_mask);
 			rq->siblings_idle = siblings_cpu_idle;
+			smt_threads = true;
 		}
 #endif
 	}
 #ifdef CONFIG_SMT_NICE
-	check_siblings = &check_smt_siblings;
-	wake_siblings = &wake_smt_siblings;
-	smt_schedule = &smt_should_schedule;
+	if (smt_threads) {
+		check_siblings = &check_smt_siblings;
+		wake_siblings = &wake_smt_siblings;
+		smt_schedule = &smt_should_schedule;
+		rq_load_avg = &smt_load_avg;
+	}
 #endif
 	grq_unlock_irq();
 	mutex_unlock(&sched_domains_mutex);
@@ -7250,6 +7324,32 @@ int in_sched_functions(unsigned long addr)
 		(addr >= (unsigned long)__sched_text_start
 		&& addr < (unsigned long)__sched_text_end);
 }
+
+#ifdef CONFIG_CGROUP_SCHED
+/* task group related information */
+struct task_group {
+	struct cgroup_subsys_state css;
+
+	struct rcu_head rcu;
+	struct list_head list;
+
+	struct task_group *parent;
+	struct list_head siblings;
+	struct list_head children;
+};
+
+/*
+ * Default task group.
+ * Every task in system belongs to this group at bootup.
+ */
+struct task_group root_task_group;
+LIST_HEAD(task_groups);
+
+/* Cacheline aligned slab cache for task_group */
+static struct kmem_cache *task_group_cache __read_mostly;
+/* task_group_lock serializes the addition/removal of task groups */
+static DEFINE_SPINLOCK(task_group_lock);
+#endif /* CONFIG_CGROUP_SCHED */
 
 void __init sched_init(void)
 {
@@ -7281,6 +7381,14 @@ void __init sched_init(void)
 #else
 	uprq = &per_cpu(runqueues, 0);
 #endif
+
+#ifdef CONFIG_CGROUP_SCHED
+	task_group_cache = KMEM_CACHE(task_group, 0);
+
+	list_add(&root_task_group.list, &task_groups);
+	INIT_LIST_HEAD(&root_task_group.children);
+	INIT_LIST_HEAD(&root_task_group.siblings);
+#endif /* CONFIG_CGROUP_SCHED */
 	for_each_possible_cpu(i) {
 		rq = cpu_rq(i);
 		rq->grq_lock = &grq.lock;
@@ -7706,3 +7814,127 @@ unsigned long default_scale_smt_power(struct sched_domain *sd, int cpu)
 	return smt_gain;
 }
 #endif
+
+#ifdef CONFIG_CGROUP_SCHED
+static void sched_free_group(struct task_group *tg)
+{
+	kmem_cache_free(task_group_cache, tg);
+}
+
+/* allocate runqueue etc for a new task group */
+struct task_group *sched_create_group(struct task_group *parent)
+{
+	struct task_group *tg;
+
+	tg = kmem_cache_alloc(task_group_cache, GFP_KERNEL | __GFP_ZERO);
+	if (!tg)
+		return ERR_PTR(-ENOMEM);
+
+	return tg;
+}
+
+void sched_online_group(struct task_group *tg, struct task_group *parent)
+{
+	unsigned long flags;
+
+	spin_lock_irqsave(&task_group_lock, flags);
+	list_add_rcu(&tg->list, &task_groups);
+
+	WARN_ON(!parent); /* root should already exist */
+
+	tg->parent = parent;
+	INIT_LIST_HEAD(&tg->children);
+	list_add_rcu(&tg->siblings, &parent->children);
+	spin_unlock_irqrestore(&task_group_lock, flags);
+}
+
+/* rcu callback to free various structures associated with a task group */
+static void sched_free_group_rcu(struct rcu_head *rhp)
+{
+	/* now it should be safe to free those cfs_rqs */
+	sched_free_group(container_of(rhp, struct task_group, rcu));
+}
+
+void sched_destroy_group(struct task_group *tg)
+{
+	/* wait for possible concurrent references to cfs_rqs complete */
+	call_rcu(&tg->rcu, sched_free_group_rcu);
+}
+
+void sched_offline_group(struct task_group *tg)
+{
+	unsigned long flags;
+
+	spin_lock_irqsave(&task_group_lock, flags);
+	list_del_rcu(&tg->list);
+	list_del_rcu(&tg->siblings);
+	spin_unlock_irqrestore(&task_group_lock, flags);
+}
+
+static inline struct task_group *css_tg(struct cgroup_subsys_state *css)
+{
+	return css ? container_of(css, struct task_group, css) : NULL;
+}
+
+static struct cgroup_subsys_state *
+cpu_cgroup_css_alloc(struct cgroup_subsys_state *parent_css)
+{
+	struct task_group *parent = css_tg(parent_css);
+	struct task_group *tg;
+
+	if (!parent) {
+		/* This is early initialization for the top cgroup */
+		return &root_task_group.css;
+	}
+
+	tg = sched_create_group(parent);
+	if (IS_ERR(tg))
+		return ERR_PTR(-ENOMEM);
+	return &tg->css;
+}
+
+static void cpu_cgroup_css_released(struct cgroup_subsys_state *css)
+{
+	struct task_group *tg = css_tg(css);
+
+	sched_offline_group(tg);
+}
+
+static void cpu_cgroup_css_free(struct cgroup_subsys_state *css)
+{
+	struct task_group *tg = css_tg(css);
+
+	/*
+	 * Relies on the RCU grace period between css_released() and this.
+	 */
+	sched_free_group(tg);
+}
+
+static void cpu_cgroup_fork(struct task_struct *task)
+{
+}
+
+static int cpu_cgroup_can_attach(struct cgroup_taskset *tset)
+{
+		return 0;
+}
+
+static void cpu_cgroup_attach(struct cgroup_taskset *tset)
+{
+}
+
+static struct cftype cpu_files[] = {
+	{ }	/* terminate */
+};
+
+struct cgroup_subsys cpu_cgrp_subsys = {
+	.css_alloc	= cpu_cgroup_css_alloc,
+	.css_released	= cpu_cgroup_css_released,
+	.css_free	= cpu_cgroup_css_free,
+	.fork		= cpu_cgroup_fork,
+	.can_attach	= cpu_cgroup_can_attach,
+	.attach		= cpu_cgroup_attach,
+	.legacy_cftypes	= cpu_files,
+	.early_init	= true,
+};
+#endif	/* CONFIG_CGROUP_SCHED */

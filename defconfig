@@ -1,6 +1,6 @@
 #
 # Automatically generated file; DO NOT EDIT.
-# Linux/x86 4.7.0-zen Kernel Configuration
+# Linux/x86 4.7.3-999999-zen Kernel Configuration
 #
 CONFIG_64BIT=y
 CONFIG_X86_64=y
@@ -162,6 +162,7 @@ CONFIG_MEMCG=y
 CONFIG_MEMCG_SWAP=y
 CONFIG_MEMCG_SWAP_ENABLED=y
 # CONFIG_BLK_CGROUP is not set
+# CONFIG_CGROUP_SCHED is not set
 # CONFIG_CGROUP_PIDS is not set
 CONFIG_CGROUP_FREEZER=y
 CONFIG_CGROUP_HUGETLB=y

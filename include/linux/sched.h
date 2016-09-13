@@ -1478,14 +1478,11 @@ struct task_struct {
 #ifdef CONFIG_SCHED_BFS
 	int time_slice;
 	u64 deadline;
-	skiplist_node *node; /* Skip list node id */
+	skiplist_node node; /* Skip list node */
 	u64 last_ran;
 	u64 sched_time; /* sched_clock time spent running */
 #ifdef CONFIG_SMT_NICE
 	int smt_bias; /* Policy/nice level bias across smt siblings */
-#endif
-#ifdef CONFIG_SMP
-	bool sticky; /* Soft affined flag */
 #endif
 #ifdef CONFIG_HOTPLUG_CPU
 	bool zerobound; /* Bound to CPU0 for hotplug */

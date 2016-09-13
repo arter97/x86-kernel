@@ -191,17 +191,7 @@ when it has been deemed their overhead is so marginal that they're worth adding.
 The first is the local copy of the running process' data to the CPU it's running
 on to allow that data to be updated lockless where possible. Then there is
 deference paid to the last CPU a task was running on, by trying that CPU first
-when looking for an idle CPU to use the next time it's scheduled. Finally there
-is the notion of "sticky" tasks that are flagged when they are involuntarily
-descheduled, meaning they still want further CPU time. This sticky flag is
-used to bias heavily against those tasks being scheduled on a different CPU
-unless that CPU would be otherwise idle. When a cpu frequency governor is used
-that scales with CPU load, such as ondemand, sticky tasks are not scheduled
-on a different CPU at all, preferring instead to go idle. This means the CPU
-they were bound to is more likely to increase its speed while the other CPU
-will go idle, thus speeding up total task execution time and likely decreasing
-power usage. This is the only scenario where BFS will allow a CPU to go idle
-in preference to scheduling a task on the earliest available spare CPU.
+when looking for an idle CPU to use the next time it's scheduled.
 
 The real cost of migrating a task from one CPU to another is entirely dependant
 on the cache footprint of the task, how cache intensive the task is, how long
@@ -219,16 +209,15 @@ to worst to choose the most suitable idle CPU based on cache locality, NUMA
 node locality and hyperthread sibling business. They are chosen in the
 following preference (if idle):
 
-* Same core, idle or busy cache, idle threads
-* Other core, same cache, idle or busy cache, idle threads.
-* Same node, other CPU, idle cache, idle threads.
-* Same node, other CPU, busy cache, idle threads.
-* Same core, busy threads.
-* Other core, same cache, busy threads.
-* Same node, other CPU, busy threads.
-* Other node, other CPU, idle cache, idle threads.
-* Other node, other CPU, busy cache, idle threads.
-* Other node, other CPU, busy threads.
+ * Same thread, idle or busy cache, idle or busy threads
+ * Other core, same cache, idle or busy cache, idle threads.
+ * Same node, other CPU, idle cache, idle threads.
+ * Same node, other CPU, busy cache, idle threads.
+ * Other core, same cache, busy threads.
+ * Same node, other CPU, busy threads.
+ * Other node, other CPU, idle cache, idle threads.
+ * Other node, other CPU, busy cache, idle threads.
+ * Other node, other CPU, busy threads.
 
 This shows the SMT or "hyperthread" awareness in the design as well which will
 choose a real idle core first before a logical SMT sibling which already has

@@ -53,34 +53,28 @@ aid of prev<->next pointer manipulation and no searching.
 
 #define MaxNumberOfLevels 16
 #define MaxLevel (MaxNumberOfLevels - 1)
-#define newNode kmalloc(sizeof(skiplist_node), GFP_ATOMIC)
 
-skiplist_node *skiplist_init(void)
+void skiplist_init(skiplist_node *slnode)
 {
-	skiplist_node *slnode = newNode;
 	int i;
 
-	BUG_ON(!slnode);
 	slnode->key = 0xFFFFFFFFFFFFFFFF;
 	slnode->level = 0;
 	slnode->value = NULL;
 	for (i = 0; i < MaxNumberOfLevels; i++)
 		slnode->next[i] = slnode->prev[i] = slnode;
-	return slnode;
 }
 
 skiplist *new_skiplist(skiplist_node *slnode)
 {
-	skiplist *l = kmalloc(sizeof(skiplist), GFP_ATOMIC);
+	skiplist *l = kzalloc(sizeof(skiplist), GFP_ATOMIC);
 
 	BUG_ON(!l);
-	l->entries = 0;
-	l->level = 0;
 	l->header = slnode;
 	return l;
 }
 
-void free_skiplist(skiplist_node *slnode, skiplist *l)
+void free_skiplist(skiplist *l)
 {
 	skiplist_node *p, *q;
 
@@ -88,10 +82,15 @@ void free_skiplist(skiplist_node *slnode, skiplist *l)
 	do {
 		q = p->next[0];
 		p->next[0]->prev[0] = q->prev[0];
-		kfree(p);
+		skiplist_node_init(p);
 		p = q;
-	} while (p != slnode);
+	} while (p != l->header);
 	kfree(l);
+}
+
+void skiplist_node_init(skiplist_node *node)
+{
+	memset(node, 0, sizeof(skiplist_node));
 }
 
 /*
@@ -126,13 +125,13 @@ static inline unsigned int randomLevel(int entries, unsigned int randseed)
 	return randseed & mask;
 }
 
-skiplist_node *skiplist_insert(skiplist_node *slnode, skiplist *l, keyType key, valueType value, unsigned int randseed)
+void skiplist_insert(skiplist *l, skiplist_node *node, keyType key, valueType value, unsigned int randseed)
 {
 	skiplist_node *update[MaxNumberOfLevels];
 	skiplist_node *p, *q;
 	int k = l->level;
 
-	p = slnode;
+	p = l->header;
 	do {
 		while (q = p->next[k], q->key <= key)
 			p = q;
@@ -142,24 +141,22 @@ skiplist_node *skiplist_insert(skiplist_node *slnode, skiplist *l, keyType key, 
 	k = randomLevel(++l->entries, randseed);
 	if (k > l->level) {
 		k = ++l->level;
-		update[k] = slnode;
+		update[k] = l->header;
 	}
 
-	q = newNode;
-	q->level = k;
-	q->key = key;
-	q->value = value;
+	node->level = k;
+	node->key = key;
+	node->value = value;
 	do {
 		p = update[k];
-		q->next[k] = p->next[k];
-		p->next[k] = q;
-		q->prev[k] = p;
-		q->next[k]->prev[k] = q;
+		node->next[k] = p->next[k];
+		p->next[k] = node;
+		node->prev[k] = p;
+		node->next[k]->prev[k] = node;
 	} while (--k >= 0);
-	return q;
 }
 
-void skiplist_delnode(skiplist_node *slnode, skiplist *l, skiplist_node *node)
+void skiplist_delete(skiplist *l, skiplist_node *node)
 {
 	int k, m = node->level;
 
@@ -167,9 +164,9 @@ void skiplist_delnode(skiplist_node *slnode, skiplist *l, skiplist_node *node)
 		node->prev[k]->next[k] = node->next[k];
 		node->next[k]->prev[k] = node->prev[k];
 	}
-	kfree(node);
+	skiplist_node_init(node);
 	if (m == l->level) {
-		while (l->header->next[m] == slnode && l->header->prev[m] == slnode && m > 0)
+		while (l->header->next[m] == l->header && l->header->prev[m] == l->header && m > 0)
 			m--;
 		l->level = m;
 	}

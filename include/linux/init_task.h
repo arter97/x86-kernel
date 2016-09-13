@@ -204,8 +204,7 @@ extern struct task_group root_task_group;
 	.restart_block = {						\
 		.fn = do_no_restart_syscall,				\
 	},								\
-	.node		= NULL,						\
-	.time_slice	= HZ,					\
+	.time_slice	= HZ,						\
 	.tasks		= LIST_HEAD_INIT(tsk.tasks),			\
 	INIT_PUSHABLE_TASKS(tsk)					\
 	.ptraced	= LIST_HEAD_INIT(tsk.ptraced),			\

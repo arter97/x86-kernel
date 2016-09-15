@@ -20,8 +20,14 @@ typedef struct listStructure {
 	skiplist_node *header; /* pointer to header */
 } skiplist;
 
-skiplist_node *skiplist_init(void);
+void skiplist_init(skiplist_node *slnode);
 skiplist *new_skiplist(skiplist_node *slnode);
-skiplist_node *skiplist_insert(skiplist_node *slnode, skiplist *l, keyType key, valueType value, unsigned int randseed);
-void skiplist_delnode(skiplist_node *slnode, skiplist *l, skiplist_node *node);
+void free_skiplist(skiplist *l);
+void skiplist_node_init(skiplist_node *node);
+void skiplist_insert(skiplist *l, skiplist_node *node, keyType key, valueType value, unsigned int randseed);
+void skiplist_delete(skiplist *l, skiplist_node *node);
+
+static inline bool skiplist_node_empty(skiplist_node *node) {
+	return (!node->next[0]);
+}
 #endif /* _LINUX_SKIP_LISTS_H */

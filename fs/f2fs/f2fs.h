@@ -142,16 +142,6 @@ struct f2fs_mount_info {
 #define F2FS_CLEAR_FEATURE(sb, mask)					\
 	F2FS_SB(sb)->raw_super->feature &= ~cpu_to_le32(mask)
 
-static inline void inode_lock(struct inode *inode)
-{
-	mutex_lock(&inode->i_mutex);
-}
-
-static inline void inode_unlock(struct inode *inode)
-{
-	mutex_unlock(&inode->i_mutex);
-}
-
 /**
  * wq_has_sleeper - check if there are any waiting processes
  * @wq: wait queue head

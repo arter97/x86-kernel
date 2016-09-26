@@ -35,7 +35,7 @@
 #include <linux/init.h>
 #include <asm/uaccess.h>
 #include <linux/highmem.h>
-#include <asm/mmu_context.h>
+#include <linux/mmu_context.h>
 #include <linux/interrupt.h>
 #include <linux/capability.h>
 #include <linux/completion.h>
@@ -137,7 +137,7 @@
 
 void print_scheduler_version(void)
 {
-	printk(KERN_INFO "BFS CPU scheduler v0.497 by Con Kolivas.\n");
+	printk(KERN_INFO "BFS CPU scheduler v0.502 by Con Kolivas.\n");
 }
 
 /*
@@ -668,6 +668,11 @@ static inline int queued_notrunning(void)
 	return grq.qnr;
 }
 
+static unsigned long rq_load_avg(struct rq *rq)
+{
+	return rq->soft_affined * SCHED_CAPACITY_SCALE;
+}
+
 #ifdef CONFIG_SMT_NICE
 static const cpumask_t *thread_cpumask(int cpu);
 
@@ -740,41 +745,9 @@ static bool smt_should_schedule(struct task_struct *p, struct rq *this_rq)
 	/* Sorry, you lose */
 	return false;
 }
-
-static unsigned long cpu_load_avg(struct rq *rq)
-{
-	return rq->soft_affined * SCHED_CAPACITY_SCALE;
-}
-
-/*
- * This is the proportion of SCHED_CAPACITY_SCALE (1024) used when each thread
- * of a CPU with SMT siblings is in use.
- */
-#define SCHED_SMT_LOAD (890)
-
-/*
- * Load of a CPU with smt siblings should be considered to be the load from all
- * the SMT siblings, thus will be >1 if both threads are in use since they are
- * not full cores.
- */
-static unsigned long smt_load_avg(struct rq *rq)
-{
-	unsigned long load = rq->soft_affined * SCHED_SMT_LOAD;
-	int cpu;
-
-	for_each_cpu(cpu, thread_cpumask(rq->cpu))
-		load += cpu_rq(cpu)->soft_affined * SCHED_SMT_LOAD;
-	return load;
-}
-
-static unsigned long (*rq_load_avg)(struct rq *rq) = &cpu_load_avg;
-#else
+#else /* CONFIG_SMT_NICE */
 #define smt_schedule(p, this_rq) (true)
-static inline unsigned long rq_load_avg(struct rq *rq)
-{
-	return rq->soft_affined * SCHED_CAPACITY_SCALE;
-}
-#endif
+#endif /* CONFIG_SMT_NICE */
 #ifdef CONFIG_SMP
 /*
  * The cpu_idle_map stores a bitmap of all the CPUs currently idle to
@@ -1047,21 +1020,13 @@ void set_task_cpu(struct task_struct *p, unsigned int cpu)
 	 */
 	smp_wmb();
 	if (p->on_rq) {
-		struct rq *rq;
+		struct rq *rq = task_rq(p);
 
-		/*
-		 * set_task_cpu can be set on other CPUs so call cpufreq_trigger
-		 * explicitly telling it what CPU is being updated as the value
-		 * of soft_affined has changed.
-		 */
-		rq = task_rq(p);
 		rq->soft_affined--;
 		update_load_avg(rq);
-		other_cpufreq_trigger(tcpu, grq.niffies, rq->load_avg);
 		rq = cpu_rq(cpu);
 		rq->soft_affined++;
 		update_load_avg(rq);
-		other_cpufreq_trigger(cpu, grq.niffies, rq->load_avg);
 	}
 	task_thread_info(p)->cpu = cpu;
 }
@@ -7076,7 +7041,7 @@ void __init sched_init_smp(void)
 
 		/* First check if this cpu is in the same node */
 		for_each_domain(cpu, sd) {
-			if (sd->level > SD_LV_NODE)
+			if (sd->level > SD_LV_MC)
 				continue;
 			/* Set locality to local node if not already found lower */
 			for_each_cpu(other_cpu, sched_domain_span(sd)) {
@@ -7116,7 +7081,6 @@ void __init sched_init_smp(void)
 		check_siblings = &check_smt_siblings;
 		wake_siblings = &wake_smt_siblings;
 		smt_schedule = &smt_should_schedule;
-		rq_load_avg = &smt_load_avg;
 	}
 #endif
 	grq_unlock_irq();

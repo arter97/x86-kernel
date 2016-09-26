@@ -207,21 +207,8 @@ static inline void cpufreq_trigger(u64 time, unsigned long util)
        if (data)
                data->func(data, time, util, SCHED_CAPACITY_SCALE);
 }
-
-static inline void other_cpufreq_trigger(int cpu, u64 time, unsigned long util)
-{
-       struct update_util_data *data;
-
-       data = rcu_dereference_sched(*per_cpu_ptr(&cpufreq_update_util_data, cpu));
-       if (data)
-               data->func(data, time, util, SCHED_CAPACITY_SCALE);
-}
 #else
 static inline void cpufreq_trigger(u64 time, unsigned long util)
-{
-}
-
-static inline void other_cpufreq_trigger(int cpu, u64 time, unsigned long util)
 {
 }
 #endif /* CONFIG_CPU_FREQ */

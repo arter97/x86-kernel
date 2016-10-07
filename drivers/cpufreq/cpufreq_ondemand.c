@@ -20,8 +20,17 @@
 #include "cpufreq_ondemand.h"
 
 /* On-demand governor macros */
+#ifdef CONFIG_SCHED_BFS
+#define DEF_FREQUENCY_UP_THRESHOLD		(63)
+#else
 #define DEF_FREQUENCY_UP_THRESHOLD		(80)
+#endif
+
+#ifdef CONFIG_ZEN_INTERACTIVE
+#define DEF_SAMPLING_DOWN_FACTOR		(10)
+#else
 #define DEF_SAMPLING_DOWN_FACTOR		(1)
+#endif
 #define MAX_SAMPLING_DOWN_FACTOR		(100000)
 #define MICRO_FREQUENCY_UP_THRESHOLD		(95)
 #define MICRO_FREQUENCY_MIN_SAMPLE_RATE		(10000)

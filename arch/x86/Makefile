@@ -113,6 +113,7 @@ else
 		$(call cc-option,-mtune=atom,$(call cc-option,-mtune=generic))
 
 	ifeq ($(CONFIG_X86_MARCH_NATIVE),y)
+		cflags-$(CONFIG_X86_MARCH_NATIVE) += $(call cc-option,-march=native)
 		cflags-$(CONFIG_X86_MARCH_NATIVE) += $(call cc-option,-mtune=native)
 	else
 		ifeq ($(CONFIG_OPTIMIZE_SPECIFICALLY),y)

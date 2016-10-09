@@ -113,6 +113,7 @@ else
 		$(call cc-option,-mtune=atom,$(call cc-option,-mtune=generic))
 
 	ifdef CONFIG_X86_MARCH_NATIVE
+		cflags-$(CONFIG_X86_MARCH_NATIVE) += $(call cc-option,-march=native)
 		cflags-$(CONFIG_X86_MARCH_NATIVE) += $(call cc-option,-mtune=native)
 	else
 		cflags-$(CONFIG_GENERIC_CPU) += $(call cc-option,-mtune=generic)

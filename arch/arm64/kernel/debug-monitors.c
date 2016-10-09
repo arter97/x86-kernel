@@ -435,10 +435,8 @@ NOKPROBE_SYMBOL(kernel_active_single_step);
 /* ptrace API */
 void user_enable_single_step(struct task_struct *task)
 {
-	struct thread_info *ti = task_thread_info(task);
-
-	if (!test_and_set_ti_thread_flag(ti, TIF_SINGLESTEP))
-		set_regs_spsr_ss(task_pt_regs(task));
+	set_ti_thread_flag(task_thread_info(task), TIF_SINGLESTEP);
+	set_regs_spsr_ss(task_pt_regs(task));
 }
 NOKPROBE_SYMBOL(user_enable_single_step);
 

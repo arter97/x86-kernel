@@ -1726,6 +1726,8 @@ void wake_up_new_task(struct task_struct *p)
 
 	parent = p->parent;
 	rq = task_grq_lock(p, &flags);
+	if (unlikely(needs_other_cpu(p, task_cpu(p))))
+ 		set_task_cpu(p, cpumask_any(tsk_cpus_allowed(p)));
 	rq_curr = rq->curr;
 	p->state = TASK_RUNNING;
 
@@ -3301,7 +3303,7 @@ static void check_smt_siblings(struct rq *this_rq)
 		if (unlikely(!rq->online))
 			continue;
 		p = rq->curr;
-		if (!smt_should_schedule(p, this_rq)) {
+		if (!smt_schedule(p, this_rq)) {
 			set_tsk_need_resched(p);
 			smp_send_reschedule(other_cpu);
 		}
@@ -3948,9 +3950,7 @@ static void __setscheduler(struct task_struct *p, struct rq *rq, int policy,
 
 	if (task_running(p)) {
 		reset_rq_task(rq, p);
-		/* Resched only if we might now be preempted */
-		if (p->prio > oldprio || p->rt_priority < oldrtprio)
-			resched_task(p);
+		resched_task(p);
 	} else if (task_queued(p)) {
 		dequeue_task(p);
 		enqueue_task(p, rq);
@@ -5379,10 +5379,14 @@ static int __set_cpus_allowed_ptr(struct task_struct *p,
 out:
 	if (queued && !cpumask_subset(new_mask, &old_mask))
 		try_preempt(p, rq);
+	if (running_wrong)
+		preempt_disable();
 	task_grq_unlock(p, &flags);
 
-	if (running_wrong)
-		preempt_schedule_common();
+	if (running_wrong) {
+		__schedule(true);
+		preempt_enable();
+	}
 
 	return ret;
 }

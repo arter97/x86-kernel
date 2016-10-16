@@ -51,7 +51,7 @@ CONFIG_64BIT                                    policy<{'amd64': 'y', 'arm64': '
 # Menu: Boot options
 CONFIG_CMDLINE                                  policy<{'arm64': '"console=ttyAMA0"', 'armhf': '""'}>
 CONFIG_KEXEC                                    policy<{'amd64': 'y', 'armhf': 'y', 'i386': 'y', 'powerpc-generic': 'y', 'powerpc-powerpc-e500mc': 'y', 'powerpc-powerpc-smp': 'y', 'ppc64el': 'y', 's390x': 'y'}>
-CONFIG_CRASH_DUMP                               policy<{'amd64': 'y', 'armhf': 'y', 'i386': 'y', 'powerpc-powerpc64-emb': 'y', 'powerpc-generic': 'y', 'powerpc-cloud': 'y', 'powerpc-powerpc-e500mc': 'n', 'powerpc-powerpc-smp': 'n', 'ppc64el': 'y', 's390x': 'y'}>
+CONFIG_CRASH_DUMP                               policy<{'amd64': 'y', 'armhf': 'y', 'i386': 'y', 'powerpc-powerpc64-emb': 'y', 'powerpc-generic': 'y', 'powerpc-powerpc-e500mc': 'n', 'powerpc-powerpc-smp': 'n', 'ppc64el': 'y', 's390x': 'y'}>
 #
 CONFIG_CRASH_DUMP                               mark<ENFORCED> note<LP:1363180>
 
@@ -5226,10 +5226,10 @@ CONFIG_RAID_ATTRS                               policy<{'amd64': 'm', 'arm64': '
 CONFIG_SCSI                                     policy<{'amd64': 'm', 'arm64': 'm', 'armhf': 'm', 'i386': 'm', 'powerpc': 'm', 'ppc64el': 'm', 's390x': 'm'}>
 CONFIG_SCSI_MQ_DEFAULT                          policy<{'amd64': 'n', 'arm64': 'n', 'armhf': 'n', 'i386': 'n', 'powerpc': 'n', 'ppc64el': 'n', 's390x': 'y'}>
 CONFIG_SCSI_PROC_FS                             policy<{'amd64': 'y', 'arm64': 'y', 'armhf': 'y', 'i386': 'y', 'powerpc': 'y', 'ppc64el': 'y', 's390x': 'y'}>
-CONFIG_BLK_DEV_SD                               policy<{'amd64': 'y', 'arm64': 'y', 'armhf': 'y', 'i386': 'y', 'powerpc': 'y', 'ppc64el': 'y', 's390x': 'y'}>
+CONFIG_BLK_DEV_SD                               policy<{'amd64': 'y', 'arm64': 'y', 'armhf': 'y', 'i386': 'y', 'powerpc': 'y', 'ppc64el': 'y', 's390x': 'm'}>
 CONFIG_CHR_DEV_ST                               policy<{'amd64': 'm', 'arm64': 'm', 'armhf': 'm', 'i386': 'm', 'powerpc': 'm', 'ppc64el': 'm', 's390x': 'm'}>
 CONFIG_CHR_DEV_OSST                             policy<{'amd64': 'm', 'arm64': 'm', 'armhf': 'm', 'i386': 'm', 'powerpc': 'm', 'ppc64el': 'm', 's390x': 'm'}>
-CONFIG_BLK_DEV_SR                               policy<{'amd64': 'y', 'arm64': 'y', 'armhf': 'y', 'i386': 'y', 'powerpc': 'y', 'ppc64el': 'y', 's390x': 'y'}>
+CONFIG_BLK_DEV_SR                               policy<{'amd64': 'y', 'arm64': 'y', 'armhf': 'y', 'i386': 'y', 'powerpc': 'y', 'ppc64el': 'y', 's390x': 'm'}>
 CONFIG_BLK_DEV_SR_VENDOR                        policy<{'amd64': 'n', 'arm64': 'n', 'armhf': 'n', 'i386': 'n', 'powerpc': 'n', 'ppc64el': 'n', 's390x': 'y'}>
 CONFIG_CHR_DEV_SG                               policy<{'amd64': 'y', 'arm64': 'y', 'armhf': 'y', 'i386': 'y', 'powerpc': 'y', 'ppc64el': 'y', 's390x': 'y'}>
 CONFIG_CHR_DEV_SCH                              policy<{'amd64': 'm', 'arm64': 'm', 'armhf': 'm', 'i386': 'm', 'powerpc': 'm', 'ppc64el': 'm', 's390x': 'm'}>
@@ -5240,6 +5240,8 @@ CONFIG_SCSI_SCAN_ASYNC                          policy<{'amd64': 'y', 'arm64': '
 #
 CONFIG_SCSI                                     note<LP:#1475078>
 CONFIG_CHR_DEV_SG                               note<not autoloadable>
+CONFIG_BLK_DEV_SD				mark<ENFORCED> note <LP:1627330>
+CONFIG_BLK_DEV_SR				mark<ENFORCED> note <LP:1627330>
 
 # Menu: Device Drivers >> SCSI device support >> SCSI device support >> OSD-Initiator library
 CONFIG_SCSI_OSD_INITIATOR                       policy<{'amd64': 'm', 'arm64': 'm', 'armhf': 'm', 'i386': 'm', 'powerpc': 'm', 'ppc64el': 'm', 's390x': 'm'}>
@@ -5579,9 +5581,10 @@ CONFIG_PATA_TRIFLEX                             policy<{'amd64': 'm', 'arm64': '
 CONFIG_PATA_VIA                                 policy<{'amd64': 'm', 'arm64': 'm', 'armhf': 'm', 'i386': 'm', 'powerpc': 'm', 'ppc64el': 'm'}>
 CONFIG_PATA_WINBOND                             policy<{'amd64': 'm', 'arm64': 'm', 'armhf': 'm', 'i386': 'm', 'powerpc': 'm', 'ppc64el': 'm'}>
 CONFIG_PATA_ACPI                                policy<{'amd64': 'm', 'arm64': 'm', 'i386': 'm'}>
-CONFIG_ATA_GENERIC                              policy<{'amd64': 'y', 'arm64': 'm', 'armhf': 'm', 'i386': 'y', 'powerpc': 'm', 'ppc64el': 'm'}>
+CONFIG_ATA_GENERIC                              policy<{'amd64': 'm', 'arm64': 'm', 'armhf': 'm', 'i386': 'y', 'powerpc': 'm', 'ppc64el': 'm'}>
 #
 CONFIG_PATA_HPT3X3_DMA                          note<DMA mode is documented problematic>
+CONFIG_ATA_PIIX					mark<ENFORCED> note<LP:1627324>
 
 # Menu: Device Drivers >> Sonics Silicon Backplane
 CONFIG_SSB_PCIHOST                              policy<{'amd64': 'y', 'arm64': 'y', 'armhf': 'y', 'i386': 'y', 'powerpc': 'y', 'ppc64el': 'y'}>
@@ -6476,7 +6479,7 @@ CONFIG_USB_ISP1362_HCD                          policy<{'amd64': 'm', 'arm64': '
 CONFIG_USB_FUSBH200_HCD                         policy<{'amd64': 'm', 'arm64': 'm', 'armhf': 'm', 'i386': 'm', 'powerpc': 'm', 'ppc64el': 'm'}>
 CONFIG_USB_FOTG210_HCD                          policy<{'amd64': 'm', 'arm64': 'm', 'armhf': 'm', 'i386': 'm', 'powerpc': 'm', 'ppc64el': 'm'}>
 CONFIG_USB_MAX3421_HCD                          policy<{'amd64': 'm', 'arm64': 'm', 'armhf': 'm', 'i386': 'm', 'powerpc': 'm', 'ppc64el': 'm'}>
-CONFIG_USB_UHCI_HCD                             policy<{'amd64': 'y', 'arm64': 'y', 'armhf': 'y', 'i386': 'y', 'powerpc': 'y', 'ppc64el': 'y'}>
+CONFIG_USB_UHCI_HCD                             policy<{'amd64': 'y', 'arm64': 'y', 'armhf': 'y', 'i386': 'y', 'powerpc': 'y', 'ppc64el': 'y', 's390x': 'm'}>
 CONFIG_USB_U132_HCD                             policy<{'amd64': 'm', 'arm64': 'm', 'armhf': 'm', 'i386': 'm', 'powerpc': 'm', 'ppc64el': 'm'}>
 CONFIG_USB_SL811_HCD                            policy<{'amd64': 'm', 'arm64': 'm', 'armhf': 'm', 'i386': 'm', 'powerpc': 'm', 'ppc64el': 'm'}>
 CONFIG_USB_SL811_HCD_ISO                        policy<{'amd64': 'y', 'arm64': 'y', 'armhf': 'y', 'i386': 'y', 'powerpc': 'y', 'ppc64el': 'y'}>
@@ -6529,7 +6532,7 @@ CONFIG_USB_OTG                                  note<triggers breakage on x86 LP
 CONFIG_USB_OTG_WHITELIST                        note<OTG white/blacklists are disabled>
 CONFIG_USB_OTG_BLACKLIST_HUB                    note<OTG white/blacklists are disabled>
 CONFIG_USB_OTG_FSM                              note<selects USB_OTG LP:1047527, LP:1411295>>
-CONFIG_USB_UHCI_HCD                             note<ensures USB 2.0/1.1 probe ordering> flag<REVIEW>
+CONFIG_USB_UHCI_HCD                             mark<ENFORCED> note<ensures USB 2.0/1.1 probe ordering> flag<REVIEW>
 CONFIG_USB_HCD_BCMA                             note<USB_{O,E}HCI_HCD_PLATFORM must be off on omap>
 CONFIG_USB_HCD_SSB                              note<USB_{O,E}HCI_HCD_PLATFORM must be off on omap>
 
@@ -6558,7 +6561,7 @@ CONFIG_USB_DWC3_GADGET                          policy<{'amd64': 'n', 'arm64': '
 CONFIG_USB_DWC3_DUAL_ROLE                       policy<{'amd64': 'y', 'arm64': 'y', 'armhf': 'y', 'i386': 'y', 'powerpc': 'y', 'ppc64el': 'y'}>
 
 # Menu: Device Drivers >> USB support >> Support for Host-side USB >> EHCI HCD (USB 2.0) support
-CONFIG_USB_EHCI_HCD                             policy<{'amd64': 'y', 'arm64': 'y', 'armhf': 'y', 'i386': 'y', 'powerpc': 'y', 'ppc64el': 'y'}>
+CONFIG_USB_EHCI_HCD                             policy<{'amd64': 'y', 'arm64': 'y', 'armhf': 'y', 'i386': 'y', 'powerpc': 'y', 'ppc64el': 'y', 's390x': 'n'}>
 CONFIG_USB_EHCI_ROOT_HUB_TT                     policy<{'amd64': 'y', 'arm64': 'y', 'armhf': 'y', 'i386': 'y', 'powerpc': 'y', 'ppc64el': 'y'}>
 CONFIG_USB_EHCI_TT_NEWSCHED                     policy<{'amd64': 'y', 'arm64': 'y', 'armhf': 'y', 'i386': 'y', 'powerpc': 'y', 'ppc64el': 'y'}>
 CONFIG_XPS_USB_HCD_XILINX                       policy<{'powerpc-powerpc-e500mc': 'y', 'powerpc-powerpc-smp': 'y'}>
@@ -6570,10 +6573,10 @@ CONFIG_USB_EHCI_MSM                             policy<{'arm64': 'm', 'armhf': '
 CONFIG_USB_EHCI_TEGRA                           policy<{'armhf-generic': 'm'}>
 CONFIG_USB_EHCI_HCD_PPC_OF                      policy<{'powerpc': 'y', 'ppc64el': 'y'}>
 CONFIG_USB_EHCI_EXYNOS                          policy<{'armhf': 'y'}>
-CONFIG_USB_EHCI_HCD_PLATFORM			policy<{'amd64': 'm', 'arm64': 'm', 'armhf': 'm', 'i386': 'm', 'powerpc-powerpc64-emb': 'm', 'powerpc-generic': 'm', 'powerpc-powerpc-e500mc': 'm', 'powerpc-powerpc-smp': 'm', 'powerpc-cloud': 'm', 'ppc64el': 'm', 's390x': '-'}>
+CONFIG_USB_EHCI_HCD_PLATFORM			policy<{'amd64': 'y', 'arm64': 'm', 'armhf': 'm', 'i386': 'y', 'powerpc-powerpc64-emb': 'y', 'powerpc-generic': 'y', 'powerpc-powerpc-e500mc': 'y', 'powerpc-powerpc-smp': 'y', 'ppc64el': 'm', 's390x': '-'}>
 #
 CONFIG_USB_EHCI_HCD_PLATFORM                    mark<ENFORCED> note<Don't use the generic ehci/ohci code on omap, it doesn't work> flag<REVIEW>
-CONFIG_USB_EHCI_HCD                             note<ensures USB 2.0/1.1 probe ordering> flag<REVIEW>
+CONFIG_USB_EHCI_HCD                             mark<ENFORCED> note<ensures USB 2.0/1.1 probe ordering> flag<REVIEW>
 
 # Menu: Device Drivers >> USB support >> Support for Host-side USB >> ISP1760 Mode Selection
 CONFIG_USB_ISP1760_HOST_ROLE                    policy<{'amd64': 'n', 'arm64': 'n', 'armhf': 'n', 'i386': 'n', 'powerpc': 'n', 'ppc64el': 'n'}>
@@ -6608,7 +6611,7 @@ CONFIG_USB_OHCI_HCD_PCI                         policy<{'amd64': 'y', 'arm64': '
 CONFIG_USB_OHCI_EXYNOS                          policy<{'armhf': 'y'}>
 CONFIG_USB_OHCI_HCD_PLATFORM                    policy<{'amd64': 'y', 'arm64': 'm', 'armhf': 'n', 'i386': 'y', 'powerpc': 'y', 'ppc64el': 'm'}>
 #
-CONFIG_USB_OHCI_HCD                             note<ensures USB 2.0/1.1 probe ordering>
+CONFIG_USB_OHCI_HCD                             mark<ENFORCED>note<ensures USB 2.0/1.1 probe ordering>
 CONFIG_USB_OHCI_HCD_PPC_OF_LE                   flag<REVIEW>
 
 # Menu: Device Drivers >> USB support >> Support for Host-side USB >> USB DSL modem support
@@ -6715,12 +6718,12 @@ CONFIG_USBIP_HOST                               policy<{'amd64': 'm', 'arm64': '
 CONFIG_USBIP_DEBUG                              policy<{'amd64': 'n', 'arm64': 'n', 'armhf': 'n', 'i386': 'n', 'powerpc': 'n', 'ppc64el': 'n'}>
 
 # Menu: Device Drivers >> USB support >> Support for Host-side USB >> xHCI HCD (USB 3.0) support
-CONFIG_USB_XHCI_HCD                             policy<{'amd64': 'y', 'arm64': 'y', 'armhf': 'y', 'i386': 'y', 'powerpc': 'y', 'ppc64el': 'y'}>
+CONFIG_USB_XHCI_HCD                             policy<{'amd64': 'y', 'arm64': 'y', 'armhf': 'y', 'i386': 'y', 'powerpc': 'y', 'ppc64el': 'y', 's390x': 'm'}>
 CONFIG_USB_XHCI_PLATFORM                        policy<{'amd64': 'm', 'arm64': 'm', 'armhf': 'm', 'i386': 'm', 'powerpc': 'm', 'ppc64el': 'm'}>
 CONFIG_USB_XHCI_MVEBU                           policy<{'armhf': 'm'}>
 CONFIG_USB_XHCI_RCAR                            policy<{'armhf': 'm'}>
 #
-CONFIG_USB_XHCI_HCD                             note<ensures USB 2.0/1.1 probe ordering> flag<REVIEW>
+CONFIG_USB_XHCI_HCD                             mark<ENFORCED> note<ensures USB 2.0/1.1 probe ordering> flag<REVIEW>
 
 # Menu: Device Drivers >> USB support >> USB Gadget Support
 CONFIG_USB_GADGET                               policy<{'amd64': 'm', 'arm64': 'm', 'armhf': 'y', 'i386': 'm', 'powerpc': 'm', 'ppc64el': 'm'}>

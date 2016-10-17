@@ -22,10 +22,10 @@ struct rq {
 
 	/* Stored data about rq->curr to work outside rq lock */
 	u64 rq_deadline;
-	unsigned int rq_policy;
-	int rq_time_slice;
-	u64 rq_last_ran;
 	int rq_prio;
+
+	/* Best queued id for use outside lock */
+	u64 best_key;
 
 	unsigned long last_scheduler_tick; /* Last jiffy this RQ ticked */
 	unsigned long last_jiffy; /* Last jiffy this RQ updated rq clock */
@@ -47,6 +47,8 @@ struct rq {
 	skiplist_node node;
 	skiplist *sl;
 #ifdef CONFIG_SMP
+	struct task_struct *preempt; /* Preempt triggered on this task */
+
 	int cpu;		/* cpu of this runqueue */
 	bool online;
 
@@ -78,7 +80,7 @@ struct rq {
 
 	u64 clock, old_clock, last_tick;
 	u64 clock_task;
-	bool dither;
+	int dither;
 
 	int iso_ticks;
 	bool iso_refractory;

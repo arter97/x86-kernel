@@ -1619,7 +1619,8 @@ struct task_struct {
 
 	cputime_t utime, stime, utimescaled, stimescaled;
 #ifdef CONFIG_SCHED_MUQSS
-	unsigned long utime_pc, stime_pc;
+	/* Unbanked cpu time */
+	unsigned long utime_ns, stime_ns;
 #endif
 	cputime_t gtime;
 	struct prev_cputime prev_cputime;

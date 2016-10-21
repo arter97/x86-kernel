@@ -59,7 +59,7 @@ struct sched_param {
 #include <linux/gfp.h>
 #include <linux/magic.h>
 #include <linux/cgroup-defs.h>
-#include <linux/skip_lists.h>
+#include <linux/skip_list.h>
 
 #include <asm/processor.h>
 
@@ -177,7 +177,7 @@ extern void get_iowait_load(unsigned long *nr_waiters, unsigned long *load);
 
 extern void calc_global_load(unsigned long ticks);
 
-#if defined(CONFIG_SMP) && defined(CONFIG_NO_HZ_COMMON) && !defined(CONFIG_SCHED_BFS)
+#if defined(CONFIG_SMP) && defined(CONFIG_NO_HZ_COMMON) && !defined(CONFIG_SCHED_MUQSS)
 extern void cpu_load_update_nohz_start(void);
 extern void cpu_load_update_nohz_stop(void);
 #else
@@ -1463,7 +1463,7 @@ struct task_struct {
 	unsigned int flags;	/* per process flags, defined below */
 	unsigned int ptrace;
 
-#if defined(CONFIG_SMP) || defined(CONFIG_SCHED_BFS)
+#if defined(CONFIG_SMP) || defined(CONFIG_SCHED_MUQSS)
 	int on_cpu;
 #endif
 #ifdef CONFIG_SMP
@@ -1477,7 +1477,7 @@ struct task_struct {
 	int on_rq;
 	int prio, static_prio, normal_prio;
 	unsigned int rt_priority;
-#ifdef CONFIG_SCHED_BFS
+#ifdef CONFIG_SCHED_MUQSS
 	int time_slice;
 	u64 deadline;
 	skiplist_node node; /* Skip list node */
@@ -1490,7 +1490,7 @@ struct task_struct {
 	bool zerobound; /* Bound to CPU0 for hotplug */
 #endif
 	unsigned long rt_timeout;
-#else /* CONFIG_SCHED_BFS */
+#else /* CONFIG_SCHED_MUQSS */
 	const struct sched_class *sched_class;
 	struct sched_entity se;
 	struct sched_rt_entity rt;
@@ -1618,8 +1618,9 @@ struct task_struct {
 	int __user *clear_child_tid;		/* CLONE_CHILD_CLEARTID */
 
 	cputime_t utime, stime, utimescaled, stimescaled;
-#ifdef CONFIG_SCHED_BFS
-	unsigned long utime_pc, stime_pc;
+#ifdef CONFIG_SCHED_MUQSS
+	/* Unbanked cpu time */
+	unsigned long utime_ns, stime_ns;
 #endif
 	cputime_t gtime;
 	struct prev_cputime prev_cputime;
@@ -1957,7 +1958,7 @@ extern int arch_task_struct_size __read_mostly;
 # define arch_task_struct_size (sizeof(struct task_struct))
 #endif
 
-#ifdef CONFIG_SCHED_BFS
+#ifdef CONFIG_SCHED_MUQSS
 #define tsk_seruntime(t)		((t)->sched_time)
 #define tsk_rttimeout(t)		((t)->rt_timeout)
 
@@ -1989,7 +1990,7 @@ static inline bool iso_task(struct task_struct *p)
 {
 	return false;
 }
-#endif /* CONFIG_SCHED_BFS */
+#endif /* CONFIG_SCHED_MUQSS */
 
 /* Future-safe accessor for struct task_struct's cpus_allowed. */
 #define tsk_cpus_allowed(tsk) (&(tsk)->cpus_allowed)
@@ -2444,7 +2445,7 @@ static inline int set_cpus_allowed_ptr(struct task_struct *p,
 }
 #endif
 
-#if defined(CONFIG_NO_HZ_COMMON) && !defined(CONFIG_SCHED_BFS)
+#if defined(CONFIG_NO_HZ_COMMON) && !defined(CONFIG_SCHED_MUQSS)
 void calc_load_enter_idle(void);
 void calc_load_exit_idle(void);
 #else
@@ -2545,7 +2546,7 @@ extern unsigned long long
 task_sched_runtime(struct task_struct *task);
 
 /* sched_exec is called by processes performing an exec */
-#if defined(CONFIG_SMP) && !defined(CONFIG_SCHED_BFS)
+#if defined(CONFIG_SMP) && !defined(CONFIG_SCHED_MUQSS)
 extern void sched_exec(void);
 #else
 #define sched_exec()   {}

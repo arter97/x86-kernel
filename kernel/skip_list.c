@@ -26,17 +26,17 @@ init: defines slnode
 new_skiplist: returns a new, empty list
 
 randomLevel: Returns a random level based on a u64 random seed passed to it.
-In BFS, the "niffy" time is used for this purpose.
+In MuQSS, the "niffy" time is used for this purpose.
 
 insert(l,key, value): inserts the binding (key, value) into l. This operation
 occurs in O(log n) time.
 
 delnode(slnode, l, node): deletes any binding of key from the l based on the
 actual node value. This operation occurs in O(k) time where k is the
-number of levels of the node in question (max 16). The original delete
+number of levels of the node in question (max 8). The original delete
 function occurred in O(log n) time and involved a search.
 
-BFS Notes: In this implementation of skiplists, there are bidirectional
+MuQSS Notes: In this implementation of skiplists, there are bidirectional
 next/prev pointers and the insert function returns a pointer to the actual
 node the value is stored. The key here is chosen by the scheduler so as to
 sort tasks according to the priority list requirements and is no longer used
@@ -49,9 +49,9 @@ aid of prev<->next pointer manipulation and no searching.
 */
 
 #include <linux/slab.h>
-#include <linux/skip_lists.h>
+#include <linux/skip_list.h>
 
-#define MaxNumberOfLevels 16
+#define MaxNumberOfLevels 8
 #define MaxLevel (MaxNumberOfLevels - 1)
 
 void skiplist_init(skiplist_node *slnode)
@@ -111,9 +111,7 @@ static inline unsigned int randomLevel(int entries, unsigned int randseed)
 {
 	unsigned int mask;
 
-	if (entries > 31)
-		mask = 0xF;
-	else if (entries > 15)
+	if (entries > 15)
 		mask = 0x7;
 	else if (entries > 7)
 		mask = 0x3;
@@ -139,6 +137,8 @@ void skiplist_insert(skiplist *l, skiplist_node *node, keyType key, valueType va
 	} while (--k >= 0);
 
 	k = randomLevel(++l->entries, randseed);
+	if (k > MaxLevel)
+		k = MaxLevel;
 	if (k > l->level) {
 		k = ++l->level;
 		update[k] = l->header;

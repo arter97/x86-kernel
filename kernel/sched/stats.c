@@ -4,10 +4,10 @@
 #include <linux/seq_file.h>
 #include <linux/proc_fs.h>
 
-#ifndef CONFIG_SCHED_BFS
+#ifndef CONFIG_SCHED_MUQSS
 #include "sched.h"
 #else
-#include "bfs_sched.h"
+#include "MuQSS.h"
 #endif
 
 /*

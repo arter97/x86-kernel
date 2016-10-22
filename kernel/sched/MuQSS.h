@@ -17,6 +17,9 @@
 struct rq {
 	struct task_struct *curr, *idle, *stop;
 	struct mm_struct *prev_mm;
+	long nr_uninterruptible;
+	s64 nr_switches;
+	int nr_running;
 
 	raw_spinlock_t lock;
 

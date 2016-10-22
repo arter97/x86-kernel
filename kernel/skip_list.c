@@ -93,34 +93,9 @@ void skiplist_node_init(skiplist_node *node)
 	memset(node, 0, sizeof(skiplist_node));
 }
 
-/*
- * Returns a pseudo-random number based on the randseed value by masking out
- * 0-15. As many levels are not required when only few values are on the list,
- * we limit the height of the levels according to how many list entries there
- * are in a cheap manner. The height of the levels may have been higher while
- * there were more entries queued previously but as this code is used only by
- * the scheduler, entries are short lived and will be torn down regularly.
- *
- * 00-03 entries - 1 level
- * 04-07 entries - 2 levels
- * 08-15 entries - 4 levels
- * 15-31 entries - 7 levels
- *  32+  entries - max(16) levels
- */
-static inline unsigned int randomLevel(int entries, unsigned int randseed)
+static inline unsigned int randomLevel(const long unsigned int randseed)
 {
-	unsigned int mask;
-
-	if (entries > 15)
-		mask = 0x7;
-	else if (entries > 7)
-		mask = 0x3;
-	else if (entries > 3)
-		mask = 0x1;
-	else
-		return 0;
-
-	return randseed & mask;
+	return find_first_bit(&randseed, MaxLevel);
 }
 
 void skiplist_insert(skiplist *l, skiplist_node *node, keyType key, valueType value, unsigned int randseed)
@@ -136,9 +111,8 @@ void skiplist_insert(skiplist *l, skiplist_node *node, keyType key, valueType va
 		update[k] = p;
 	} while (--k >= 0);
 
-	k = randomLevel(++l->entries, randseed);
-	if (k > MaxLevel)
-		k = MaxLevel;
+	++l->entries;
+	k = randomLevel(randseed);
 	if (k > l->level) {
 		k = ++l->level;
 		update[k] = l->header;

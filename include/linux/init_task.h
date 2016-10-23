@@ -185,8 +185,8 @@ extern struct task_group root_task_group;
  *  INIT_TASK is used to set up the first task table, touch at
  * your own risk!. Base=0, limit=0x1fffff (=2MB)
  */
-#ifdef CONFIG_SCHED_BFS
-#define INIT_TASK_COMM "BFS"
+#ifdef CONFIG_SCHED_MUQSS
+#define INIT_TASK_COMM "MuQSS"
 #define INIT_TASK(tsk)	\
 {									\
 	.state		= 0,						\
@@ -254,7 +254,7 @@ extern struct task_group root_task_group;
 	INIT_NUMA_BALANCING(tsk)					\
 	INIT_KASAN(tsk)							\
 }
-#else /* CONFIG_SCHED_BFS */
+#else /* CONFIG_SCHED_MUQSS */
 #define INIT_TASK_COMM "swapper"
 #define INIT_TASK(tsk)	\
 {									\
@@ -330,7 +330,7 @@ extern struct task_group root_task_group;
 	INIT_NUMA_BALANCING(tsk)					\
 	INIT_KASAN(tsk)							\
 }
-#endif /* CONFIG_SCHED_BFS */
+#endif /* CONFIG_SCHED_MUQSS */
 
 #define INIT_CPU_TIMERS(cpu_timers)					\
 {									\

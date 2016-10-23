@@ -30,7 +30,7 @@ struct cs_dbs_tuners {
 };
 
 /* Conservative governor macros */
-#ifdef CONFIG_SCHED_BFS
+#ifdef CONFIG_SCHED_MUQSS
 #define DEF_FREQUENCY_UP_THRESHOLD		(63)
 #define DEF_FREQUENCY_DOWN_THRESHOLD		(26)
 #else

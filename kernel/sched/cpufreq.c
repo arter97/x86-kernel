@@ -9,8 +9,8 @@
  * published by the Free Software Foundation.
  */
 
-#ifdef CONFIG_SCHED_BFS
-#include "bfs_sched.h"
+#ifdef CONFIG_SCHED_MUQSS
+#include "MuQSS.h"
 #else
 #include "sched.h"
 #endif

@@ -9,8 +9,8 @@ struct nodeStructure {
 	int level;	/* Levels in this structure */
 	keyType key;
 	valueType value;
-	skiplist_node *next[16];
-	skiplist_node *prev[16];
+	skiplist_node *next[8];
+	skiplist_node *prev[8];
 };
 
 typedef struct listStructure {

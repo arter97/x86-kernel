@@ -26,17 +26,17 @@ init: defines slnode
 new_skiplist: returns a new, empty list
 
 randomLevel: Returns a random level based on a u64 random seed passed to it.
-In BFS, the "niffy" time is used for this purpose.
+In MuQSS, the "niffy" time is used for this purpose.
 
 insert(l,key, value): inserts the binding (key, value) into l. This operation
 occurs in O(log n) time.
 
 delnode(slnode, l, node): deletes any binding of key from the l based on the
 actual node value. This operation occurs in O(k) time where k is the
-number of levels of the node in question (max 16). The original delete
+number of levels of the node in question (max 8). The original delete
 function occurred in O(log n) time and involved a search.
 
-BFS Notes: In this implementation of skiplists, there are bidirectional
+MuQSS Notes: In this implementation of skiplists, there are bidirectional
 next/prev pointers and the insert function returns a pointer to the actual
 node the value is stored. The key here is chosen by the scheduler so as to
 sort tasks according to the priority list requirements and is no longer used
@@ -49,9 +49,9 @@ aid of prev<->next pointer manipulation and no searching.
 */
 
 #include <linux/slab.h>
-#include <linux/skip_lists.h>
+#include <linux/skip_list.h>
 
-#define MaxNumberOfLevels 16
+#define MaxNumberOfLevels 8
 #define MaxLevel (MaxNumberOfLevels - 1)
 
 void skiplist_init(skiplist_node *slnode)
@@ -93,36 +93,9 @@ void skiplist_node_init(skiplist_node *node)
 	memset(node, 0, sizeof(skiplist_node));
 }
 
-/*
- * Returns a pseudo-random number based on the randseed value by masking out
- * 0-15. As many levels are not required when only few values are on the list,
- * we limit the height of the levels according to how many list entries there
- * are in a cheap manner. The height of the levels may have been higher while
- * there were more entries queued previously but as this code is used only by
- * the scheduler, entries are short lived and will be torn down regularly.
- *
- * 00-03 entries - 1 level
- * 04-07 entries - 2 levels
- * 08-15 entries - 4 levels
- * 15-31 entries - 7 levels
- *  32+  entries - max(16) levels
- */
-static inline unsigned int randomLevel(int entries, unsigned int randseed)
+static inline unsigned int randomLevel(const long unsigned int randseed)
 {
-	unsigned int mask;
-
-	if (entries > 31)
-		mask = 0xF;
-	else if (entries > 15)
-		mask = 0x7;
-	else if (entries > 7)
-		mask = 0x3;
-	else if (entries > 3)
-		mask = 0x1;
-	else
-		return 0;
-
-	return randseed & mask;
+	return find_first_bit(&randseed, MaxLevel);
 }
 
 void skiplist_insert(skiplist *l, skiplist_node *node, keyType key, valueType value, unsigned int randseed)
@@ -138,7 +111,8 @@ void skiplist_insert(skiplist *l, skiplist_node *node, keyType key, valueType va
 		update[k] = p;
 	} while (--k >= 0);
 
-	k = randomLevel(++l->entries, randseed);
+	++l->entries;
+	k = randomLevel(randseed);
 	if (k > l->level) {
 		k = ++l->level;
 		update[k] = l->header;

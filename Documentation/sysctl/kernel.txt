@@ -404,7 +404,7 @@ kernel stack.
 
 ==============================================================
 
-iso_cpu: (BFS CPU scheduler only).
+iso_cpu: (MuQSS CPU scheduler only).
 
 This sets the percentage cpu that the unprivileged SCHED_ISO tasks can
 run effectively at realtime priority, averaged over a rolling five
@@ -830,7 +830,7 @@ rebooting. ???
 
 ==============================================================
 
-rr_interval: (BFS CPU scheduler only)
+rr_interval: (MuQSS CPU scheduler only)
 
 This is the smallest duration that any cpu process scheduling unit
 will run for. Increasing this value can increase throughput of cpu

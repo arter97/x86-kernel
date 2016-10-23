@@ -20,7 +20,7 @@
 #include "cpufreq_ondemand.h"
 
 /* On-demand governor macros */
-#ifdef CONFIG_SCHED_BFS
+#ifdef CONFIG_SCHED_MUQSS
 #define DEF_FREQUENCY_UP_THRESHOLD		(63)
 #else
 #define DEF_FREQUENCY_UP_THRESHOLD		(80)

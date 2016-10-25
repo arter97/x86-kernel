@@ -135,7 +135,7 @@
 
 void print_scheduler_version(void)
 {
-	printk(KERN_INFO "MuQSS CPU scheduler v0.115 by Con Kolivas.\n");
+	printk(KERN_INFO "MuQSS CPU scheduler v0.116 by Con Kolivas.\n");
 }
 
 /*
@@ -179,9 +179,26 @@ static inline int timeslice(void)
 	return MS_TO_US(rr_interval);
 }
 
+/*
+ * The global runqueue data that all CPUs work off. Contains either atomic
+ * variables and a cpu bitmap set atomically.
+ */
+struct global_rq {
 #ifdef CONFIG_SMP
-static cpumask_t cpu_idle_map ____cacheline_aligned_in_smp;
+	atomic_t nr_running ____cacheline_aligned_in_smp;
+	atomic_t nr_uninterruptible ____cacheline_aligned_in_smp;
+	atomic64_t nr_switches ____cacheline_aligned_in_smp;
+	atomic_t qnr ____cacheline_aligned_in_smp; /* queued not running */
+	cpumask_t cpu_idle_map ____cacheline_aligned_in_smp;
+#else
+	atomic_t nr_running ____cacheline_aligned;
+	atomic_t nr_uninterruptible ____cacheline_aligned;
+	atomic64_t nr_switches ____cacheline_aligned;
+	atomic_t qnr ____cacheline_aligned; /* queued not running */
+#endif
+};
 
+#ifdef CONFIG_SMP
 /*
  * We add the notion of a root-domain which will be used to define per-domain
  * variables. Each exclusive cpuset essentially defines an island domain by
@@ -212,6 +229,13 @@ struct root_domain {
 static struct root_domain def_root_domain;
 
 #endif /* CONFIG_SMP */
+
+/* There can be only one */
+#ifdef CONFIG_SMP
+static struct global_rq grq ____cacheline_aligned_in_smp;
+#else
+static struct global_rq grq ____cacheline_aligned;
+#endif
 
 static DEFINE_MUTEX(sched_hotcpu_mutex);
 
@@ -768,7 +792,6 @@ static inline void finish_lock_switch(struct rq *rq, struct task_struct *prev)
 	 */
 	if (unlikely(task_on_rq_migrating(prev))) {
 		sched_info_dequeued(rq, prev);
-		rq->nr_running--;
 		/*
 		 * We move the ownership of prev to the new cpu now. ttwu can't
 		 * activate prev to the wrong cpu since it has to grab this
@@ -779,7 +802,6 @@ static inline void finish_lock_switch(struct rq *rq, struct task_struct *prev)
 
 		raw_spin_lock(&prev->pi_lock);
 		rq = __task_rq_lock(prev);
-		rq->nr_running++;
 		/* Check that someone else hasn't already queued prev */
 		if (likely(!task_queued(prev))) {
 			enqueue_task(rq, prev, 0);
@@ -834,7 +856,7 @@ static inline int ms_longest_deadline_diff(void)
 
 static inline int rq_load(struct rq *rq)
 {
-	return rq->nr_running;
+	return rq->sl->entries + !rq_idle(rq);
 }
 
 static inline bool rq_local(struct rq *rq);
@@ -981,6 +1003,26 @@ static inline int task_timeslice(struct task_struct *p)
 	return (rr_interval * task_prio_ratio(p) / 128);
 }
 
+/*
+ * qnr is the "queued but not running" count which is the total number of
+ * tasks on the global runqueue list waiting for cpu time but not actually
+ * currently running on a cpu.
+ */
+static inline void inc_qnr(void)
+{
+	atomic_inc(&grq.qnr);
+}
+
+static inline void dec_qnr(void)
+{
+	atomic_dec(&grq.qnr);
+}
+
+static inline int queued_notrunning(void)
+{
+	return atomic_read(&grq.qnr);
+}
+
 #ifdef CONFIG_SMP
 /* Entered with rq locked */
 static inline void resched_if_idle(struct rq *rq)
@@ -1085,7 +1127,7 @@ static inline void atomic_set_cpu(int cpu, cpumask_t *cpumask)
 static inline void set_cpuidle_map(int cpu)
 {
 	if (likely(cpu_online(cpu)))
-		atomic_set_cpu(cpu, &cpu_idle_map);
+		atomic_set_cpu(cpu, &grq.cpu_idle_map);
 }
 
 static inline void atomic_clear_cpu(int cpu, cpumask_t *cpumask)
@@ -1095,12 +1137,12 @@ static inline void atomic_clear_cpu(int cpu, cpumask_t *cpumask)
 
 static inline void clear_cpuidle_map(int cpu)
 {
-	atomic_clear_cpu(cpu, &cpu_idle_map);
+	atomic_clear_cpu(cpu, &grq.cpu_idle_map);
 }
 
 static bool suitable_idle_cpus(struct task_struct *p)
 {
-	return (cpumask_intersects(&p->cpus_allowed, &cpu_idle_map));
+	return (cpumask_intersects(&p->cpus_allowed, &grq.cpu_idle_map));
 }
 
 /*
@@ -1231,7 +1273,7 @@ static struct rq *resched_best_idle(struct task_struct *p, int cpu)
 	struct rq *rq;
 	int best_cpu;
 
-	cpumask_and(&tmpmask, &p->cpus_allowed, &cpu_idle_map);
+	cpumask_and(&tmpmask, &p->cpus_allowed, &grq.cpu_idle_map);
 	best_cpu = best_mask_cpu(cpu, task_rq(p), &tmpmask);
 	rq = cpu_rq(best_cpu);
 	if (!smt_schedule(p, rq))
@@ -1343,11 +1385,12 @@ static void activate_task(struct task_struct *p, struct rq *rq)
 
 	p->prio = effective_prio(p);
 	if (task_contributes_to_load(p))
-		rq->nr_uninterruptible--;
+		atomic_dec(&grq.nr_uninterruptible);
 
 	enqueue_task(rq, p, 0);
 	p->on_rq = TASK_ON_RQ_QUEUED;
-	rq->nr_running++;
+	atomic_inc(&grq.nr_running);
+	inc_qnr();
 }
 
 /*
@@ -1357,10 +1400,10 @@ static void activate_task(struct task_struct *p, struct rq *rq)
 static inline void deactivate_task(struct task_struct *p, struct rq *rq)
 {
 	if (task_contributes_to_load(p))
-		rq->nr_uninterruptible++;
+		atomic_inc(&grq.nr_uninterruptible);
 
 	p->on_rq = 0;
-	rq->nr_running--;
+	atomic_dec(&grq.nr_running);
 	sched_info_dequeued(rq, p);
 }
 
@@ -1428,12 +1471,11 @@ static inline void take_task(struct rq *rq, int cpu, struct task_struct *p)
 
 	dequeue_task(p_rq, p, DEQUEUE_SAVE);
 	if (p_rq != rq) {
-		p_rq->nr_running--;
 		sched_info_dequeued(p_rq, p);
-		rq->nr_running++;
 		sched_info_queued(rq, p);
 	}
 	set_task_cpu(p, cpu);
+	dec_qnr();
 }
 
 /*
@@ -1446,6 +1488,7 @@ static inline void return_task(struct task_struct *p, struct rq *rq,
 	if (deactivate)
 		deactivate_task(p, rq);
 	else {
+		inc_qnr();
 #ifdef CONFIG_SMP
 		/*
 		 * set_task_cpu was called on the running task that doesn't
@@ -1767,7 +1810,7 @@ ttwu_do_activate(struct rq *rq, struct task_struct *p, int wake_flags)
 
 #ifdef CONFIG_SMP
 	if (p->sched_contributes_to_load)
-		rq->nr_uninterruptible--;
+		atomic_dec(&grq.nr_uninterruptible);
 #endif
 
 	ttwu_activate(rq, p);
@@ -2651,6 +2694,22 @@ context_switch(struct rq *rq, struct task_struct *prev,
 }
 
 /*
+ * nr_running, nr_uninterruptible and nr_context_switches:
+ *
+ * externally visible scheduler statistics: current number of runnable
+ * threads, total number of context switches performed since bootup.
+ */
+unsigned long nr_running(void)
+{
+	return atomic_read(&grq.nr_running);
+}
+
+static unsigned long nr_uninterruptible(void)
+{
+	return atomic_read(&grq.nr_uninterruptible);
+}
+
+/*
  * Check if only the current task is running on the cpu.
  *
  * Caution: this function does not check that the caller has disabled
@@ -2674,31 +2733,9 @@ bool single_task_running(void)
 }
 EXPORT_SYMBOL(single_task_running);
 
-/*
- * nr_running, nr_uninterruptible and nr_context_switches:
- *
- * externally visible scheduler statistics: current number of runnable
- * threads, total number of context switches performed since bootup.
- */
 unsigned long long nr_context_switches(void)
 {
-	long long sum = 0;
-	int i;
-
-	for_each_possible_cpu(i)
-		sum += cpu_rq(i)->nr_switches;
-
-	return sum;
-}
-
-unsigned long nr_running(void)
-{
-	long i, sum = 0;
-
-	for_each_online_cpu(i)
-		sum += cpu_rq(i)->nr_running;
-
-	return sum;
+	return (unsigned long long)atomic64_read(&grq.nr_switches);
 }
 
 unsigned long nr_iowait(void)
@@ -2719,14 +2756,7 @@ unsigned long nr_iowait_cpu(int cpu)
 
 unsigned long nr_active(void)
 {
-	long i, sum = 0;
-
-	for_each_online_cpu(i) {
-		sum += cpu_rq(i)->nr_running;
-		sum += cpu_rq(i)->nr_uninterruptible;
-	}
-
-	return sum;
+	return nr_running() + nr_uninterruptible();
 }
 
 /*
@@ -3507,7 +3537,7 @@ void scheduler_tick(void)
 	struct rq *rq = cpu_rq(cpu);
 
 	sched_clock_tick();
-	update_rq_clock(rq);
+	update_clocks(rq);
 	update_load_avg(rq);
 	update_cpu_clock_tick(rq, rq->curr);
 	if (!rq_idle(rq))
@@ -3836,6 +3866,9 @@ static void wake_smt_siblings(struct rq *this_rq)
 {
 	int other_cpu;
 
+	if (!queued_notrunning())
+		return;
+
 	for_each_cpu(other_cpu, &this_rq->thread_mask) {
 		struct rq *rq;
 
@@ -3993,16 +4026,23 @@ static void __sched notrace __schedule(bool preempt)
 		return_task(prev, rq, cpu, deactivate);
 	}
 
-	next = earliest_deadline_task(rq, cpu, idle);
-	if (likely(next->prio != PRIO_LIMIT)) {
-		clear_cpuidle_map(cpu);
-		next->last_ran = niffies;
-	} else {
+	if (unlikely(!queued_notrunning())) {
+		next = idle;
+		schedstat_inc(rq, sched_goidle);
 		set_cpuidle_map(cpu);
 		update_load_avg(rq);
+	} else {
+		next = earliest_deadline_task(rq, cpu, idle);
+		if (likely(next->prio != PRIO_LIMIT))
+			clear_cpuidle_map(cpu);
+		else {
+			set_cpuidle_map(cpu);
+			update_load_avg(rq);
+		}
 	}
 
 	set_rq_task(rq, next);
+	next->last_ran = niffies;
 
 	if (likely(prev != next)) {
 		/*
@@ -4014,14 +4054,16 @@ static void __sched notrace __schedule(bool preempt)
 			check_siblings(rq);
 		else
 			wake_siblings(rq);
-		rq->nr_switches++;
+		atomic64_inc(&grq.nr_switches);
 		rq->curr = next;
 		++*switch_count;
 
 		trace_sched_switch(preempt, prev, next);
 		rq = context_switch(rq, prev, next); /* unlocks the rq */
-	} else
+	} else {
+		check_siblings(rq);
 		rq_unlock_irq(rq);
+	}
 }
 
 static inline void sched_submit_work(struct task_struct *tsk)
@@ -5207,7 +5249,6 @@ SYSCALL_DEFINE0(sched_yield)
 
 	p = current;
 	rq = this_rq_lock();
-	time_slice_expired(p, rq);
 	schedstat_inc(task_rq(p), yld_count);
 
 	/*
@@ -5641,6 +5682,7 @@ void init_idle(struct task_struct *idle, int cpu)
 	raw_spin_lock_irqsave(&idle->pi_lock, flags);
 	raw_spin_lock(&rq->lock);
 	idle->last_ran = rq->niffies;
+	time_slice_expired(idle, rq);
 	idle->state = TASK_RUNNING;
 	/* Setting prio to illegal value shouldn't matter when never queued */
 	idle->prio = PRIO_LIMIT;
@@ -7463,7 +7505,7 @@ static const cpumask_t *thread_cpumask(int cpu)
 /* All this CPU's SMT siblings are idle */
 static bool siblings_cpu_idle(struct rq *rq)
 {
-	return cpumask_subset(&rq->thread_mask, &cpu_idle_map);
+	return cpumask_subset(&rq->thread_mask, &grq.cpu_idle_map);
 }
 #endif
 #ifdef CONFIG_SCHED_MC
@@ -7474,7 +7516,7 @@ static const cpumask_t *core_cpumask(int cpu)
 /* All this CPU's shared cache siblings are idle */
 static bool cache_cpu_idle(struct rq *rq)
 {
-	return cpumask_subset(&rq->core_mask, &cpu_idle_map);
+	return cpumask_subset(&rq->core_mask, &grq.cpu_idle_map);
 }
 #endif
 
@@ -7655,11 +7697,15 @@ void __init sched_init(void)
 	for (i = 1 ; i < NICE_WIDTH ; i++)
 		prio_ratios[i] = prio_ratios[i - 1] * 11 / 10;
 
+	atomic_set(&grq.nr_running, 0);
+	atomic_set(&grq.nr_uninterruptible, 0);
+	atomic64_set(&grq.nr_switches, 0);
 	skiplist_node_init(&init_task.node);
 
 #ifdef CONFIG_SMP
 	init_defrootdomain();
-	cpumask_clear(&cpu_idle_map);
+	atomic_set(&grq.qnr, 0);
+	cpumask_clear(&grq.cpu_idle_map);
 #else
 	uprq = &per_cpu(runqueues, 0);
 #endif
@@ -7673,7 +7719,6 @@ void __init sched_init(void)
 #endif /* CONFIG_CGROUP_SCHED */
 	for_each_possible_cpu(i) {
 		rq = cpu_rq(i);
-		rq->nr_running = rq->nr_uninterruptible = rq->nr_switches = 0;
 		skiplist_init(&rq->node);
 		rq->sl = new_skiplist(&rq->node);
 		raw_spin_lock_init(&rq->lock);

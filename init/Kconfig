@@ -30,6 +30,7 @@ menu "General setup"
 
 config SCHED_MUQSS
 	bool "MuQSS cpu scheduler"
+    select HIGH_RES_TIMERS
 	default n
 	---help---
 	  The Multiple Queue Skiplist Scheduler for excellent interactivity and
@@ -379,7 +380,7 @@ choice
 # Kind of a stub config for the pure tick based cputime accounting
 config TICK_CPU_ACCOUNTING
 	bool "Simple tick based cputime accounting"
-	depends on !S390 && !NO_HZ_FULL && !SCHED_MUQSS
+	depends on !S390 && !NO_HZ_FULL
 	help
 	  This is the basic tick based cputime accounting that maintains
 	  statistics about user, system and idle time spent on per jiffies
@@ -404,7 +405,6 @@ config VIRT_CPU_ACCOUNTING_GEN
 	bool "Full dynticks CPU time accounting"
 	depends on HAVE_CONTEXT_TRACKING
 	depends on HAVE_VIRT_CPU_ACCOUNTING_GEN
-	depends on !SCHED_MUQSS
 	select VIRT_CPU_ACCOUNTING
 	select CONTEXT_TRACKING
 	help
@@ -582,7 +582,7 @@ config CONTEXT_TRACKING
 config CONTEXT_TRACKING_FORCE
 	bool "Force context tracking"
 	depends on CONTEXT_TRACKING
-	default y if !NO_HZ_FULL
+	default y if !NO_HZ_FULL && !SCHED_MUQSS
 	help
 	  The major pre-requirement for full dynticks to work is to
 	  support the context tracking subsystem. But there are also
@@ -740,7 +740,6 @@ config RCU_NOCB_CPU
 	bool "Offload RCU callback processing from boot-selected CPUs"
 	depends on TREE_RCU || PREEMPT_RCU
 	depends on RCU_EXPERT || NO_HZ_FULL
-	depends on !SCHED_MUQSS
 	default n
 	help
 	  Use this option to reduce OS jitter for aggressive HPC or

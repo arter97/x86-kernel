@@ -1,5 +1,5 @@
 /*
- * Budget Fair Queueing (BFQ) disk scheduler.
+ * Budget Fair Queueing (BFQ) I/O scheduler.
  *
  * Based on ideas and code from CFQ:
  * Copyright (C) 2003 Jens Axboe <axboe@kernel.dk>
@@ -77,19 +77,19 @@
 static const u64 bfq_fifo_expire[2] = { NSEC_PER_SEC / 4, NSEC_PER_SEC / 8 };
 
 /* Maximum backwards seek, in KiB. */
-static const int bfq_back_max = 16 * 1024;
+static const int bfq_back_max = (16 * 1024);
 
 /* Penalty of a backwards seek, in number of sectors. */
 static const int bfq_back_penalty = 2;
 
 /* Idling period duration, in ns. */
-static u32 bfq_slice_idle = NSEC_PER_SEC / 125;
+static u32 bfq_slice_idle = (NSEC_PER_SEC / 125);
 
 /* Minimum number of assigned budgets for which stats are safe to compute. */
 static const int bfq_stats_min_budgets = 194;
 
 /* Default maximum budget values, in sectors and number of requests. */
-static const int bfq_default_max_budget = 16 * 1024;
+static const int bfq_default_max_budget = (16 * 1024);
 
 /*
  * Async to sync throughput distribution is controlled as follows:
@@ -99,7 +99,7 @@ static const int bfq_default_max_budget = 16 * 1024;
 static const int bfq_async_charge_factor = 10;
 
 /* Default timeout values, in jiffies, approximating CFQ defaults. */
-static const int bfq_timeout = HZ / 8;
+static const int bfq_timeout = (HZ / 8);
 
 struct kmem_cache *bfq_pool;
 
@@ -117,7 +117,7 @@ struct kmem_cache *bfq_pool;
 /* Min number of samples required to perform peak-rate update */
 #define BFQ_RATE_MIN_SAMPLES	32
 /* Min observation time interval required to perform a peak-rate update (ns) */
-#define BFQ_RATE_MIN_INTERVAL	300*NSEC_PER_MSEC
+#define BFQ_RATE_MIN_INTERVAL	(300*NSEC_PER_MSEC)
 /* Target observation time interval for a peak-rate update (ns) */
 #define BFQ_RATE_REF_INTERVAL	NSEC_PER_SEC
 
@@ -2179,9 +2179,13 @@ static void __bfq_set_in_service_queue(struct bfq_data *bfqd,
 			 * not only expires, but also remains with no
 			 * request.
 			 */
-			bfqq->last_wr_start_finish += jiffies -
-				max_t(unsigned long, bfqq->last_wr_start_finish,
-				      bfqq->budget_timeout);
+			if (time_after(bfqq->budget_timeout,
+				       bfqq->last_wr_start_finish))
+				bfqq->last_wr_start_finish +=
+					jiffies - bfqq->budget_timeout;
+			else
+				bfqq->last_wr_start_finish = jiffies;
+
 			if (time_is_after_jiffies(bfqq->last_wr_start_finish)) {
 			       pr_crit(
 			       "BFQ WARNING:last %lu budget %lu jiffies %lu",
@@ -5208,7 +5212,7 @@ static struct blkcg_policy blkcg_policy_bfq = {
 static int __init bfq_init(void)
 {
 	int ret;
-	char msg[50] = "BFQ I/O-scheduler: v8r4";
+	char msg[50] = "BFQ I/O-scheduler: v8r5";
 
 #ifdef CONFIG_BFQ_GROUP_IOSCHED
 	ret = blkcg_policy_register(&blkcg_policy_bfq);

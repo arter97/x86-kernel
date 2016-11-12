@@ -137,7 +137,7 @@
 
 void print_scheduler_version(void)
 {
-	printk(KERN_INFO "MuQSS CPU scheduler v0.120 by Con Kolivas.\n");
+	printk(KERN_INFO "MuQSS CPU scheduler v0.140 by Con Kolivas.\n");
 }
 
 /*
@@ -3507,6 +3507,12 @@ static inline struct task_struct
 		 * is locked so entries will always be accurate.
 		 */
 		if (!sched_interactive) {
+			/*
+			 * Don't reschedule balance across nodes unless the CPU
+			 * is idle.
+			 */
+			if (edt != idle && rq->cpu_locality[other_rq->cpu] > 3)
+				break;
 			if (entries <= best_entries)
 				continue;
 		} else if (!entries)
@@ -3531,8 +3537,8 @@ static inline struct task_struct
 		key = other_rq->node.next[0]->key;
 		/* Reevaluate key after locking */
 		if (unlikely(key >= best_key)) {
-			if (i)
-				unlock_rq(other_rq);
+			/* This will always be when rq != other_rq */
+			unlock_rq(other_rq);
 			continue;
 		}
 
@@ -3806,13 +3812,8 @@ static void __sched notrace __schedule(bool preempt)
 				struct task_struct *to_wakeup;
 
 				to_wakeup = wq_worker_sleeping(prev);
-				if (to_wakeup) {
-					/* This shouldn't happen, but does */
-					if (WARN_ONCE((to_wakeup == prev), "Waking up prev as worker\n"))
-						deactivate = false;
-					else
-						try_to_wake_up_local(to_wakeup);
-				}
+				if (to_wakeup)
+					try_to_wake_up_local(to_wakeup);
 			}
 		}
 		switch_count = &prev->nvcsw;
@@ -4869,13 +4870,11 @@ long sched_setaffinity(pid_t pid, const struct cpumask *in_mask)
 	struct task_struct *p;
 	int retval;
 
-	get_online_cpus();
 	rcu_read_lock();
 
 	p = find_process_by_pid(pid);
 	if (!p) {
 		rcu_read_unlock();
-		put_online_cpus();
 		return -ESRCH;
 	}
 
@@ -4932,7 +4931,6 @@ out_free_cpus_allowed:
 	free_cpumask_var(cpus_allowed);
 out_put_task:
 	put_task_struct(p);
-	put_online_cpus();
 	return retval;
 }
 
@@ -5526,6 +5524,7 @@ void init_idle(struct task_struct *idle, int cpu)
 	init_idle_preempt_count(idle, cpu);
 
 	ftrace_graph_init_idle_task(idle, cpu);
+	vtime_init_idle(idle, cpu);
 #ifdef CONFIG_SMP
 	sprintf(idle->comm, "%s/%d", INIT_TASK_COMM, cpu);
 #endif
@@ -5692,16 +5691,16 @@ static int __set_cpus_allowed_ptr(struct task_struct *p,
 				  const struct cpumask *new_mask, bool check)
 {
 	const struct cpumask *cpu_valid_mask = cpu_active_mask;
-	bool running_wrong = false;
+	bool queued = false, running_wrong = false, kthread;
 	struct cpumask old_mask;
-	bool queued = false;
 	unsigned long flags;
 	struct rq *rq;
 	int ret = 0;
 
 	rq = task_rq_lock(p, &flags);
 
-	if (p->flags & PF_KTHREAD) {
+	kthread = !!(p->flags & PF_KTHREAD);
+	if (kthread) {
 		/*
 		 * Kernel threads are allowed on online && !active CPUs
 		 */
@@ -5730,7 +5729,7 @@ static int __set_cpus_allowed_ptr(struct task_struct *p,
 
 	_do_set_cpus_allowed(p, new_mask);
 
-	if (p->flags & PF_KTHREAD) {
+	if (kthread) {
 		/*
 		 * For kernel threads that do indeed end up on online &&
 		 * !active we want to ensure they are strict per-cpu threads.
@@ -5748,7 +5747,7 @@ static int __set_cpus_allowed_ptr(struct task_struct *p,
 		/* Task is running on the wrong cpu now, reschedule it. */
 		if (rq == this_rq()) {
 			set_tsk_need_resched(p);
-			running_wrong = true;
+			running_wrong = kthread;
 		} else
 			resched_task(p);
 	} else {

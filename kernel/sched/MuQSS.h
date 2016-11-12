@@ -1,5 +1,6 @@
 #include <linux/sched.h>
 #include <linux/cpuidle.h>
+#include <linux/interrupt.h>
 #include <linux/skip_list.h>
 #include <linux/stop_machine.h>
 #include "cpuacct.h"
@@ -324,5 +325,19 @@ static inline void cpufreq_trigger(u64 time, unsigned long util)
 #else /* arch_scale_freq_capacity */
 #define arch_scale_freq_invariant()	(false)
 #endif
+
+/*
+ * This should only be called when current == rq->idle. Dodgy workaround for
+ * when softirqs are pending and we are in the idle loop. Setting current to
+ * resched will kick us out of the idle loop and the softirqs will be serviced
+ * on our next pass through schedule().
+ */
+static inline bool softirq_pending(int cpu)
+{
+	if (likely(!local_softirq_pending()))
+		return false;
+	set_tsk_need_resched(current);
+	return true;
+}
 
 #endif /* MUQSS_SCHED_H */

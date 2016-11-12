@@ -760,13 +760,6 @@ static inline bool task_queued(struct task_struct *p)
 static void enqueue_task(struct rq *rq, struct task_struct *p, int flags);
 static inline void resched_if_idle(struct rq *rq);
 
-/* Dodgy workaround till we figure out where the softirqs are going */
-static inline void do_pending_softirq(struct rq *rq, struct task_struct *next)
-{
-	if (unlikely(next == rq->idle && local_softirq_pending() && !in_interrupt()))
-		do_softirq_own_stack();
-}
-
 static inline void finish_lock_switch(struct rq *rq, struct task_struct *prev)
 {
 #ifdef CONFIG_SMP
@@ -823,7 +816,9 @@ static inline void finish_lock_switch(struct rq *rq, struct task_struct *prev)
 #endif
 	rq_unlock(rq);
 
-	do_pending_softirq(rq, current);
+	/* Dodgy workaround till we figure out where the softirqs are going */
+	if (unlikely(current == rq->idle && local_softirq_pending() && !in_interrupt()))
+		do_softirq_own_stack();
 
 	local_irq_enable();
 }
@@ -3864,9 +3859,7 @@ static void __sched notrace __schedule(bool preempt)
 		context_switch(rq, prev, next); /* unlocks the rq */
 	} else {
 		check_siblings(rq);
-		rq_unlock(rq);
-		do_pending_softirq(rq, next);
-		local_irq_enable();
+		rq_unlock_irq(rq);
 	}
 }
 

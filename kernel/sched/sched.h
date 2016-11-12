@@ -1813,8 +1813,3 @@ static inline void cpufreq_trigger_update(u64 time) {}
 #else /* arch_scale_freq_capacity */
 #define arch_scale_freq_invariant()	(false)
 #endif
-
-static inline bool softirq_pending(int cpu)
-{
-	return false;
-}

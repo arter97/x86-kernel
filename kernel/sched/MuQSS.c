@@ -814,13 +814,7 @@ static inline void finish_lock_switch(struct rq *rq, struct task_struct *prev)
 		raw_spin_unlock(&prev->pi_lock);
 	}
 #endif
-	rq_unlock(rq);
-
-	/* Dodgy workaround till we figure out where the softirqs are going */
-	if (unlikely(current == rq->idle && local_softirq_pending() && !in_interrupt()))
-		do_softirq_own_stack();
-
-	local_irq_enable();
+	raw_spin_unlock_irq(&rq->lock);
 }
 
 static inline bool deadline_before(u64 deadline, u64 time)
@@ -2562,7 +2556,7 @@ prepare_task_switch(struct rq *rq, struct task_struct *prev,
  * past. prev == current is still correct but we need to recalculate this_rq
  * because prev may have moved to another CPU.
  */
-static void finish_task_switch(struct task_struct *prev)
+static struct rq *finish_task_switch(struct task_struct *prev)
 	__releases(rq->lock)
 {
 	struct rq *rq = this_rq();
@@ -2615,6 +2609,7 @@ static void finish_task_switch(struct task_struct *prev)
 		kprobe_flush_task(prev);
 		put_task_struct(prev);
 	}
+	return rq;
 }
 
 /**
@@ -2622,7 +2617,10 @@ static void finish_task_switch(struct task_struct *prev)
  * @prev: the thread we just switched away from.
  */
 asmlinkage __visible void schedule_tail(struct task_struct *prev)
+	__releases(rq->lock)
 {
+	struct rq *rq;
+
 	/*
 	 * New tasks start with FORK_PREEMPT_COUNT, see there and
 	 * finish_task_switch() for details.
@@ -2632,7 +2630,7 @@ asmlinkage __visible void schedule_tail(struct task_struct *prev)
 	 * PREEMPT_COUNT kernels).
 	 */
 
-	finish_task_switch(prev);
+	rq = finish_task_switch(prev);
 	preempt_enable();
 
 	if (current->set_child_tid)
@@ -2642,7 +2640,7 @@ asmlinkage __visible void schedule_tail(struct task_struct *prev)
 /*
  * context_switch - switch to the new MM and the new thread's register state.
  */
-static __always_inline void
+static __always_inline struct rq *
 context_switch(struct rq *rq, struct task_struct *prev,
 	       struct task_struct *next)
 {
@@ -2682,7 +2680,7 @@ context_switch(struct rq *rq, struct task_struct *prev,
 	switch_to(prev, next, prev);
 	barrier();
 
-	finish_task_switch(prev);
+	return finish_task_switch(prev);
 }
 
 /*
@@ -3856,7 +3854,7 @@ static void __sched notrace __schedule(bool preempt)
 		++*switch_count;
 
 		trace_sched_switch(preempt, prev, next);
-		context_switch(rq, prev, next); /* unlocks the rq */
+		rq = context_switch(rq, prev, next); /* unlocks the rq */
 	} else {
 		check_siblings(rq);
 		rq_unlock_irq(rq);

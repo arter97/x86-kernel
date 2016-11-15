@@ -1,6 +1,6 @@
 VERSION = 4
 PATCHLEVEL = 8
-SUBLEVEL = 7
+SUBLEVEL = 8
 EXTRAVERSION = -zen
 NAME = Online Space Amplifier
 

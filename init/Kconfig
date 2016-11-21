@@ -50,8 +50,7 @@ config ZEN_INTERACTIVE
 
 	  --- Block Layer ----------------------------------------
 
-	    NCQ Queue Depth................:  31    ->   8
-	    Block Layer Queue Depth........: 128    ->  16
+	    Block Layer Queue Depth........: 128    ->  32
 
 	  --- CPU Scheduler (CFS) --------------------------------
 

@@ -50,7 +50,7 @@ config ZEN_INTERACTIVE
 
 	  --- Block Layer ----------------------------------------
 
-	    Block Layer Queue Depth........: 128    ->  32
+	    Block Layer Queue Depth........: 128    ->  512
 
 	  --- CPU Scheduler (CFS) --------------------------------
 

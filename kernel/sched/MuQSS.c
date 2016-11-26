@@ -137,7 +137,7 @@
 
 void print_scheduler_version(void)
 {
-	printk(KERN_INFO "MuQSS CPU scheduler v0.140 by Con Kolivas.\n");
+	printk(KERN_INFO "MuQSS CPU scheduler v0.144 by Con Kolivas.\n");
 }
 
 /*
@@ -2357,6 +2357,76 @@ static void account_task_cpu(struct rq *rq, struct task_struct *p)
 	p->last_ran = rq->niffies;
 }
 
+static inline int hrexpiry_enabled(struct rq *rq)
+{
+	if (unlikely(!cpu_active(cpu_of(rq)) || !sched_smp_initialized))
+		return 0;
+	return hrtimer_is_hres_active(&rq->hrexpiry_timer);
+}
+
+/*
+ * Use HR-timers to deliver accurate preemption points.
+ */
+static inline void hrexpiry_clear(struct rq *rq)
+{
+	if (!hrexpiry_enabled(rq))
+		return;
+	if (hrtimer_active(&rq->hrexpiry_timer))
+		hrtimer_cancel(&rq->hrexpiry_timer);
+}
+
+/*
+ * High-resolution time_slice expiry.
+ * Runs from hardirq context with interrupts disabled.
+ */
+static enum hrtimer_restart hrexpiry(struct hrtimer *timer)
+{
+	struct rq *rq = container_of(timer, struct rq, hrexpiry_timer);
+	struct task_struct *p;
+
+	/* This can happen during CPU hotplug / resume */
+	if (unlikely(cpu_of(rq) != smp_processor_id()))
+		goto out;
+
+	/*
+	 * We're doing this without the runqueue lock but this should always
+	 * be run on the local CPU. Time slice should run out in __schedule
+	 * but we set it to zero here in case niffies is slightly less.
+	 */
+	p = rq->curr;
+	p->time_slice = 0;
+	__set_tsk_resched(p);
+out:
+	return HRTIMER_NORESTART;
+}
+
+/*
+ * Called to set the hrexpiry timer state.
+ *
+ * called with irqs disabled from the local CPU only
+ */
+static void hrexpiry_start(struct rq *rq, u64 delay)
+{
+	if (!hrexpiry_enabled(rq))
+		return;
+
+	hrtimer_start(&rq->hrexpiry_timer, ns_to_ktime(delay),
+		      HRTIMER_MODE_REL_PINNED);
+}
+
+static void init_rq_hrexpiry(struct rq *rq)
+{
+	hrtimer_init(&rq->hrexpiry_timer, CLOCK_MONOTONIC, HRTIMER_MODE_REL);
+	rq->hrexpiry_timer.function = hrexpiry;
+}
+
+static inline int rq_dither(struct rq *rq)
+{
+	if (!hrexpiry_enabled(rq))
+		return HALF_JIFFY_US;
+	return 0;
+}
+
 /*
  * wake_up_new_task - wake up a newly created task for the first time.
  *
@@ -2425,8 +2495,14 @@ void wake_up_new_task(struct task_struct *p)
 				 * usually avoids a lot of COW overhead.
 				 */
 				__set_tsk_resched(rq_curr);
-			} else
+			} else {
+				/*
+				 * Adjust the hrexpiry since rq_curr will keep
+				 * running and its timeslice has been shortened.
+				 */
+				hrexpiry_start(rq, US_TO_NS(rq_curr->time_slice));
 				try_preempt(p, new_rq);
+			}
 		}
 	} else {
 		time_slice_expired(p, new_rq);
@@ -3108,87 +3184,6 @@ unsigned long long task_sched_runtime(struct task_struct *p)
 	return ns;
 }
 
-#ifdef CONFIG_HIGH_RES_TIMERS
-static inline int hrexpiry_enabled(struct rq *rq)
-{
-	if (unlikely(!cpu_active(cpu_of(rq)) || !sched_smp_initialized))
-		return 0;
-	return hrtimer_is_hres_active(&rq->hrexpiry_timer);
-}
-
-/*
- * Use HR-timers to deliver accurate preemption points.
- */
-static void hrexpiry_clear(struct rq *rq)
-{
-	if (!hrexpiry_enabled(rq))
-		return;
-	if (hrtimer_active(&rq->hrexpiry_timer))
-		hrtimer_cancel(&rq->hrexpiry_timer);
-}
-
-/*
- * High-resolution time_slice expiry.
- * Runs from hardirq context with interrupts disabled.
- */
-static enum hrtimer_restart hrexpiry(struct hrtimer *timer)
-{
-	struct rq *rq = container_of(timer, struct rq, hrexpiry_timer);
-	struct task_struct *p;
-
-	/* This can happen during CPU hotplug / resume */
-	if (unlikely(cpu_of(rq) != smp_processor_id()))
-		goto out;
-
-	/*
-	 * We're doing this without the runqueue lock but this should always
-	 * be run on the local CPU. Time slice should run out in __schedule
-	 * but we set it to zero here in case niffies is slightly less.
-	 */
-	p = rq->curr;
-	p->time_slice = 0;
-	__set_tsk_resched(p);
-out:
-	return HRTIMER_NORESTART;
-}
-
-/*
- * Called to set the hrexpiry timer state.
- *
- * called with irqs disabled from the local CPU only
- */
-static void hrexpiry_start(struct rq *rq, u64 delay)
-{
-	if (!hrexpiry_enabled(rq))
-		return;
-
-	hrtimer_start(&rq->hrexpiry_timer, ns_to_ktime(delay),
-		      HRTIMER_MODE_REL_PINNED);
-}
-
-static void init_rq_hrexpiry(struct rq *rq)
-{
-	hrtimer_init(&rq->hrexpiry_timer, CLOCK_MONOTONIC, HRTIMER_MODE_REL);
-	rq->hrexpiry_timer.function = hrexpiry;
-}
-
-static inline int rq_dither(struct rq *rq)
-{
-	if (!hrexpiry_enabled(rq))
-		return HALF_JIFFY_US;
-	return 0;
-}
-#else /* CONFIG_HIGH_RES_TIMERS */
-static inline void init_rq_hrexpiry(struct rq *rq)
-{
-}
-
-static inline int rq_dither(struct rq *rq)
-{
-	return HALF_JIFFY_US;
-}
-#endif /* CONFIG_HIGH_RES_TIMERS */
-
 /*
  * Functions to test for when SCHED_ISO tasks have used their allocated
  * quota as real time scheduling and convert them back to SCHED_NORMAL. All
@@ -3491,16 +3486,15 @@ static inline void check_deadline(struct task_struct *p, struct rq *rq)
 static inline struct task_struct
 *earliest_deadline_task(struct rq *rq, int cpu, struct task_struct *idle)
 {
+	struct rq *locked = NULL, *chosen = NULL;
 	struct task_struct *edt = idle;
-	struct rq *locked = NULL;
 	int i, best_entries = 0;
 	u64 best_key = ~0ULL;
 
 	for (i = 0; i < num_possible_cpus(); i++) {
 		struct rq *other_rq = rq_order(rq, i);
 		int entries = other_rq->sl->entries;
-		struct task_struct *p;
-		u64 key;
+		skiplist_node *next;
 
 		/*
 		 * Check for queued entres lockless first. The local runqueue
@@ -3534,35 +3528,47 @@ static inline struct task_struct
 				continue;
 			}
 		}
-		key = other_rq->node.next[0]->key;
-		/* Reevaluate key after locking */
-		if (unlikely(key >= best_key)) {
-			/* This will always be when rq != other_rq */
-			unlock_rq(other_rq);
-			continue;
-		}
 
-		p = other_rq->node.next[0]->value;
-		if (!smt_schedule(p, rq)) {
-			if (i)
-				unlock_rq(other_rq);
-			continue;
-		}
+		next = &other_rq->node;
+		/*
+		 * In interactive mode we check beyond the best entry on other
+		 * runqueues if we can't get the best for smt or affinity
+		 * reasons.
+		 */
+		while ((next = next->next[0]) != &other_rq->node) {
+			struct task_struct *p;
+			u64 key = next->key;
 
-		/* Make sure affinity is ok */
-		if (i) {
-			if (needs_other_cpu(p, cpu)) {
-				unlock_rq(other_rq);
+			/* Reevaluate key after locking */
+			if (key >= best_key)
+				break;
+
+			p = next->value;
+			if (!smt_schedule(p, rq)) {
+				if (i && !sched_interactive)
+					break;
 				continue;
 			}
-			if (locked)
-				unlock_rq(locked);
-			locked = other_rq;
-		}
 
-		best_entries = entries;
-		best_key = key;
-		edt = p;
+			/* Make sure affinity is ok */
+			if (i) {
+				if (needs_other_cpu(p, cpu)) {
+					if (sched_interactive)
+						continue;
+					break;
+				}
+				/* From this point on p is the best so far */
+				if (locked)
+					unlock_rq(locked);
+				chosen = locked = other_rq;
+			}
+			best_entries = entries;
+			best_key = key;
+			edt = p;
+			break;
+		}
+		if (i && other_rq != chosen)
+			unlock_rq(other_rq);
 	}
 
 	if (likely(edt != idle))
@@ -3640,12 +3646,10 @@ static inline void schedule_debug(struct task_struct *prev)
  */
 static inline void set_rq_task(struct rq *rq, struct task_struct *p)
 {
-#ifdef CONFIG_HIGH_RES_TIMERS
 	if (p == rq->idle || p->policy == SCHED_FIFO)
 		hrexpiry_clear(rq);
 	else
 		hrexpiry_start(rq, US_TO_NS(p->time_slice));
-#endif /* CONFIG_HIGH_RES_TIMERS */
 	if (rq->clock - rq->last_tick > HALF_JIFFY_NS)
 		rq->dither = 0;
 	else

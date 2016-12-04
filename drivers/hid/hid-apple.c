@@ -54,10 +54,10 @@ MODULE_PARM_DESC(swap_opt_cmd, "Swap the Option (\"Alt\") and Command (\"Flag\")
 		"(For people who want to keep Windows PC keyboard muscle memory. "
 		"[0] = as-is, Mac layout. 1 = swapped, Windows layout.)");
 
-static unsigned int f13_14_15_as_sysrq;
+static unsigned int f13_14_15_as_sysrq = 1;
 module_param(f13_14_15_as_sysrq, uint, 0644);
 MODULE_PARM_DESC(f13_14_15_as_sysrq, "Use the F13, F14, F15 key as the SysRQ key. "
-		"([0] = disabled, 1 = enabled)");
+		"(0 = disabled, [1] = enabled)");
 
 struct apple_sc {
 	unsigned long quirks;

@@ -186,7 +186,7 @@ static const struct apple_key_translation swapped_fn_leftctrl_keys[] = {
 	{ }
 };
 
-static const struct apple_key_translation *apple_find_translation(
+static const inline struct apple_key_translation *apple_find_translation(
 		const struct apple_key_translation *table, u16 from)
 {
 	const struct apple_key_translation *trans;
@@ -199,7 +199,7 @@ static const struct apple_key_translation *apple_find_translation(
 	return NULL;
 }
 
-static int hidinput_apple_event(struct hid_device *hid, struct input_dev *input,
+static inline int hidinput_apple_event(struct hid_device *hid, struct input_dev *input,
 		struct hid_usage *usage, __s32 value)
 {
 	struct apple_sc *asc = hid_get_drvdata(hid);

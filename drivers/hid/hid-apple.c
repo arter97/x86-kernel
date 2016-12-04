@@ -66,10 +66,10 @@ MODULE_PARM_DESC(swap_ctrl_cmd, "Swap the Control (\"Ctrl\") and Command (\"Flag
 		"(For people who are used to Mac shortcuts involving Command instead of Control. "
 		"[0] = No change. 1 = Swapped.)");
 
-static unsigned int f13_14_15_as_sysrq;
+static unsigned int f13_14_15_as_sysrq = 1;
 module_param(f13_14_15_as_sysrq, uint, 0644);
 MODULE_PARM_DESC(f13_14_15_as_sysrq, "Use the F13, F14, F15 key as the SysRQ key. "
-		"([0] = disabled, 1 = enabled)");
+		"(0 = disabled, [1] = enabled)");
 
 static unsigned int swap_fn_leftctrl;
 module_param(swap_fn_leftctrl, uint, 0644);

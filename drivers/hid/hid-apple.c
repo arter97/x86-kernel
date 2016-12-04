@@ -59,6 +59,11 @@ MODULE_PARM_DESC(swap_opt_cmd, "Swap the Option (\"Alt\") and Command (\"Flag\")
 		"(For people who want to keep Windows PC keyboard muscle memory. "
 		"[0] = as-is, Mac layout. 1 = swapped, Windows layout.)");
 
+static unsigned int f13_14_15_as_sysrq;
+module_param(f13_14_15_as_sysrq, uint, 0644);
+MODULE_PARM_DESC(f13_14_15_as_sysrq, "Use the F13, F14, F15 key as the SysRQ key. "
+		"([0] = disabled, 1 = enabled)");
+
 static unsigned int swap_fn_leftctrl;
 module_param(swap_fn_leftctrl, uint, 0644);
 MODULE_PARM_DESC(swap_fn_leftctrl, "Swap the Fn and left Control keys. "
@@ -312,6 +317,13 @@ static const struct apple_key_translation swapped_option_cmd_keys[] = {
 	{ }
 };
 
+static const struct apple_key_translation f13_14_15_sysrq_keys[] = {
+	{ KEY_F13,	KEY_SYSRQ },
+	{ KEY_F14,	KEY_SYSRQ },
+	{ KEY_F15,	KEY_SYSRQ },
+	{ }
+};
+
 static const struct apple_key_translation swapped_fn_leftctrl_keys[] = {
 	{ KEY_FN, KEY_LEFTCTRL },
 	{ KEY_LEFTCTRL, KEY_FN },
@@ -402,6 +414,13 @@ static int hidinput_apple_event(struct hid_device *hid, struct input_dev *input,
 
 	if (swap_opt_cmd) {
 		trans = apple_find_translation(swapped_option_cmd_keys, code);
+
+		if (trans)
+			code = trans->to;
+	}
+
+	if (f13_14_15_as_sysrq) {
+		trans = apple_find_translation(f13_14_15_sysrq_keys, usage->code);
 
 		if (trans)
 			code = trans->to;

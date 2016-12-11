@@ -1,8 +1,8 @@
 VERSION = 4
 PATCHLEVEL = 11
 SUBLEVEL = 0
-EXTRAVERSION =
-NAME = Fearless Coyote
+EXTRAVERSION = -zen
+NAME = Perry Trotter and the Kernel of Truth
 
 # *DOCUMENTATION*
 # To see a list of typical targets execute "make help"

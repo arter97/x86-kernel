@@ -1,8 +1,8 @@
 VERSION = 4
 PATCHLEVEL = 9
 SUBLEVEL = 0
-EXTRAVERSION =
-NAME = Roaring Lionus
+EXTRAVERSION = -zen
+NAME = Life is Root
 
 # *DOCUMENTATION*
 # To see a list of typical targets execute "make help"

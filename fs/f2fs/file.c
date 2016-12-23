@@ -967,7 +967,7 @@ static int __clone_blkaddrs(struct inode *src_inode, struct inode *dst_inode,
 				new_size = (dst + i) << PAGE_SHIFT;
 				if (dst_inode->i_size < new_size)
 					f2fs_i_size_write(dst_inode, new_size);
-			} while (--ilen && (do_replace[i] || blkaddr[i] == NULL_ADDR));
+			} while ((do_replace[i] || blkaddr[i] == NULL_ADDR) && --ilen);
 
 			f2fs_put_dnode(&dn);
 		} else {

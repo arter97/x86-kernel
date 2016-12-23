@@ -629,7 +629,7 @@ int f2fs_truncate(struct inode *inode)
 	if (err)
 		return err;
 
-	inode->i_mtime = inode->i_ctime = current_time(inode);
+	inode->i_mtime = inode->i_ctime = CURRENT_TIME;
 	f2fs_mark_inode_dirty_sync(inode, false);
 	return 0;
 }
@@ -679,7 +679,7 @@ int f2fs_setattr(struct dentry *dentry, struct iattr *attr)
 	int err;
 	bool size_changed = false;
 
-	err = setattr_prepare(dentry, attr);
+	err = inode_change_ok(inode, attr);
 	if (err)
 		return err;
 
@@ -706,7 +706,7 @@ int f2fs_setattr(struct dentry *dentry, struct iattr *attr)
 				if (err)
 					return err;
 			}
-			inode->i_mtime = inode->i_ctime = current_time(inode);
+			inode->i_mtime = inode->i_ctime = CURRENT_TIME;
 		}
 
 		size_changed = true;
@@ -737,7 +737,10 @@ const struct inode_operations f2fs_file_inode_operations = {
 	.get_acl	= f2fs_get_acl,
 	.set_acl	= f2fs_set_acl,
 #ifdef CONFIG_F2FS_FS_XATTR
+	.setxattr	= generic_setxattr,
+	.getxattr	= generic_getxattr,
 	.listxattr	= f2fs_listxattr,
+	.removexattr	= generic_removexattr,
 #endif
 	.fiemap		= f2fs_fiemap,
 };
@@ -1400,7 +1403,7 @@ static long f2fs_fallocate(struct file *file, int mode,
 	}
 
 	if (!ret) {
-		inode->i_mtime = inode->i_ctime = current_time(inode);
+		inode->i_mtime = inode->i_ctime = CURRENT_TIME;
 		f2fs_mark_inode_dirty_sync(inode, false);
 		if (mode & FALLOC_FL_KEEP_SIZE)
 			file_set_keep_isize(inode);
@@ -1494,7 +1497,7 @@ static int f2fs_ioc_setflags(struct file *filp, unsigned long arg)
 	fi->i_flags = flags;
 	inode_unlock(inode);
 
-	inode->i_ctime = current_time(inode);
+	inode->i_ctime = CURRENT_TIME;
 	f2fs_set_inode_flags(inode);
 out:
 	mnt_drop_write_file(filp);
@@ -1762,16 +1765,38 @@ static bool uuid_is_nonzero(__u8 u[16])
 
 static int f2fs_ioc_set_encryption_policy(struct file *filp, unsigned long arg)
 {
+	struct fscrypt_policy policy;
 	struct inode *inode = file_inode(filp);
+	int ret;
+
+	if (copy_from_user(&policy, (struct fscrypt_policy __user *)arg,
+							sizeof(policy)))
+		return -EFAULT;
+
+	ret = mnt_want_write_file(filp);
+	if (ret)
+		return ret;
 
 	f2fs_update_time(F2FS_I_SB(inode), REQ_TIME);
+	ret = fscrypt_process_policy(filp, &policy);
 
-	return fscrypt_ioctl_set_policy(filp, (const void __user *)arg);
+	mnt_drop_write_file(filp);
+	return ret;
 }
 
 static int f2fs_ioc_get_encryption_policy(struct file *filp, unsigned long arg)
 {
-	return fscrypt_ioctl_get_policy(filp, (void __user *)arg);
+	struct fscrypt_policy policy;
+	struct inode *inode = file_inode(filp);
+	int err;
+
+	err = fscrypt_get_policy(inode, &policy);
+	if (err)
+		return err;
+
+	if (copy_to_user((struct fscrypt_policy __user *)arg, &policy, sizeof(policy)))
+		return -EFAULT;
+	return 0;
 }
 
 static int f2fs_ioc_get_encryption_pwsalt(struct file *filp, unsigned long arg)

@@ -96,7 +96,7 @@ static void f2fs_write_end_io(struct bio *bio)
 		fscrypt_pullback_bio_page(&page, true);
 
 		if (unlikely(bio->bi_error)) {
-			mapping_set_error(page->mapping, -EIO);
+			set_bit(AS_EIO, &page->mapping->flags);
 			f2fs_stop_checkpoint(sbi, true);
 		}
 		dec_page_count(sbi, type);
@@ -259,9 +259,11 @@ static void __f2fs_submit_merged_bio(struct f2fs_sb_info *sbi,
 	if (type >= META_FLUSH) {
 		io->fio.type = META_FLUSH;
 		io->fio.op = REQ_OP_WRITE;
-		io->fio.op_flags = REQ_PREFLUSH | REQ_META | REQ_PRIO;
-		if (!test_opt(sbi, NOBARRIER))
-			io->fio.op_flags |= REQ_FUA;
+		if (test_opt(sbi, NOBARRIER))
+			io->fio.op_flags = WRITE_FLUSH | REQ_META | REQ_PRIO;
+		else
+			io->fio.op_flags = WRITE_FLUSH_FUA | REQ_META |
+								REQ_PRIO;
 	}
 	__submit_merged_bio(io);
 out:
@@ -544,7 +546,7 @@ struct page *find_data_page(struct inode *inode, pgoff_t index)
 		return page;
 	f2fs_put_page(page, 0);
 
-	page = get_read_data_page(inode, index, 0, false);
+	page = get_read_data_page(inode, index, READ_SYNC, false);
 	if (IS_ERR(page))
 		return page;
 
@@ -570,7 +572,7 @@ struct page *get_lock_data_page(struct inode *inode, pgoff_t index,
 	struct address_space *mapping = inode->i_mapping;
 	struct page *page;
 repeat:
-	page = get_read_data_page(inode, index, 0, for_write);
+	page = get_read_data_page(inode, index, READ_SYNC, for_write);
 	if (IS_ERR(page))
 		return page;
 
@@ -1246,9 +1248,7 @@ int do_write_data_page(struct f2fs_io_info *fio)
 							fio->old_blkaddr);
 retry_encrypt:
 		fio->encrypted_page = fscrypt_encrypt_page(inode, fio->page,
-							PAGE_SIZE, 0,
-							fio->page->index,
-							gfp_flags);
+								gfp_flags);
 		if (IS_ERR(fio->encrypted_page)) {
 			err = PTR_ERR(fio->encrypted_page);
 			if (err == -ENOMEM) {
@@ -1304,7 +1304,7 @@ static int f2fs_write_data_page(struct page *page,
 		.sbi = sbi,
 		.type = DATA,
 		.op = REQ_OP_WRITE,
-		.op_flags = wbc_to_write_flags(wbc),
+		.op_flags = (wbc->sync_mode == WB_SYNC_ALL) ? WRITE_SYNC : 0,
 		.page = page,
 		.encrypted_page = NULL,
 	};
@@ -1726,7 +1726,7 @@ repeat:
 			err = PTR_ERR(bio);
 			goto fail;
 		}
-		bio->bi_opf = REQ_OP_READ;
+		bio_set_op_attrs(bio, REQ_OP_READ, READ_SYNC);
 		if (bio_add_page(bio, page, PAGE_SIZE, 0) < PAGE_SIZE) {
 			bio_put(bio);
 			err = -EFAULT;

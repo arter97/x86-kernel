@@ -111,7 +111,7 @@ int f2fs_convert_inline_page(struct dnode_of_data *dn, struct page *page)
 		.sbi = F2FS_I_SB(dn->inode),
 		.type = DATA,
 		.op = REQ_OP_WRITE,
-		.op_flags = REQ_SYNC | REQ_PRIO,
+		.op_flags = WRITE_SYNC | REQ_PRIO,
 		.page = page,
 		.encrypted_page = NULL,
 	};
@@ -574,7 +574,7 @@ void f2fs_delete_inline_entry(struct f2fs_dir_entry *dentry, struct page *page,
 	set_page_dirty(page);
 	f2fs_put_page(page, 1);
 
-	dir->i_ctime = dir->i_mtime = current_time(dir);
+	dir->i_ctime = dir->i_mtime = CURRENT_TIME;
 	f2fs_mark_inode_dirty_sync(dir, false);
 
 	if (inode)

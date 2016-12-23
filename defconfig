@@ -1,6 +1,6 @@
 #
 # Automatically generated file; DO NOT EDIT.
-# Linux/x86 4.8.10-zen Kernel Configuration
+# Linux/x86 4.8.15-zen Kernel Configuration
 #
 CONFIG_64BIT=y
 CONFIG_X86_64=y
@@ -7596,7 +7596,7 @@ CONFIG_F2FS_STAT_FS=y
 CONFIG_F2FS_FS_XATTR=y
 CONFIG_F2FS_FS_POSIX_ACL=y
 CONFIG_F2FS_FS_SECURITY=y
-CONFIG_F2FS_CHECK_FS=y
+# CONFIG_F2FS_CHECK_FS is not set
 # CONFIG_F2FS_FS_ENCRYPTION is not set
 # CONFIG_F2FS_FAULT_INJECTION is not set
 CONFIG_FS_DAX=y

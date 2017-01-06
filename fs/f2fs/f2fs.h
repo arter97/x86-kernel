@@ -699,7 +699,7 @@ struct f2fs_io_info {
 	struct f2fs_sb_info *sbi;	/* f2fs_sb_info pointer */
 	enum page_type type;	/* contains DATA/NODE/META/META_FLUSH */
 	int op;			/* contains REQ_OP_ */
-	int op_flags;		/* req_flag_bits */
+	int op_flags;		/* rq_flag_bits */
 	block_t new_blkaddr;	/* new block address to be written */
 	block_t old_blkaddr;	/* old block address before Cow */
 	struct page *page;	/* page to be written */
@@ -2520,8 +2520,8 @@ static inline bool f2fs_may_encrypt(struct inode *inode)
 #define fscrypt_pullback_bio_page	fscrypt_notsupp_pullback_bio_page
 #define fscrypt_restore_control_page	fscrypt_notsupp_restore_control_page
 #define fscrypt_zeroout_range		fscrypt_notsupp_zeroout_range
-#define fscrypt_ioctl_set_policy	fscrypt_notsupp_ioctl_set_policy
-#define fscrypt_ioctl_get_policy	fscrypt_notsupp_ioctl_get_policy
+#define fscrypt_process_policy		fscrypt_notsupp_process_policy
+#define fscrypt_get_policy		fscrypt_notsupp_get_policy
 #define fscrypt_has_permitted_context	fscrypt_notsupp_has_permitted_context
 #define fscrypt_inherit_context		fscrypt_notsupp_inherit_context
 #define fscrypt_get_encryption_info	fscrypt_notsupp_get_encryption_info

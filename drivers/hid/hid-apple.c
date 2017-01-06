@@ -96,6 +96,7 @@ static const struct apple_key_translation macbookair_fn_keys[] = {
 static const struct apple_key_translation apple_fn_keys[] = {
 	{ KEY_BACKSPACE, KEY_DELETE },
 	{ KEY_ENTER,	KEY_INSERT },
+#if 0
 	{ KEY_F1,	KEY_BRIGHTNESSDOWN, APPLE_FLAG_FKEY },
 	{ KEY_F2,	KEY_BRIGHTNESSUP,   APPLE_FLAG_FKEY },
 	{ KEY_F3,	KEY_SCALE,          APPLE_FLAG_FKEY },
@@ -105,6 +106,7 @@ static const struct apple_key_translation apple_fn_keys[] = {
 	{ KEY_F7,	KEY_PREVIOUSSONG,   APPLE_FLAG_FKEY },
 	{ KEY_F8,	KEY_PLAYPAUSE,      APPLE_FLAG_FKEY },
 	{ KEY_F9,	KEY_NEXTSONG,       APPLE_FLAG_FKEY },
+#endif
 	{ KEY_F10,	KEY_MUTE,           APPLE_FLAG_FKEY },
 	{ KEY_F11,	KEY_VOLUMEDOWN,     APPLE_FLAG_FKEY },
 	{ KEY_F12,	KEY_VOLUMEUP,       APPLE_FLAG_FKEY },

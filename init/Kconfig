@@ -75,6 +75,9 @@ config ZEN_INTERACTIVE
 
 	    Scheduling interval............:   6    ->   3    ms
 	    ISO task max realtime use......:  70 %  ->  25 %
+	    Ondemand coarse upscaling limit:  80 %  ->  45 %
+	    Ondemand fine upscaling limit..:  95 %  ->  45 %
+	    Ondemand min upscaling limit...:  11 %  ->   6 %
 	    Ondemand downscaling factor....:   1    ->  10
 
 config BROKEN

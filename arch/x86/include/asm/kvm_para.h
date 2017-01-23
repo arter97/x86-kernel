@@ -92,6 +92,28 @@ void kvm_async_pf_task_wait(u32 token, int interrupt_kernel);
 void kvm_async_pf_task_wake(u32 token);
 u32 kvm_read_and_reset_pf_reason(void);
 extern void kvm_disable_steal_time(void);
+void kvm_arch_return_memory(struct page *page, unsigned int order);
+
+/*
+ * This order has been found in an empirical way, running memory tests
+ * through many iterations to assess the number of hypercalls issued
+ * and the amount of memory returned. In case you change this order to
+ * 6 or 8, it should not impact your performances significantly.
+ *
+ * Smaller values lead to less memory waste, but consume more CPU on
+ * hypercalls. Larger values use less CPU, but do not as precisely
+ * inform the hypervisor of which memory is free.
+ */
+#define RET_MEM_BUDDY_ORDER 7
+
+static inline void arch_buddy_merge(struct page *page, unsigned int order)
+{
+	if (order < RET_MEM_BUDDY_ORDER)
+		return;
+
+	kvm_arch_return_memory(page, order);
+}
+#define arch_buddy_merge arch_buddy_merge
 
 #ifdef CONFIG_PARAVIRT_SPINLOCKS
 void __init kvm_spinlock_init(void);

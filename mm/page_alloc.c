@@ -64,6 +64,7 @@
 #include <linux/page_owner.h>
 #include <linux/kthread.h>
 #include <linux/memcontrol.h>
+#include <linux/mm-arch-hooks.h>
 #include <linux/ftrace.h>
 #include <linux/lockdep.h>
 #include <linux/nmi.h>
@@ -841,6 +842,7 @@ continue_merging:
 	}
 
 done_merging:
+	arch_buddy_merge(page, order);
 	set_page_order(page, order);
 
 	/*

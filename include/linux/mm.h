@@ -2670,6 +2670,11 @@ extern bool process_shares_mm(struct task_struct *p, struct mm_struct *mm);
 extern int sysctl_drop_caches;
 int drop_caches_sysctl_handler(struct ctl_table *, int,
 					void __user *, size_t *, loff_t *);
+extern int sysctl_kvm_madv_instant_free;
+extern int kvm_ret_mem_advice;
+int kvm_madv_instant_free_sysctl_handler(struct ctl_table *table, int write,
+					 void __user *buffer, size_t *length,
+					 loff_t *ppos);
 #endif
 
 void drop_slab(void);

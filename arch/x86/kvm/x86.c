@@ -45,6 +45,7 @@
 #include <linux/user-return-notifier.h>
 #include <linux/srcu.h>
 #include <linux/slab.h>
+#include <linux/mm.h>
 #include <linux/perf_event.h>
 #include <linux/uaccess.h>
 #include <linux/hash.h>
@@ -6884,6 +6885,19 @@ static void kvm_pv_kick_cpu_op(struct kvm *kvm, unsigned long flags, int apicid)
 	kvm_irq_delivery_to_apic(kvm, NULL, &lapic_irq, NULL);
 }
 
+static int kvm_pv_return_mem_op(struct kvm *kvm, gpa_t gpa, size_t len)
+{
+	unsigned long start = gfn_to_hva(kvm, gpa_to_gfn(gpa));
+
+	if (len > KVM_MAX_RET_MEM_SIZE)
+		return KVM_EPERM;
+
+	if (kvm_is_error_hva(start + len))
+		return KVM_EFAULT;
+
+	return do_madvise(start, len, kvm_ret_mem_advice);
+}
+
 void kvm_vcpu_deactivate_apicv(struct kvm_vcpu *vcpu)
 {
 	vcpu->arch.apicv_active = false;
@@ -6935,6 +6949,9 @@ int kvm_emulate_hypercall(struct kvm_vcpu *vcpu)
 #endif
 	case KVM_HC_SEND_IPI:
 		ret = kvm_pv_send_ipi(vcpu->kvm, a0, a1, a2, a3, op_64_bit);
+		break;
+	case KVM_HC_RETURN_MEM:
+		ret = kvm_pv_return_mem_op(vcpu->kvm, a0, a1);
 		break;
 	default:
 		ret = -KVM_ENOSYS;

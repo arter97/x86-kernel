@@ -1428,6 +1428,13 @@ static struct ctl_table vm_table[] = {
 		.extra1		= &one,
 		.extra2		= &four,
 	},
+	{
+		.procname	= "kvm_madv_instant_free",
+		.data		= &sysctl_kvm_madv_instant_free,
+		.maxlen		= sizeof(int),
+		.mode		= 0644,
+		.proc_handler	= kvm_madv_instant_free_sysctl_handler,
+	},
 #ifdef CONFIG_COMPACTION
 	{
 		.procname	= "compact_memory",

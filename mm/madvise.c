@@ -738,9 +738,7 @@ madvise_behavior_valid(int behavior)
 }
 
 /*
- * The madvise(2) system call.
- *
- * Applications can use madvise() to advise the kernel how it should
+ * Kernel modules can use do_madvise() to advise the kernel how it should
  * handle paging I/O in this VM area.  The idea is to help the kernel
  * use appropriate read-ahead and caching techniques.  The information
  * provided is advisory only, and can be safely disregarded by the
@@ -798,7 +796,7 @@ madvise_behavior_valid(int behavior)
  *  -EBADF  - map exists, but area maps something that isn't a file.
  *  -EAGAIN - a kernel resource was temporarily unavailable.
  */
-SYSCALL_DEFINE3(madvise, unsigned long, start, size_t, len_in, int, behavior)
+int do_madvise(unsigned long start, size_t len_in, int behavior)
 {
 	unsigned long end, tmp;
 	struct vm_area_struct *vma, *prev;
@@ -892,4 +890,23 @@ out:
 		up_read(&current->mm->mmap_sem);
 
 	return error;
+}
+EXPORT_SYMBOL_GPL(do_madvise);
+
+/*
+ * The madvise(2) system call.
+ *
+ * Applications can use madvise() system call to advise the kernel how
+ * it should handle paging I/O in this VM area.  The idea is to help
+ * the kernel use appropriate read-ahead and caching techniques.  The
+ * information provided is advisory only, and can be safely disregarded
+ * by the kernel without affecting the correct operation of the application.
+ *
+ * behavior values are the same than the ones defined in madvise()
+ *
+ * return values are the same than the ones defined in madvise()
+ */
+SYSCALL_DEFINE3(madvise, unsigned long, start, size_t, len_in, int, behavior)
+{
+	return do_madvise(start, len_in, behavior);
 }

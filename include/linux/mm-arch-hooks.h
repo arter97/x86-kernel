@@ -12,6 +12,7 @@
 #define _LINUX_MM_ARCH_HOOKS_H
 
 #include <asm/mm-arch-hooks.h>
+#include <asm/kvm_para.h>
 
 #ifndef arch_remap
 static inline void arch_remap(struct mm_struct *mm,
@@ -20,6 +21,13 @@ static inline void arch_remap(struct mm_struct *mm,
 {
 }
 #define arch_remap arch_remap
+#endif
+
+#ifndef arch_buddy_merge
+static inline void arch_buddy_merge(struct page *page, unsigned int order)
+{
+}
+#define arch_buddy_merge arch_buddy_merge
 #endif
 
 #endif /* _LINUX_MM_ARCH_HOOKS_H */

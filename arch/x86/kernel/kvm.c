@@ -762,6 +762,16 @@ static __init int kvm_setup_pv_tlb_flush(void)
 }
 arch_initcall(kvm_setup_pv_tlb_flush);
 
+void kvm_arch_return_memory(struct page *page, unsigned int order)
+{
+	if (!kvm_para_available())
+		return;
+
+	kvm_hypercall2(KVM_HC_RETURN_MEM,
+		       page_to_phys(page),
+		       PAGE_SIZE << order);
+}
+
 #ifdef CONFIG_PARAVIRT_SPINLOCKS
 
 /* Kick a cpu by its apicid. Used to wake up a halted vcpu */

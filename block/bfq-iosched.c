@@ -78,6 +78,7 @@
 #include <linux/ioprio.h>
 #include "bfq.h"
 #include "blk.h"
+#include "blk-wbt.h"
 
 /* Expiration time of sync (0) and async (1) requests, in ns. */
 static const u64 bfq_fifo_expire[2] = { NSEC_PER_SEC / 4, NSEC_PER_SEC / 8 };
@@ -4524,6 +4525,7 @@ static int bfq_set_request(struct request_queue *q, struct request *rq,
 	struct bfq_queue *bfqq;
 	unsigned long flags;
 	bool split = false;
+	bool disable_wbt;
 
 	spin_lock_irqsave(q->queue_lock, flags);
 	bfq_check_ioprio_change(bic, bio);
@@ -4531,7 +4533,7 @@ static int bfq_set_request(struct request_queue *q, struct request *rq,
 	if (!bic)
 		goto queue_fail;
 
-	bfq_bic_update_cgroup(bic, bio);
+	disable_wbt = bfq_bic_update_cgroup(bic, bio);
 
 new_queue:
 	bfqq = bic_to_bfqq(bic, is_sync);
@@ -4614,6 +4616,9 @@ new_queue:
 		bfq_handle_burst(bfqd, bfqq);
 
 	spin_unlock_irqrestore(q->queue_lock, flags);
+
+	if (disable_wbt)
+		wbt_disable_default(q);
 
 	return 0;
 

@@ -137,7 +137,7 @@
 
 void print_scheduler_version(void)
 {
-	printk(KERN_INFO "MuQSS CPU scheduler v0.150 by Con Kolivas.\n");
+	printk(KERN_INFO "MuQSS CPU scheduler v0.152 by Con Kolivas.\n");
 }
 
 /*
@@ -895,8 +895,8 @@ static inline bool rq_local(struct rq *rq);
  */
 static void update_load_avg(struct rq *rq, unsigned int flags)
 {
-	unsigned long us_interval;
-	long load, curload;
+	unsigned long us_interval, curload;
+	long load;
 
 	if (unlikely(rq->niffies <= rq->load_update))
 		return;
@@ -907,9 +907,6 @@ static void update_load_avg(struct rq *rq, unsigned int flags)
 	if (unlikely(load < 0))
 		load = 0;
 	load += curload * curload * SCHED_CAPACITY_SCALE * us_interval * 5 / 262144;
-	/* If this CPU has all the load, make it ramp up quickly */
-	if (curload > load && curload >= atomic_read(&grq.nr_running))
-		load = curload;
 	rq->load_avg = load;
 
 	rq->load_update = rq->niffies;
@@ -1955,7 +1952,7 @@ static int valid_task_cpu(struct task_struct *p)
 
 	if (unlikely(!cpumask_weight(&valid_mask))) {
 		/* Hotplug boot threads do this before the CPU is up */
-		WARN_ON(sched_smp_initialized);
+		printk(KERN_INFO "SCHED: No cpumask for %s/%d\n", p->comm, p->pid);
 		return cpumask_any(tsk_cpus_allowed(p));
 	}
 	return cpumask_any(&valid_mask);
@@ -3364,8 +3361,8 @@ void scheduler_tick(void)
 	update_cpu_clock_tick(rq, rq->curr);
 	if (!rq_idle(rq))
 		task_running_tick(rq);
-	else
-		no_iso_tick(rq, rq->last_scheduler_tick - rq->last_jiffy);
+	else if (rq->last_jiffy > rq->last_scheduler_tick)
+		no_iso_tick(rq, rq->last_jiffy - rq->last_scheduler_tick);
 	rq->last_scheduler_tick = rq->last_jiffy;
 	rq->last_tick = rq->clock;
 	perf_event_task_tick();
@@ -4292,8 +4289,10 @@ int task_prio(const struct task_struct *p)
 
 	/* Convert to ms to avoid overflows */
 	delta = NS_TO_MS(p->deadline - task_rq(p)->niffies);
+	if (unlikely(delta < 0))
+		delta = 0;
 	delta = delta * 40 / ms_longest_deadline_diff();
-	if (delta > 0 && delta <= 80)
+	if (delta <= 80)
 		prio += delta;
 	if (idleprio_task(p))
 		prio += 40;

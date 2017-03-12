@@ -172,7 +172,7 @@ static void do_catch_up(struct spk_synth *synth)
 			outb(UART_MCR_DTR, speakup_info.port_tts + UART_MCR);
 			outb(UART_MCR_DTR | UART_MCR_RTS,
 					speakup_info.port_tts + UART_MCR);
-			schedule_msec_hrtimeout((full_time_val));
+			schedule_timeout(msecs_to_jiffies(full_time_val));
 			continue;
 		}
 		if (time_after_eq(jiffies, jiff_max) && (ch == SPACE)) {

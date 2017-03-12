@@ -24,6 +24,8 @@
 
 #include <trace/events/sched.h>
 
+#undef CONFIG_ZEN_INTERACTIVE
+
 /*
  * Targeted preemption latency for CPU-bound tasks:
  *

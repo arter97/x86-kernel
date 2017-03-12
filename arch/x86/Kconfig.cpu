@@ -463,7 +463,7 @@ config X86_GENERIC
 
 config OPTIMIZE_SPECIFICALLY
 	bool "Use cflags retrived from -march=native for specific CPU"
-	depends on !X86_MARCH_NATIVE
+	depends on MNATIVE
 	default n
 	help
 	  This option will expose CONFIG_OPTIMIZE_SPECIFICALLY_FOR config that

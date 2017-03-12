@@ -121,7 +121,13 @@ else
 	KBUILD_CFLAGS += $(call cc-option,-mskip-rax-setup)
 
         # FIXME - should be integrated in Makefile.cpu (Makefile_32.cpu)
-        cflags-$(CONFIG_MNATIVE) += $(call cc-option,-march=native)
+	ifdef CONFIG_MNATIVE
+		ifeq ($(CONFIG_OPTIMIZE_SPECIFICALLY),y)
+			include arch/x86/Makefile.spec
+		else
+		        cflags-$(CONFIG_MNATIVE) += $(call cc-option,-march=native)
+		endif
+	endif
         cflags-$(CONFIG_MK8) += $(call cc-option,-march=k8)
         cflags-$(CONFIG_MK8SSE3) += $(call cc-option,-march=k8-sse3,-mtune=k8)
         cflags-$(CONFIG_MK10) += $(call cc-option,-march=amdfam10)
@@ -155,14 +161,7 @@ else
                 $(call cc-option,-march=skylake,$(call cc-option,-mtune=skylake))
         cflags-$(CONFIG_MATOM) += $(call cc-option,-march=bonnell) \
                 $(call cc-option,-mtune=bonnell,$(call cc-option,-mtune=generic))
-
-	ifndef CONFIG_MNATIVE
-		ifeq ($(CONFIG_OPTIMIZE_SPECIFICALLY),y)
-			include arch/x86/Makefile.spec
-		else
-			cflags-$(CONFIG_GENERIC_CPU) += $(call cc-option,-mtune=generic)
-		endif
-	endif
+	cflags-$(CONFIG_GENERIC_CPU) += $(call cc-option,-mtune=generic)
 
         KBUILD_CFLAGS += $(cflags-y)
 

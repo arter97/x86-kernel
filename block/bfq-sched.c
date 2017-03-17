@@ -691,17 +691,30 @@ static void bfq_idle_insert(struct bfq_service_tree *st,
 }
 
 /**
- * bfq_forget_entity - do not consider entity anymore when computing schedule
+ * bfq_forget_entity - remove an entity from the wfq trees.
  * @st: the service tree.
  * @entity: the entity being removed.
+ *
+ * Update the device status and forget everything about @entity, putting
+ * the device reference to it, if it is a queue.  Entities belonging to
+ * groups are not refcounted.
  */
 static void bfq_forget_entity(struct bfq_service_tree *st,
 			      struct bfq_entity *entity)
 {
+	struct bfq_queue *bfqq = bfq_entity_to_bfqq(entity);
+	struct bfq_sched_data *sd;
+
 	BUG_ON(!entity->on_st);
 
 	entity->on_st = false;
 	st->wsum -= entity->weight;
+	if (bfqq) {
+		sd = entity->sched_data;
+		bfq_log_bfqq(bfqq->bfqd, bfqq, "forget_entity: %p %d",
+			     bfqq, bfqq->ref);
+		bfq_put_queue(bfqq);
+	}
 }
 
 /**

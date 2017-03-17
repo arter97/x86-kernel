@@ -143,7 +143,6 @@ int __weak arch_asym_cpu_priority(int cpu)
 unsigned int sysctl_sched_cfs_bandwidth_slice		= 3000UL;
 #else
 unsigned int sysctl_sched_cfs_bandwidth_slice		= 5000UL;
->>>>>>> 12bba378b6191d8c... ZEN: Implement zen-tune v4.9
 #endif
 #endif
 

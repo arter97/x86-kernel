@@ -110,10 +110,12 @@ else
         cflags-$(CONFIG_MK10) += $(call cc-option,-march=amdfam10)
         cflags-$(CONFIG_MBARCELONA) += $(call cc-option,-march=barcelona)
         cflags-$(CONFIG_MBOBCAT) += $(call cc-option,-march=btver1)
+        cflags-$(CONFIG_MJAGUAR) += $(call cc-option,-march=btver2)
         cflags-$(CONFIG_MBULLDOZER) += $(call cc-option,-march=bdver1)
         cflags-$(CONFIG_MPILEDRIVER) += $(call cc-option,-march=bdver2)
         cflags-$(CONFIG_MSTEAMROLLER) += $(call cc-option,-march=bdver3)
-        cflags-$(CONFIG_MJAGUAR) += $(call cc-option,-march=btver2)
+        cflags-$(CONFIG_MEXCAVATOR) += $(call cc-option,-march=bdver4)
+        cflags-$(CONFIG_MZEN) += $(call cc-option,-march=znver1)
         cflags-$(CONFIG_MPSC) += $(call cc-option,-march=nocona)
 
         cflags-$(CONFIG_MCORE2) += \

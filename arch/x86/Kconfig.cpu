@@ -115,6 +115,7 @@ config MPENTIUMM
 config MPENTIUM4
 	bool "Pentium-4/Celeron(P4-based)/Pentium-4 M/older Xeon"
 	depends on X86_32
+	select X86_P6_NOP
 	---help---
 	  Select this for Intel Pentium 4 chips.  This includes the
 	  Pentium 4, Pentium D, P4-based Celeron and Xeon, and
@@ -188,44 +189,58 @@ config MK10
 config MBARCELONA
 	bool "AMD Barcelona"
 	---help---
-	  Select this for AMD Barcelona and newer processors.
+	  Select this for AMD Family 10h Barcelona processors.
 
 	  Enables -march=barcelona
 
 config MBOBCAT
 	bool "AMD Bobcat"
 	---help---
-	  Select this for AMD Bobcat processors.
+	  Select this for AMD Family 14h Bobcat processors.
 
 	  Enables -march=btver1
+
+config MJAGUAR
+	bool "AMD Jaguar"
+	---help---
+	  Select this for AMD Family 16h Jaguar processors.
+
+	  Enables -march=btver2
 
 config MBULLDOZER
 	bool "AMD Bulldozer"
 	---help---
-	  Select this for AMD Bulldozer processors.
+	  Select this for AMD Family 15h Bulldozer processors.
 
 	  Enables -march=bdver1
 
 config MPILEDRIVER
 	bool "AMD Piledriver"
 	---help---
-	  Select this for AMD Piledriver processors.
+	  Select this for AMD Family 15h Piledriver processors.
 
 	  Enables -march=bdver2
 
 config MSTEAMROLLER
 	bool "AMD Steamroller"
 	---help---
-	  Select this for AMD Steamroller processors.
+	  Select this for AMD Family 15h Steamroller processors.
 
 	  Enables -march=bdver3
 
-config MJAGUAR
-	bool "AMD Jaguar"
+config MEXCAVATOR
+	bool "AMD Excavator"
 	---help---
-	  Select this for AMD Jaguar processors.
+	  Select this for AMD Family 15h Excavator processors.
 
-	  Enables -march=btver2
+	  Enables -march=bdver4
+
+config MZEN
+	bool "AMD Zen"
+	---help---
+	  Select this for AMD Family 17h Zen processors.
+
+	  Enables -march=znver1
 
 config MCRUSOE
 	bool "Crusoe"
@@ -308,6 +323,7 @@ config MVIAC7
 
 config MPSC
 	bool "Intel P4 / older Netburst based Xeon"
+	select X86_P6_NOP
 	depends on X86_64
 	---help---
 	  Optimize for Intel Pentium 4, Pentium D and older Nocona/Dempsey
@@ -319,6 +335,7 @@ config MPSC
 
 config MATOM
 	bool "Intel Atom"
+	select X86_P6_NOP
 	---help---
 
 	  Select this for the Intel Atom platform. Intel Atom CPUs have an
@@ -328,6 +345,7 @@ config MATOM
 
 config MCORE2
 	bool "Intel Core 2"
+	select X86_P6_NOP
 	---help---
 
 	  Select this for Intel Core 2 and newer Core 2 Xeons (Xeon 51xx and
@@ -339,6 +357,7 @@ config MCORE2
 
 config MNEHALEM
 	bool "Intel Nehalem"
+	select X86_P6_NOP
 	---help---
 
 	  Select this for 1st Gen Core processors in the Nehalem family.
@@ -347,6 +366,7 @@ config MNEHALEM
 
 config MWESTMERE
 	bool "Intel Westmere"
+	select X86_P6_NOP
 	---help---
 
 	  Select this for the Intel Westmere formerly Nehalem-C family.
@@ -355,6 +375,7 @@ config MWESTMERE
 
 config MSILVERMONT
 	bool "Intel Silvermont"
+	select X86_P6_NOP
 	---help---
 
 	  Select this for the Intel Silvermont platform.
@@ -363,6 +384,7 @@ config MSILVERMONT
 
 config MSANDYBRIDGE
 	bool "Intel Sandy Bridge"
+	select X86_P6_NOP
 	---help---
 
 	  Select this for 2nd Gen Core processors in the Sandy Bridge family.
@@ -371,6 +393,7 @@ config MSANDYBRIDGE
 
 config MIVYBRIDGE
 	bool "Intel Ivy Bridge"
+	select X86_P6_NOP
 	---help---
 
 	  Select this for 3rd Gen Core processors in the Ivy Bridge family.
@@ -379,6 +402,7 @@ config MIVYBRIDGE
 
 config MHASWELL
 	bool "Intel Haswell"
+	select X86_P6_NOP
 	---help---
 
 	  Select this for 4th Gen Core processors in the Haswell family.
@@ -387,6 +411,7 @@ config MHASWELL
 
 config MBROADWELL
 	bool "Intel Broadwell"
+	select X86_P6_NOP
 	---help---
 
 	  Select this for 5th Gen Core processors in the Broadwell family.
@@ -395,6 +420,7 @@ config MBROADWELL
 
 config MSKYLAKE
 	bool "Intel Skylake"
+	select X86_P6_NOP
 	---help---
 
 	  Select this for 6th Gen Core processors in the Skylake family.
@@ -445,7 +471,7 @@ config X86_INTERNODE_CACHE_SHIFT
 config X86_L1_CACHE_SHIFT
 	int
 	default "7" if MPENTIUM4 || MPSC
-	default "6" if MK7 || MK8 || MK8SSE3 || MK10 || MBARCELONA || MBOBCAT || MBULLDOZER || MPILEDRIVER || MSTEAMROLLER || MJAGUAR || MPENTIUMM || MCORE2 || MNEHALEM || MWESTMERE || MSILVERMONT || MSANDYBRIDGE || MIVYBRIDGE || MHASWELL || MBROADWELL || MSKYLAKE || MNATIVE || MATOM || MVIAC7 || X86_GENERIC || GENERIC_CPU
+	default "6" if MK7 || MK8 || MK8SSE3 || MK10 || MBARCELONA || MBOBCAT || MBULLDOZER || MPILEDRIVER || MSTEAMROLLER || MEXCAVATOR || MZEN || MJAGUAR || MPENTIUMM || MCORE2 || MNEHALEM || MWESTMERE || MSILVERMONT || MSANDYBRIDGE || MIVYBRIDGE || MHASWELL || MBROADWELL || MSKYLAKE || MNATIVE || MATOM || MVIAC7 || X86_GENERIC || GENERIC_CPU
 	default "4" if MELAN || M486 || MGEODEGX1
 	default "5" if MWINCHIP3D || MWINCHIPC6 || MCRUSOE || MEFFICEON || MCYRIXIII || MK6 || MPENTIUMIII || MPENTIUMII || M686 || M586MMX || M586TSC || M586 || MVIAC3_2 || MGEODE_LX
 
@@ -486,21 +512,22 @@ config X86_USE_3DNOW
 	def_bool y
 	depends on (MCYRIXIII || MK7 || MGEODE_LX) && !UML
 
-#
-# P6_NOPs are a relatively minor optimization that require a family >=
-# 6 processor, except that it is broken on certain VIA chips.
-# Furthermore, AMD chips prefer a totally different sequence of NOPs
-# (which work on all CPUs).  In addition, it looks like Virtual PC
-# does not understand them.
-#
-# As a result, disallow these if we're not compiling for X86_64 (these
-# NOPs do work on all x86-64 capable chips); the list of processors in
-# the right-hand clause are the cores that benefit from this optimization.
-#
 config X86_P6_NOP
-	def_bool y
-	depends on X86_64
-	depends on (MCORE2 || MPENTIUM4 || MPSC)
+	default n
+	bool "Support for P6_NOPs on Intel chips"
+	depends on (MCORE2 || MPENTIUM4 || MPSC || MATOM || MNEHALEM || MWESTMERE || MSILVERMONT  || MSANDYBRIDGE || MIVYBRIDGE || MHASWELL || MBROADWELL || MSKYLAKE || MNATIVE)
+	---help---
+	P6_NOPs are a relatively minor optimization that require a family >=
+	6 processor, except that it is broken on certain VIA chips.
+	Furthermore, AMD chips prefer a totally different sequence of NOPs
+	(which work on all CPUs).  In addition, it looks like Virtual PC
+	does not understand them.
+
+	As a result, disallow these if we're not compiling for X86_64 (these
+	NOPs do work on all x86-64 capable chips); the list of processors in
+	the right-hand clause are the cores that benefit from this optimization.
+
+	Say Y if you have Intel CPU newer than Pentium Pro, N otherwise.
 
 config X86_TSC
 	def_bool y
@@ -514,7 +541,7 @@ config X86_CMPXCHG64
 # generates cmov.
 config X86_CMOV
 	def_bool y
-	depends on (MK8 || MK8SSE3 || MK10 || MBARCELONA || MBOBCAT || MBULLDOZER || MPILEDRIVER || MSTEAMROLLER || MJAGUAR || MK7 || MCORE2 || MNEHALEM || MWESTMERE || MSILVERMONT || MSANDYBRIDGE || MIVYBRIDGE || MHASWELL || MBROADWELL || MSKYLAKE || MPENTIUM4 || MPENTIUMM || MPENTIUMIII || MPENTIUMII || M686 || MVIAC3_2 || MVIAC7 || MCRUSOE || MEFFICEON || X86_64 || MNATIVE || MATOM || MGEODE_LX)
+	depends on (MK8 || MK8SSE3 || MK10 || MBARCELONA || MBOBCAT || MBULLDOZER || MPILEDRIVER || MSTEAMROLLER || MEXCAVATOR || MZEN || MJAGUAR || MK7 || MCORE2 || MNEHALEM || MWESTMERE || MSILVERMONT || MSANDYBRIDGE || MIVYBRIDGE || MHASWELL || MBROADWELL || MSKYLAKE || MPENTIUM4 || MPENTIUMM || MPENTIUMIII || MPENTIUMII || M686 || MVIAC3_2 || MVIAC7 || MCRUSOE || MEFFICEON || X86_64 || MNATIVE || MATOM || MGEODE_LX)
 
 config X86_MINIMUM_CPU_FAMILY
 	int

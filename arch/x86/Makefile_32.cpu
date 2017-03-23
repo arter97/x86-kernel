@@ -35,10 +35,12 @@ cflags-$(CONFIG_MK8SSE3)		+= $(call cc-option,-march=k8-sse3,-march=athlon)
 cflags-$(CONFIG_MK10)	+= $(call cc-option,-march=amdfam10,-march=athlon)
 cflags-$(CONFIG_MBARCELONA)	+= $(call cc-option,-march=barcelona,-march=athlon)
 cflags-$(CONFIG_MBOBCAT)	+= $(call cc-option,-march=btver1,-march=athlon)
+cflags-$(CONFIG_MJAGUAR)	+= $(call cc-option,-march=btver2,-march=athlon)
 cflags-$(CONFIG_MBULLDOZER)	+= $(call cc-option,-march=bdver1,-march=athlon)
 cflags-$(CONFIG_MPILEDRIVER)	+= $(call cc-option,-march=bdver2,-march=athlon)
 cflags-$(CONFIG_MSTEAMROLLER)	+= $(call cc-option,-march=bdver3,-march=athlon)
-cflags-$(CONFIG_MJAGUAR)	+= $(call cc-option,-march=btver2,-march=athlon)
+cflags-$(CONFIG_MEXCAVATOR)	+= $(call cc-option,-march=bdver4,-march=athlon)
+cflags-$(CONFIG_MZEN)	+= $(call cc-option,-march=znver1,-march=athlon)
 cflags-$(CONFIG_MCRUSOE)	+= -march=i686 $(align)-functions=0 $(align)-jumps=0 $(align)-loops=0
 cflags-$(CONFIG_MEFFICEON)	+= -march=i686 $(call tune,pentium3) $(align)-functions=0 $(align)-jumps=0 $(align)-loops=0
 cflags-$(CONFIG_MWINCHIPC6)	+= $(call cc-option,-march=winchip-c6,-march=i586)

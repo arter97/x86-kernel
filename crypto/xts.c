@@ -230,11 +230,8 @@ static int init_crypt(struct skcipher_request *req, crypto_completion_t done)
 
 	subreq->cryptlen = XTS_BUFFER_SIZE;
 	if (req->cryptlen > XTS_BUFFER_SIZE) {
-		unsigned int n = min(req->cryptlen, (unsigned int)PAGE_SIZE);
-
-		rctx->ext = kmalloc(n, gfp);
-		if (rctx->ext)
-			subreq->cryptlen = n;
+		subreq->cryptlen = min(req->cryptlen, (unsigned)PAGE_SIZE);
+		rctx->ext = kmalloc(subreq->cryptlen, gfp);
 	}
 
 	rctx->src = req->src;

@@ -475,6 +475,22 @@ static void bfq_weights_tree_add(struct bfq_data *bfqd,
 
 	entity->weight_counter = kzalloc(sizeof(struct bfq_weight_counter),
 					 GFP_ATOMIC);
+
+	/*
+	 * In the unlucky event of an allocation failure, we just
+	 * exit. This will cause the weight of entity to not be
+	 * considered in bfq_differentiated_weights, which, in its
+	 * turn, causes the scenario to be deemed wrongly symmetric in
+	 * case entity's weight would have been the only weight making
+	 * the scenario asymmetric. On the bright side, no unbalance
+	 * will however occur when entity becomes inactive again (the
+	 * invocation of this function is triggered by an activation
+	 * of entity). In fact, bfq_weights_tree_remove does nothing
+	 * if !entity->weight_counter.
+	 */
+	if (unlikely(!entity->weight_counter))
+		return;
+
 	entity->weight_counter->weight = entity->weight;
 	rb_link_node(&entity->weight_counter->weights_node, parent, new);
 	rb_insert_color(&entity->weight_counter->weights_node, root);
@@ -2907,8 +2923,8 @@ static bool bfq_bfqq_is_slow(struct bfq_data *bfqd, struct bfq_queue *bfqq,
 	delta_ktime = ktime_sub(delta_ktime, bfqd->last_budget_start);
 	delta_usecs = ktime_to_us(delta_ktime);
 
-	/* don't trust short/unrealistic values. */
-	if (delta_usecs < 1000 || delta_usecs >= LONG_MAX) {
+	/* don't use too short time intervals */
+	if (delta_usecs < 1000) {
 		if (blk_queue_nonrot(bfqd->queue))
 			 /*
 			  * give same worst-case guarantees as idling
@@ -2918,7 +2934,7 @@ static bool bfq_bfqq_is_slow(struct bfq_data *bfqd, struct bfq_queue *bfqq,
 		else /* charge at least one seek */
 			*delta_ms = bfq_slice_idle / NSEC_PER_MSEC;
 
-		bfq_log(bfqd, "bfq_bfqq_is_slow: unrealistic %u", delta_usecs);
+		bfq_log(bfqd, "bfq_bfqq_is_slow: too short %u", delta_usecs);
 
 		return slow;
 	}
@@ -5246,7 +5262,7 @@ static struct blkcg_policy blkcg_policy_bfq = {
 static int __init bfq_init(void)
 {
 	int ret;
-	char msg[60] = "BFQ I/O-scheduler: v8r9";
+	char msg[60] = "BFQ I/O-scheduler: v8r10";
 
 #ifdef CONFIG_BFQ_GROUP_IOSCHED
 	ret = blkcg_policy_register(&blkcg_policy_bfq);

@@ -4563,6 +4563,8 @@ static int bfq_set_request(struct request_queue *q, struct request *rq,
 	if (!bic)
 		goto queue_fail;
 
+	bfq_check_ioprio_change(bic, bio);
+
 	disable_wbt = bfq_bic_update_cgroup(bic, bio);
 
 new_queue:
@@ -5262,7 +5264,7 @@ static struct blkcg_policy blkcg_policy_bfq = {
 static int __init bfq_init(void)
 {
 	int ret;
-	char msg[60] = "BFQ I/O-scheduler: v8r10";
+	char msg[60] = "BFQ I/O-scheduler: v8r11";
 
 #ifdef CONFIG_BFQ_GROUP_IOSCHED
 	ret = blkcg_policy_register(&blkcg_policy_bfq);

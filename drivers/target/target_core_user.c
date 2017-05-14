@@ -492,7 +492,7 @@ tcmu_queue_cmd_ring(struct tcmu_cmd *tcmu_cmd)
 
 		pr_debug("sleeping for ring space\n");
 		spin_unlock_irq(&udev->cmdr_lock);
-		ret = schedule_timeout(msecs_to_jiffies(TCMU_TIME_OUT));
+		ret = schedule_msec_hrtimeout((TCMU_TIME_OUT));
 		finish_wait(&udev->wait_cmdr, &__wait);
 		if (!ret) {
 			pr_warn("tcmu: command timed out\n");

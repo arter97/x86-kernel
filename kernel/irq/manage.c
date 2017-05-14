@@ -22,17 +22,7 @@
 #include "internals.h"
 
 #ifdef CONFIG_IRQ_FORCED_THREADING
-#ifdef CONFIG_FORCE_IRQ_THREADING
-__read_mostly bool force_irqthreads = true;
-#else
 __read_mostly bool force_irqthreads;
-#endif
-static int __init setup_noforced_irqthreads(char *arg)
-{
-	force_irqthreads = false;
-	return 0;
-}
-early_param("nothreadirqs", setup_noforced_irqthreads);
 
 static int __init setup_forced_irqthreads(char *arg)
 {

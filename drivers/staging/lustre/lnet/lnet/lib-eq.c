@@ -328,7 +328,7 @@ __must_hold(&the_lnet.ln_eq_wait_lock)
 		schedule();
 	} else {
 		now = jiffies;
-		schedule_msec_hrtimeout((tms));
+		schedule_timeout(msecs_to_jiffies(tms));
 		tms -= jiffies_to_msecs(jiffies - now);
 		if (tms < 0) /* no more wait but may have new event */
 			tms = 0;

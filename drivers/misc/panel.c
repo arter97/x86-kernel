@@ -760,7 +760,7 @@ static void long_sleep(int ms)
 	if (in_interrupt())
 		mdelay(ms);
 	else
-		schedule_msec_hrtimeout_interruptible((ms));
+		schedule_timeout_interruptible(msecs_to_jiffies(ms));
 }
 
 /*

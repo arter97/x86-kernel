@@ -40,10 +40,8 @@ CONFIG_NR_IRQS                                  policy<{'ppc64el': '512'}>
 CONFIG_SCOM_DEBUGFS                             policy<{'ppc64el': 'y'}>
 
 # Menu: Architecture: arm64
-CONFIG_ARM64_LSE_ATOMICS                        policy<{'arm64': 'y'}>
 CONFIG_ARM64_VA_BITS                            policy<{'arm64': '48'}>
 #
-CONFIG_ARM64_LSE_ATOMICS                        mark<ENFORCED> note<LP:1691614>
 CONFIG_ARM64_VA_BITS                            mark<ENFORCED> note<Cavium ThunderX 2-socket needs a minimum of 41 bits of VA>
 
 # Menu: Architecture: s390
@@ -55,7 +53,7 @@ CONFIG_64BIT                                    policy<{'amd64': 'y', 'arm64': '
 # Menu: Boot options
 CONFIG_CMDLINE                                  policy<{'arm64': '"console=ttyAMA0"', 'armhf': '""'}>
 CONFIG_KEXEC                                    policy<{'amd64': 'y', 'arm64': 'y', 'armhf': 'y', 'i386': 'y', 'ppc64el': 'y', 's390x': 'y'}>
-CONFIG_CRASH_DUMP                               policy<{'amd64': 'y', 'arm64': 'y', 'armhf': 'y', 'i386': 'y', 'ppc64el': 'y', 's390x': 'y'}>
+CONFIG_CRASH_DUMP                               policy<{'amd64': 'y', 'armhf': 'y', 'i386': 'y', 'ppc64el': 'y', 's390x': 'y'}>
 CONFIG_EFI                                      policy<{'amd64': 'y', 'arm64': 'y', 'armhf': 'n', 'i386': 'y'}>
 #
 CONFIG_CRASH_DUMP                               mark<ENFORCED> note<LP:1363180>
@@ -378,20 +376,15 @@ CONFIG_X509_CERTIFICATE_PARSER                  policy<{'amd64': 'y', 'arm64': '
 CONFIG_PKCS7_MESSAGE_PARSER                     policy<{'amd64': 'y', 'arm64': 'y', 'armhf': 'y', 'i386': 'y', 'ppc64el': 'y', 's390x': 'y'}>
 CONFIG_PKCS7_TEST_KEY                           policy<{'amd64': 'm', 'arm64': 'm', 'armhf': 'm', 'i386': 'm', 'ppc64el': 'm', 's390x': 'm'}>
 CONFIG_SIGNED_PE_FILE_VERIFICATION              policy<{'amd64': 'y', 'arm64': 'y', 'armhf': 'y', 'i386': 'y', 'ppc64el': 'y', 's390x': 'y'}>
+CONFIG_EFI_SIGNATURE_LIST_PARSER                policy<{'amd64': 'y', 'arm64': 'y', 'i386': 'y'}>
 #
 CONFIG_ASYMMETRIC_KEY_TYPE                      note<module signing>
 CONFIG_ASYMMETRIC_PUBLIC_KEY_SUBTYPE            note<module signing>
 CONFIG_X509_CERTIFICATE_PARSER                  note<module signing>
+CONFIG_EFI_SIGNATURE_LIST_PARSER                mark<ENFORCED>
 
 # Menu: Cryptographic API >> Certificates for signature checking
 CONFIG_MODULE_SIG_KEY                           policy<{'amd64': '"certs/signing_key.pem"', 'arm64': '"certs/signing_key.pem"', 'armhf': '"certs/signing_key.pem"', 'i386': '"certs/signing_key.pem"', 'ppc64el': '"certs/signing_key.pem"', 's390x': '"certs/signing_key.pem"'}>
-CONFIG_SYSTEM_BLACKLIST_KEYRING                 policy<{'amd64': 'y', 'arm64': 'y', 'armhf': 'y', 'i386': 'y', 'ppc64el': 'y', 's390x': 'y'}>
-CONFIG_SYSTEM_BLACKLIST_HASH_LIST               policy<{'amd64': '""', 'arm64': '""', 'armhf': '""', 'i386': '""', 'ppc64el': '""', 's390x': '""'}>
-CONFIG_EFI_SIGNATURE_LIST_PARSER                policy<{'amd64': 'y', 'arm64': 'y', 'i386': 'y'}>
-CONFIG_LOAD_UEFI_KEYS                           policy<{'amd64': 'y', 'arm64': 'y', 'i386': 'y'}>
-#
-CONFIG_EFI_SIGNATURE_LIST_PARSER                mark<ENFORCED>
-CONFIG_LOAD_UEFI_KEYS                           mark<ENFORCED>
 
 # Menu: Cryptographic API >> Certificates for signature checking >> Provide system-wide ring of trusted keys
 CONFIG_SYSTEM_TRUSTED_KEYRING                   policy<{'amd64': 'y', 'arm64': 'y', 'armhf': 'y', 'i386': 'y', 'ppc64el': 'y', 's390x': 'y'}>
@@ -6177,7 +6170,7 @@ CONFIG_PATA_LEGACY                              policy<{'amd64': 'm', 'arm64': '
 
 # Menu: Device Drivers >> Serial ATA and Parallel ATA drivers (libata) >> ATA SFF support (for legacy IDE and PATA) >> ATA BMDMA support
 CONFIG_ATA_BMDMA                                policy<{'amd64': 'y', 'arm64': 'y', 'armhf': 'y', 'i386': 'y', 'ppc64el': 'y'}>
-CONFIG_ATA_PIIX                                 policy<{'amd64': 'y', 'arm64': 'm', 'armhf': 'm', 'i386': 'y', 'ppc64el': 'm', 's390x': 'm'}>
+CONFIG_ATA_PIIX                                 policy<{'amd64': 'y', 'arm64': 'm', 'armhf': 'm', 'i386': 'y', 'ppc64el': 'm'}>
 CONFIG_SATA_DWC                                 policy<{'amd64': 'm', 'arm64': 'm', 'armhf': 'm', 'i386': 'm', 'ppc64el': 'm'}>
 CONFIG_SATA_DWC_OLD_DMA                         policy<{'amd64': 'y', 'arm64': 'y', 'armhf': 'y', 'i386': 'y', 'ppc64el': 'y'}>
 CONFIG_SATA_DWC_DEBUG                           policy<{'amd64': 'n', 'arm64': 'n', 'armhf': 'n', 'i386': 'n', 'ppc64el': 'n'}>
@@ -8468,8 +8461,8 @@ CONFIG_IKCONFIG                                 policy<{'amd64': 'n', 'arm64': '
 CONFIG_LOG_BUF_SHIFT                            policy<{'amd64': '18', 'arm64': '14', 'armhf': '17', 'i386': '17', 'ppc64el': '17', 's390x': '17'}>
 CONFIG_LOG_CPU_MAX_BUF_SHIFT                    policy<{'amd64': '12', 'arm64': '12', 'armhf': '12', 'i386': '12', 'ppc64el': '12', 's390x': '12'}>
 CONFIG_PRINTK_SAFE_LOG_BUF_SHIFT                policy<{'amd64': '13', 'arm64': '13', 'armhf': '13', 'i386': '13', 'ppc64el': '13', 's390x': '13'}>
-CONFIG_NUMA_BALANCING                           policy<{'amd64': 'y', 'arm64': 'y', 'ppc64el': 'y', 's390x': 'y'}>
-CONFIG_NUMA_BALANCING_DEFAULT_ENABLED           policy<{'amd64': 'y', 'arm64': 'y', 'ppc64el': 'y', 's390x': 'n'}>
+CONFIG_NUMA_BALANCING                           policy<{'amd64': 'y', 'arm64': 'n', 'ppc64el': 'y', 's390x': 'y'}>
+CONFIG_NUMA_BALANCING_DEFAULT_ENABLED           policy<{'amd64': 'y', 'ppc64el': 'y', 's390x': 'n'}>
 CONFIG_CHECKPOINT_RESTORE                       policy<{'amd64': 'y', 'arm64': 'y', 'armhf': 'y', 'i386': 'y', 'ppc64el': 'y', 's390x': 'y'}>
 CONFIG_SCHED_AUTOGROUP                          policy<{'amd64': 'y', 'arm64': 'y', 'armhf': 'y', 'i386': 'y', 'ppc64el': 'y', 's390x': 'y'}>
 CONFIG_SYSFS_DEPRECATED                         policy<{'amd64': 'n', 'arm64': 'n', 'armhf': 'n', 'i386': 'n', 'ppc64el': 'n', 's390x': 'n'}>
@@ -10460,7 +10453,7 @@ CONFIG_MODIFY_LDT_SYSCALL                       policy<{'amd64': 'y', 'i386': 'y
 CONFIG_ZONE_DMA                                 note<LP:1628523>
 CONFIG_COMPAT_VDSO                              mark<ENFORCED>
 CONFIG_X86_LEGACY_VM86				note<LP:1499089>
-CONFIG_EFI_SECURE_BOOT_LOCK_DOWN                mark<ENFORCED>
+CONFIG_EFI_SECURE_BOOT_LOCK_DOWN                mark<ENFORCED> flag<REVIEW>
 CONFIG_EFI_ALLOW_SECURE_BOOT_EXIT               mark<ENFORCED>
 CONFIG_KEXEC_BZIMAGE_VERIFY_SIG			flag<REVIEW> note<Q: check this is in sync with the kexec/kdump userspace>
 CONFIG_MODIFY_LDT_SYSCALL			flag<REVIEW> note<Q: check this with security>

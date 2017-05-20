@@ -129,7 +129,7 @@ static int afs_vlocation_access_vl_by_id(struct afs_vlocation *vl,
 				if (vl->upd_busy_cnt > 1) {
 					/* second+ BUSY - sleep a little bit */
 					set_current_state(TASK_UNINTERRUPTIBLE);
-					schedule_timeout(1);
+					schedule_min_hrtimeout();
 				}
 				continue;
 			}

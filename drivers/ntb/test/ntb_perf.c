@@ -308,7 +308,7 @@ static int perf_move_data(struct pthr_ctx *pctx, char __iomem *dst, char *src,
 		if (unlikely((jiffies - last_sleep) > 5 * HZ)) {
 			last_sleep = jiffies;
 			set_current_state(TASK_INTERRUPTIBLE);
-			schedule_timeout(1);
+			schedule_min_hrtimeout();
 		}
 
 		if (unlikely(kthread_should_stop()))

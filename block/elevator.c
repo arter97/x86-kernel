@@ -229,7 +229,7 @@ int elevator_init(struct request_queue *q, char *name)
 		if (q->mq_ops) {
 			if (q->nr_hw_queues == 1)
 				#if defined(CONFIG_ZEN_INTERACTIVE) && defined(CONFIG_MQ_IOSCHED_BFQ)
-				e = elevator_get("bfq-mq-iosched", false);
+				e = elevator_get("bfq-mq", false);
 				#else
 				e = elevator_get("mq-deadline", false);
 				#endif

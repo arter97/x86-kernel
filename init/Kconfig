@@ -38,17 +38,6 @@ config THREAD_INFO_IN_TASK
 
 menu "General setup"
 
-config SCHED_MUQSS
-	bool "MuQSS cpu scheduler"
-	select HIGH_RES_TIMERS
-	---help---
-	  The Multiple Queue Skiplist Scheduler for excellent interactivity and
-	  responsiveness on the desktop and highly scalable deterministic
-	  low latency on any hardware.
-
-          Say Y here.
-	default y
-
 config ZEN_INTERACTIVE
 	bool "Tune kernel for interactivity"
 	default y
@@ -595,7 +584,7 @@ config CONTEXT_TRACKING
 config CONTEXT_TRACKING_FORCE
 	bool "Force context tracking"
 	depends on CONTEXT_TRACKING
-	default y if !NO_HZ_FULL && !SCHED_MUQSS
+	default y if !NO_HZ_FULL
 	help
 	  The major pre-requirement for full dynticks to work is to
 	  support the context tracking subsystem. But there are also
@@ -1077,13 +1066,9 @@ menuconfig CGROUP_SCHED
 	help
 	  This feature lets CPU scheduler recognize task groups and control CPU
 	  bandwidth allocation to such task groups. It uses cgroups to group
-	  tasks. In combination with MuQSS this is purely a STUB to create the
-	  files associated with the CPU controller cgroup but most of the
-	  controls do nothing. This is useful for working in environments and
-	  with applications that will only work if this control group is
-	  present.
+	  tasks.
 
-if CGROUP_SCHED && !SCHED_MUQSS
+if CGROUP_SCHED
 config FAIR_GROUP_SCHED
 	bool "Group scheduling for SCHED_OTHER"
 	depends on CGROUP_SCHED

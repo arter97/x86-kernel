@@ -1,6 +1,6 @@
 VERSION = 4
 PATCHLEVEL = 10
-SUBLEVEL = 14
+SUBLEVEL = 17
 EXTRAVERSION = -zen
 NAME = TTY Velocity
 
@@ -253,7 +253,7 @@ SUBARCH := $(shell uname -m | sed -e s/i.86/x86/ -e s/x86_64/x86/ \
 # Default value for CROSS_COMPILE is not to prefix executables
 # Note: Some architectures assign CROSS_COMPILE in their arch/*/Makefile
 ARCH		?= $(SUBARCH)
-CROSS_COMPILE	?= $(CONFIG_CROSS_COMPILE:"%"=%)
+CROSS_COMPILE	?= /opt/toolchain/bin/x86_64-linux-gnu-
 
 # Architecture as present in compile.h
 UTS_MACHINE 	:= $(ARCH)

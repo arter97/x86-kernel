@@ -1,6 +1,6 @@
 #
 # Automatically generated file; DO NOT EDIT.
-# Linux/x86 4.11.2-zen Kernel Configuration
+# Linux/x86 4.11.3-zen Kernel Configuration
 #
 CONFIG_64BIT=y
 CONFIG_X86_64=y
@@ -411,6 +411,8 @@ CONFIG_DEFAULT_CFQ=y
 # CONFIG_DEFAULT_BFQ is not set
 # CONFIG_DEFAULT_NOOP is not set
 CONFIG_DEFAULT_IOSCHED="cfq"
+CONFIG_MQ_IOSCHED_BFQ=y
+CONFIG_MQ_BFQ_GROUP_IOSCHED=y
 CONFIG_MQ_IOSCHED_DEADLINE=y
 CONFIG_PREEMPT_NOTIFIERS=y
 CONFIG_PADATA=y

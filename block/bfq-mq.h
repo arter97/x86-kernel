@@ -19,15 +19,8 @@
 #include <linux/hrtimer.h>
 #include <linux/blk-cgroup.h>
 
-/*
- * Define an alternative macro to compile cgroups support. This is one
- * of the steps needed to let bfq-mq share the files bfq-sched.c and
- * bfq-cgroup.c with bfq. For bfq-mq, the macro
- * BFQ_GROUP_IOSCHED_ENABLED will be defined as a function of whether
- * the configuration option CONFIG_BFQ_MQ_GROUP_IOSCHED, and not
- * CONFIG_BFQ_GROUP_IOSCHED, is defined.
- */
-#ifdef CONFIG_BFQ_GROUP_IOSCHED
+/* see comments on CONFIG_BFQ_GROUP_IOSCHED in bfq.h */
+#ifdef CONFIG_MQ_BFQ_GROUP_IOSCHED
 #define BFQ_GROUP_IOSCHED_ENABLED
 #endif
 
@@ -197,6 +190,18 @@ struct bfq_entity {
 struct bfq_group;
 
 /**
+ * struct bfq_ttime - per process thinktime stats.
+ */
+struct bfq_ttime {
+	u64 last_end_request; /* completion time of last request */
+
+	u64 ttime_total; /* total process thinktime */
+	unsigned long ttime_samples; /* number of thinktime samples */
+	u64 ttime_mean; /* average process thinktime */
+
+};
+
+/**
  * struct bfq_queue - leaf schedulable entity.
  *
  * A bfq_queue is a leaf request queue; it can be associated with an
@@ -234,8 +239,8 @@ struct bfq_queue {
 	struct request *next_rq;
 	/* number of sync and async requests queued */
 	int queued[2];
-	/* number of sync and async requests currently allocated */
-	int allocated[2];
+	/* number of requests currently allocated */
+	int allocated;
 	/* number of pending metadata requests */
 	int meta_pending;
 	/* fifo list of requests in sort_list */
@@ -256,6 +261,9 @@ struct bfq_queue {
 
 	/* node for active/idle bfqq list inside parent bfqd */
 	struct list_head bfqq_list;
+
+	/* associated @bfq_ttime struct */
+	struct bfq_ttime ttime;
 
 	/* bit vector: a 1 for each seeky requests in history */
 	u32 seek_history;
@@ -320,18 +328,6 @@ struct bfq_queue {
 };
 
 /**
- * struct bfq_ttime - per process thinktime stats.
- */
-struct bfq_ttime {
-	u64 last_end_request; /* completion time of last request */
-
-	u64 ttime_total; /* total process thinktime */
-	unsigned long ttime_samples; /* number of thinktime samples */
-	u64 ttime_mean; /* average process thinktime */
-
-};
-
-/**
  * struct bfq_io_cq - per (request_queue, io_context) structure.
  */
 struct bfq_io_cq {
@@ -339,8 +335,6 @@ struct bfq_io_cq {
 	struct io_cq icq; /* must be the first member */
 	/* array of two process queues, the sync and the async */
 	struct bfq_queue *bfqq[2];
-	/* associated @bfq_ttime struct */
-	struct bfq_ttime ttime;
 	/* per (request_queue, blkcg) ioprio */
 	int ioprio;
 #ifdef BFQ_GROUP_IOSCHED_ENABLED
@@ -377,6 +371,7 @@ struct bfq_io_cq {
 	unsigned long saved_last_wr_start_finish;
 	unsigned long saved_wr_start_at_switch_to_srt;
 	unsigned int saved_wr_cur_max_time;
+	struct bfq_ttime saved_ttime;
 };
 
 enum bfq_device_speed {
@@ -387,11 +382,13 @@ enum bfq_device_speed {
 /**
  * struct bfq_data - per-device data structure.
  *
- * All the fields are protected by the @queue lock.
+ * All the fields are protected by @lock.
  */
 struct bfq_data {
-	/* request queue for the device */
+	/* device request queue */
 	struct request_queue *queue;
+	/* dispatch queue */
+	struct list_head dispatch;
 
 	/* root bfq_group for the device */
 	struct bfq_group *root_group;
@@ -445,13 +442,9 @@ struct bfq_data {
 	 * the queue in service.
 	 */
 	struct hrtimer idle_slice_timer;
-	/* delayed work to restart dispatching on the request queue */
-	struct work_struct unplug_work;
 
 	/* bfq_queue in service */
 	struct bfq_queue *in_service_queue;
-	/* bfq_io_cq (bic) associated with the @in_service_queue */
-	struct bfq_io_cq *in_service_bic;
 
 	/* on-disk position of the last served request */
 	sector_t last_position;
@@ -597,6 +590,22 @@ struct bfq_data {
 
 	/* fallback dummy bfqq for extreme OOM conditions */
 	struct bfq_queue oom_bfqq;
+
+	spinlock_t lock;
+
+	/*
+	 * bic associated with the task issuing current bio for
+	 * merging. This and the next field are used as a support to
+	 * be able to perform the bic lookup, needed by bio-merge
+	 * functions, before the scheduler lock is taken, and thus
+	 * avoid taking the request-queue lock while the scheduler
+	 * lock is being held.
+	 */
+	struct bfq_io_cq *bio_bic;
+	/* bfqq associated with the task issuing current bio for merging */
+	struct bfq_queue *bio_bfqq;
+	/* Extra flag used only for TESTING */
+	bool bio_bfqq_set;
 };
 
 enum bfqq_state_flags {
@@ -607,7 +616,6 @@ enum bfqq_state_flags {
 					     * waiting for a request
 					     * without idling the device
 					     */
-	BFQ_BFQQ_FLAG_must_alloc,	/* must be allowed rq alloc */
 	BFQ_BFQQ_FLAG_fifo_expire,	/* FIFO checked in this slice */
 	BFQ_BFQQ_FLAG_idle_window,	/* slice idling enabled */
 	BFQ_BFQQ_FLAG_sync,		/* synchronous queue */
@@ -646,7 +654,6 @@ BFQ_BFQQ_FNS(just_created);
 BFQ_BFQQ_FNS(busy);
 BFQ_BFQQ_FNS(wait_request);
 BFQ_BFQQ_FNS(non_blocking_wait_rq);
-BFQ_BFQQ_FNS(must_alloc);
 BFQ_BFQQ_FNS(fifo_expire);
 BFQ_BFQQ_FNS(idle_window);
 BFQ_BFQQ_FNS(sync);
@@ -675,24 +682,17 @@ static struct bfq_group *bfqq_group(struct bfq_queue *bfqq);
 static struct blkcg_gq *bfqg_to_blkg(struct bfq_group *bfqg);
 
 #define bfq_log_bfqq(bfqd, bfqq, fmt, args...)	do {			\
-	char __pbuf[128];						\
-									\
-	assert_spin_locked((bfqd)->queue->queue_lock);			\
-	blkg_path(bfqg_to_blkg(bfqq_group(bfqq)), __pbuf, sizeof(__pbuf)); \
 	pr_crit("%s bfq%d%c %s " fmt "\n", 				\
 		checked_dev_name((bfqd)->queue->backing_dev_info->dev),	\
 		(bfqq)->pid,						\
 		bfq_bfqq_sync((bfqq)) ? 'S' : 'A',			\
-		__pbuf, ##args);					\
+		bfqq_group(bfqq)->blkg_path, ##args);			\
 } while (0)
 
 #define bfq_log_bfqg(bfqd, bfqg, fmt, args...)	do {			\
-	char __pbuf[128];						\
-									\
-	blkg_path(bfqg_to_blkg(bfqg), __pbuf, sizeof(__pbuf));		\
 	pr_crit("%s %s " fmt "\n",					\
 	checked_dev_name((bfqd)->queue->backing_dev_info->dev),		\
-	__pbuf, ##args);						\
+	bfqg->blkg_path, ##args);					\
 } while (0)
 
 #else /* BFQ_GROUP_IOSCHED_ENABLED */
@@ -717,21 +717,14 @@ static struct bfq_group *bfqq_group(struct bfq_queue *bfqq);
 static struct blkcg_gq *bfqg_to_blkg(struct bfq_group *bfqg);
 
 #define bfq_log_bfqq(bfqd, bfqq, fmt, args...)	do {			\
-	char __pbuf[128];						\
-									\
-	assert_spin_locked((bfqd)->queue->queue_lock);			\
-	blkg_path(bfqg_to_blkg(bfqq_group(bfqq)), __pbuf, sizeof(__pbuf)); \
 	blk_add_trace_msg((bfqd)->queue, "bfq%d%c %s " fmt, \
 			  (bfqq)->pid,			  \
 			  bfq_bfqq_sync((bfqq)) ? 'S' : 'A',	\
-			  __pbuf, ##args);				\
+			  bfqq_group(bfqq)->blkg_path, ##args);		\
 } while (0)
 
 #define bfq_log_bfqg(bfqd, bfqg, fmt, args...)	do {			\
-	char __pbuf[128];						\
-									\
-	blkg_path(bfqg_to_blkg(bfqg), __pbuf, sizeof(__pbuf));		\
-	blk_add_trace_msg((bfqd)->queue, "%s " fmt, __pbuf, ##args);	\
+	blk_add_trace_msg((bfqd)->queue, "%s " fmt, bfqg->blkg_path, ##args);\
 } while (0)
 
 #else /* BFQ_GROUP_IOSCHED_ENABLED */
@@ -842,6 +835,9 @@ struct bfq_group {
 	/* must be the first member */
 	struct blkg_policy_data pd;
 
+	/* cached path for this blkg (see comments in bfq_bic_update_cgroup) */
+	char blkg_path[128];
+
 	struct bfq_entity entity;
 	struct bfq_sched_data sched_data;
 
@@ -946,7 +942,6 @@ static struct bfq_group *bfq_bfqq_to_bfqg(struct bfq_queue *bfqq)
 
 static void bfq_check_ioprio_change(struct bfq_io_cq *bic, struct bio *bio);
 static void bfq_put_queue(struct bfq_queue *bfqq);
-static void bfq_dispatch_insert(struct request_queue *q, struct request *rq);
 static struct bfq_queue *bfq_get_queue(struct bfq_data *bfqd,
 				       struct bio *bio, bool is_sync,
 				       struct bfq_io_cq *bic);

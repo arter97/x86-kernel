@@ -838,6 +838,9 @@ struct bfq_group {
 	/* cached path for this blkg (see comments in bfq_bic_update_cgroup) */
 	char blkg_path[128];
 
+	/* reference counter (see comments in bfq_bic_update_cgroup) */
+	int ref;
+
 	struct bfq_entity entity;
 	struct bfq_sched_data sched_data;
 

@@ -210,13 +210,42 @@ static struct bfq_group *bfqq_group(struct bfq_queue *bfqq)
 
 static void bfqg_get(struct bfq_group *bfqg)
 {
-	return blkg_get(bfqg_to_blkg(bfqg));
+#ifdef BFQ_MQ
+	bfqg->ref++;
+#else
+	blkg_get(bfqg_to_blkg(bfqg));
+#endif
 }
 
 static void bfqg_put(struct bfq_group *bfqg)
 {
-	return blkg_put(bfqg_to_blkg(bfqg));
+#ifdef BFQ_MQ
+	bfqg->ref--;
+
+	BUG_ON(bfqg->ref < 0);
+	if (bfqg->ref == 0)
+		kfree(bfqg);
+#else
+	blkg_put(bfqg_to_blkg(bfqg));
+#endif
 }
+
+#ifdef BFQ_MQ
+static void bfqg_and_blkg_get(struct bfq_group *bfqg)
+{
+	/* see comments in bfq_bic_update_cgroup for why refcounting bfqg */
+	bfqg_get(bfqg);
+
+	blkg_get(bfqg_to_blkg(bfqg));
+}
+
+static void bfqg_and_blkg_put(struct bfq_group *bfqg)
+{
+	bfqg_put(bfqg);
+
+	blkg_put(bfqg_to_blkg(bfqg));
+}
+#endif
 
 static void bfqg_stats_update_io_add(struct bfq_group *bfqg,
 				     struct bfq_queue *bfqq,
@@ -322,7 +351,15 @@ static void bfq_init_entity(struct bfq_entity *entity,
 	if (bfqq) {
 		bfqq->ioprio = bfqq->new_ioprio;
 		bfqq->ioprio_class = bfqq->new_ioprio_class;
+#ifdef BFQ_MQ
+		/*
+		 * Make sure that bfqg and its associated blkg do not
+		 * disappear before entity.
+		 */
+		bfqg_and_blkg_get(bfqg);
+#else
 		bfqg_get(bfqg);
+#endif
 	}
 	entity->parent = bfqg->my_entity; /* NULL for root group */
 	entity->sched_data = &bfqg->sched_data;
@@ -409,6 +446,10 @@ static struct blkg_policy_data *bfq_pd_alloc(gfp_t gfp, int node)
 		return NULL;
 	}
 
+#ifdef BFQ_MQ
+	/* see comments in bfq_bic_update_cgroup for why refcounting */
+	bfqg_get(bfqg);
+#endif
 	return &bfqg->pd;
 }
 
@@ -444,7 +485,11 @@ static void bfq_pd_free(struct blkg_policy_data *pd)
 	struct bfq_group *bfqg = pd_to_bfqg(pd);
 
 	bfqg_stats_exit(&bfqg->stats);
-	return kfree(bfqg);
+#ifdef BFQ_MQ
+	bfqg_put(bfqg);
+#else
+	kfree(bfqg);
+#endif
 }
 
 static void bfq_pd_reset_stats(struct blkg_policy_data *pd)
@@ -574,16 +619,20 @@ static void bfq_bfqq_move(struct bfq_data *bfqd, struct bfq_queue *bfqq,
 		       entity->tree);
 		bfq_put_idle_entity(bfq_entity_service_tree(entity), entity);
 	}
+#ifdef BFQ_MQ
+	bfqg_and_blkg_put(bfqq_group(bfqq));
+#else
 	bfqg_put(bfqq_group(bfqq));
+#endif
 
-	/*
-	 * Here we use a reference to bfqg.  We don't need a refcounter
-	 * as the cgroup reference will not be dropped, so that its
-	 * destroy() callback will not be invoked.
-	 */
 	entity->parent = bfqg->my_entity;
 	entity->sched_data = &bfqg->sched_data;
+#ifdef BFQ_MQ
+	/* pin down bfqg and its associated blkg  */
+	bfqg_and_blkg_get(bfqg);
+#else
 	bfqg_get(bfqg);
+#endif
 
 	BUG_ON(RB_EMPTY_ROOT(&bfqq->sort_list) && bfq_bfqq_busy(bfqq));
 	if (bfq_bfqq_busy(bfqq)) {
@@ -677,16 +726,28 @@ static void bfq_bic_update_cgroup(struct bfq_io_cq *bic, struct bio *bio)
 	 * reasons. Operations on blkg objects in blk-cgroup are
 	 * protected with the request_queue lock, and not with the
 	 * lock that protects the instances of this scheduler
-	 * (bfqd->lock). However, destroy operations on a blkg invoke,
-	 * as a first step, hooks of the scheduler associated with the
+	 * (bfqd->lock). This exposes BFQ to the following sort of
+	 * race.
+	 *
+	 * The blkg_lookup performed in bfq_get_queue, protected
+	 * through rcu, may happen to return the address of a copy of
+	 * the original blkg. If this is the case, then the
+	 * bfqg_and_blkg_get performed in bfq_get_queue, to pin down
+	 * the blkg, is useless: it does not prevent blk-cgroup code
+	 * from destroying both the original blkg and all objects
+	 * directly or indirectly referred by the copy of the
+	 * blkg.
+	 *
+	 * On the bright side, destroy operations on a blkg invoke, as
+	 * a first step, hooks of the scheduler associated with the
 	 * blkg. And these hooks are executed with bfqd->lock held for
 	 * BFQ. As a consequence, for any blkg associated with the
 	 * request queue this instance of the scheduler is attached
-	 * to, we are guaranteed that such a blkg is not destroyed and
-	 * that all the pointers it contains are consistent, (only)
-	 * while we are holding bfqd->lock. A blkg_lookup performed
-	 * with bfqd->lock held then returns a fully consistent blkg,
-	 * which remains consistent until this lock is held.
+	 * to, we are guaranteed that such a blkg is not destroyed, and
+	 * that all the pointers it contains are consistent, while we
+	 * are holding bfqd->lock. A blkg_lookup performed with
+	 * bfqd->lock held then returns a fully consistent blkg, which
+	 * remains consistent until this lock is held.
 	 *
 	 * Thanks to the last fact, and to the fact that: (1) bfqg has
 	 * been obtained through a blkg_lookup in the above
@@ -698,10 +759,16 @@ static void bfq_bic_update_cgroup(struct bfq_io_cq *bic, struct bio *bio)
 	 * bfqg may cause dangling references to be traversed, as
 	 * bfqg->pd may not exist any more.
 	 *
-	 * In view of the above facts, here we cache any blkg data we
-	 * may need for this bic, and for its associated bfq_queue. As
-	 * of now, we need to cache only the path of the blkg, which
-	 * is used in the bfq_log_* functions.
+	 * In view of the above facts, here we cache, in the bfqg, any
+	 * blkg data we may need for this bic, and for its associated
+	 * bfq_queue. As of now, we need to cache only the path of the
+	 * blkg, which is used in the bfq_log_* functions.
+	 *
+	 * Finally, note that bfqg itself needs to be protected from
+	 * destruction on the blkg_free of the original blkg (which
+	 * invokes bfq_pd_free). We use an additional private
+	 * refcounter for bfqg, to let it disappear only after no
+	 * bfq_queue refers to it any longer.
 	 */
 	blkg_path(bfqg_to_blkg(bfqg), bfqg->blkg_path, sizeof(bfqg->blkg_path));
 #endif

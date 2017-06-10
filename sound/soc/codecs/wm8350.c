@@ -236,10 +236,10 @@ static void wm8350_pga_work(struct work_struct *work)
 		    out2->ramp == WM8350_RAMP_UP) {
 			/* delay is longer over 0dB as increases are larger */
 			if (i >= WM8350_OUTn_0dB)
-				schedule_msec_hrtimeout_interruptible(
+				schedule_timeout_interruptible(msecs_to_jiffies
 							       (2));
 			else
-				schedule_msec_hrtimeout_interruptible(
+				schedule_timeout_interruptible(msecs_to_jiffies
 							       (1));
 		} else
 			udelay(50);	/* doesn't matter if we delay longer */
@@ -1123,7 +1123,7 @@ static int wm8350_set_bias_level(struct snd_soc_codec *codec,
 					 (platform->dis_out4 << 6));
 
 			/* wait for discharge */
-			schedule_msec_hrtimeout_interruptible(
+			schedule_timeout_interruptible(msecs_to_jiffies
 						       (platform->
 							cap_discharge_msecs));
 
@@ -1139,7 +1139,7 @@ static int wm8350_set_bias_level(struct snd_soc_codec *codec,
 					 WM8350_VBUFEN);
 
 			/* wait for vmid */
-			schedule_msec_hrtimeout_interruptible(
+			schedule_timeout_interruptible(msecs_to_jiffies
 						       (platform->
 							vmid_charge_msecs));
 
@@ -1190,7 +1190,7 @@ static int wm8350_set_bias_level(struct snd_soc_codec *codec,
 		wm8350_reg_write(wm8350, WM8350_POWER_MGMT_1, pm1);
 
 		/* wait */
-		schedule_msec_hrtimeout_interruptible(
+		schedule_timeout_interruptible(msecs_to_jiffies
 					       (platform->
 						vmid_discharge_msecs));
 
@@ -1208,7 +1208,7 @@ static int wm8350_set_bias_level(struct snd_soc_codec *codec,
 				 pm1 | WM8350_OUTPUT_DRAIN_EN);
 
 		/* wait */
-		schedule_msec_hrtimeout_interruptible(
+		schedule_timeout_interruptible(msecs_to_jiffies
 					       (platform->drain_msecs));
 
 		pm1 &= ~WM8350_BIASEN;

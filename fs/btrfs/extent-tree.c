@@ -5954,7 +5954,7 @@ int btrfs_delalloc_reserve_metadata(struct btrfs_inode *inode, u64 num_bytes)
 
 	if (flush != BTRFS_RESERVE_NO_FLUSH &&
 	    btrfs_transaction_in_commit(fs_info))
-		schedule_timeout(1);
+		schedule_min_hrtimeout();
 
 	if (delalloc_lock)
 		mutex_lock(&inode->delalloc_mutex);

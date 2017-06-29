@@ -1,6 +1,6 @@
 VERSION = 4
 PATCHLEVEL = 11
-SUBLEVEL = 6
+SUBLEVEL = 7
 EXTRAVERSION = -zen
 NAME = Perry Trotter and the Kernel of Truth
 

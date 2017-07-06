@@ -725,8 +725,12 @@ static void bfq_updated_next_req(struct bfq_data *bfqd,
 }
 
 static void
-bfq_bfqq_resume_state(struct bfq_queue *bfqq, struct bfq_io_cq *bic)
+bfq_bfqq_resume_state(struct bfq_queue *bfqq, struct bfq_data *bfqd,
+		      struct bfq_io_cq *bic, bool bfq_already_existing)
 {
+	unsigned int old_wr_coeff = bfqq->wr_coeff;
+	bool busy = bfq_already_existing && bfq_bfqq_busy(bfqq);
+
 	if (bic->saved_idle_window)
 		bfq_mark_bfqq_idle_window(bfqq);
 	else
@@ -754,6 +758,14 @@ bfq_bfqq_resume_state(struct bfq_queue *bfqq, struct bfq_io_cq *bic)
 
 	/* make sure weight will be updated, however we got here */
 	bfqq->entity.prio_changed = 1;
+
+	if (likely(!busy))
+		return;
+
+	if (old_wr_coeff == 1 && bfqq->wr_coeff > 1)
+		bfqd->wr_busy_queues++;
+	else if (old_wr_coeff > 1 && bfqq->wr_coeff == 1)
+		bfqd->wr_busy_queues--;
 }
 
 static int bfqq_process_refs(struct bfq_queue *bfqq)
@@ -3471,11 +3483,17 @@ static void bfq_update_wr_data(struct bfq_data *bfqd, struct bfq_queue *bfqq)
 			}
 		}
 	}
-	/* Update weight both if it must be raised and if it must be lowered */
+	/*
+	 * To improve latency (for this or other queues), immediately
+	 * update weight both if it must be raised and if it must be
+	 * lowered. Since, entity may be on some active tree here, and
+	 * might have a pending change of its ioprio class, invoke
+	 * next function with the last parameter unset (see the
+	 * comments on the function).
+	 */
 	if ((entity->weight > entity->orig_weight) != (bfqq->wr_coeff > 1))
-		__bfq_entity_update_weight_prio(
-			bfq_entity_service_tree(entity),
-			entity);
+		__bfq_entity_update_weight_prio(bfq_entity_service_tree(entity),
+						entity, false);
 }
 
 /*
@@ -4398,16 +4416,17 @@ static int bfq_get_rq_private(struct request_queue *q, struct request *rq,
 			      struct bio *bio)
 {
 	struct bfq_data *bfqd = q->elevator->elevator_data;
-	struct bfq_io_cq *bic = icq_to_bic(rq->elv.icq);
+	struct bfq_io_cq *bic;
 	const int is_sync = rq_is_sync(rq);
 	struct bfq_queue *bfqq;
 	bool new_queue = false;
-	bool split = false;
+	bool bfqq_already_existing = false, split = false;
+
+	if (!rq->elv.icq)
+		return 1;
+	bic = icq_to_bic(rq->elv.icq);
 
 	spin_lock_irq(&bfqd->lock);
-
-	if (!bic)
-		goto queue_fail;
 
 	bfq_check_ioprio_change(bic, bio);
 
@@ -4432,6 +4451,8 @@ static int bfq_get_rq_private(struct request_queue *q, struct request *rq,
 				bfqq = bfq_get_bfqq_handle_split(bfqd, bic, bio,
 								 true, is_sync,
 								 NULL);
+			else
+				bfqq_already_existing = true;
 		}
 	}
 
@@ -4457,7 +4478,8 @@ static int bfq_get_rq_private(struct request_queue *q, struct request *rq,
 			 * queue: restore the idle window and the
 			 * possible weight raising period.
 			 */
-			bfq_bfqq_resume_state(bfqq, bic);
+			bfq_bfqq_resume_state(bfqq, bfqd, bic,
+					      bfqq_already_existing);
 		}
 	}
 
@@ -4465,13 +4487,7 @@ static int bfq_get_rq_private(struct request_queue *q, struct request *rq,
 		bfq_handle_burst(bfqd, bfqq);
 
 	spin_unlock_irq(&bfqd->lock);
-
 	return 0;
-
-queue_fail:
-	spin_unlock_irq(&bfqd->lock);
-
-	return 1;
 }
 
 static void bfq_idle_slice_timer_body(struct bfq_queue *bfqq)

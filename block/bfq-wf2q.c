@@ -1208,7 +1208,7 @@ static void bfq_deactivate_entity(struct bfq_entity *entity,
 			 */
 			bfq_update_next_in_service(sd, NULL);
 
-		if (sd->next_in_service)
+		if (sd->next_in_service || sd->in_service_entity)
 			/*
 			 * The parent entity is still backlogged,
 			 * because next_in_service is not NULL. So, no

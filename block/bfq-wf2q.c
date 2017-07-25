@@ -1158,8 +1158,10 @@ bool __bfq_deactivate_entity(struct bfq_entity *entity, bool ins_into_idle_tree)
 	st = bfq_entity_service_tree(entity);
 	is_in_service = entity == sd->in_service_entity;
 
-	if (is_in_service)
+	if (is_in_service) {
 		bfq_calc_finish(entity, entity->service);
+		sd->in_service_entity = NULL;
+	}
 
 	if (entity->tree == &st->active)
 		bfq_active_extract(st, entity);
@@ -1208,7 +1210,7 @@ static void bfq_deactivate_entity(struct bfq_entity *entity,
 			 */
 			bfq_update_next_in_service(sd, NULL);
 
-		if (sd->next_in_service)
+		if (sd->next_in_service || sd->in_service_entity)
 			/*
 			 * The parent entity is still backlogged,
 			 * because next_in_service is not NULL. So, no

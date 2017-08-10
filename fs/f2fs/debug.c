@@ -352,8 +352,13 @@ static int stat_show(struct seq_file *s, void *v)
 				si->meta_count[META_NAT]);
 		seq_printf(s, "  - ssa blocks : %u\n",
 				si->meta_count[META_SSA]);
-		seq_printf(s, "GC calls: %d (BG: %d)\n",
+		seq_printf(s, "GC calls: %d (BG: %d)",
 			   si->call_count, si->bg_gc);
+#ifdef CONFIG_F2FS_POWER_AWARE
+		if (power_supply_is_system_supplied() == 0)
+			seq_puts(s, " (No external power source - BG disabled)");
+#endif
+		seq_puts(s, "\n");
 		seq_printf(s, "  - data segments : %d (%d)\n",
 				si->data_segs, si->bg_data_segs);
 		seq_printf(s, "  - node segments : %d (%d)\n",

@@ -30,6 +30,19 @@ config F2FS_STAT_FS
 	    - average SIT information about whole segments
 	    - current memory footprint consumed by f2fs.
 
+config F2FS_POWER_AWARE
+	bool "Power source awareness for F2FS background GC"
+	depends on POWER_SUPPLY
+	default n
+	help
+	  Enable F2FS background GC only when external power source is
+	  connected for portable devices.
+
+	  Enabling this won't cause any functional difference for systems
+	  without battery.
+
+	  If unsure, say N.
+
 config F2FS_FS_XATTR
 	bool "F2FS extended attributes"
 	depends on F2FS_FS

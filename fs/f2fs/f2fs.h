@@ -23,6 +23,9 @@
 #include <linux/blkdev.h>
 #include <linux/quotaops.h>
 #include <crypto/hash.h>
+#ifdef CONFIG_F2FS_POWER_AWARE
+#include <linux/power_supply.h>
+#endif
 
 #include <linux/fscrypt.h>
 
@@ -2192,6 +2195,12 @@ static inline struct bio *f2fs_bio_alloc(struct f2fs_sb_info *sbi,
 
 static inline bool is_idle(struct f2fs_sb_info *sbi, int type)
 {
+#ifdef CONFIG_F2FS_POWER_AWARE
+	/* >0 : AC; 0 : battery; <0 : error */
+	if (power_supply_is_system_supplied() == 0)
+		return false;
+#endif
+
 	if (get_pages(sbi, F2FS_RD_DATA) || get_pages(sbi, F2FS_RD_NODE) ||
 		get_pages(sbi, F2FS_RD_META) || get_pages(sbi, F2FS_WB_DATA) ||
 		get_pages(sbi, F2FS_WB_CP_DATA) ||

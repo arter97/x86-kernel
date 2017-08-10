@@ -25,6 +25,9 @@
 #include <linux/blkdev.h>
 #include <linux/quotaops.h>
 #include <crypto/hash.h>
+#ifdef CONFIG_F2FS_POWER_AWARE
+#include <linux/power_supply.h>
+#endif
 
 #define __FS_HAS_ENCRYPTION IS_ENABLED(CONFIG_F2FS_FS_ENCRYPTION)
 #include <linux/fscrypt.h>
@@ -1362,6 +1365,12 @@ static inline bool is_idle(struct f2fs_sb_info *sbi)
 
 	if (rl->count[BLK_RW_SYNC] || rl->count[BLK_RW_ASYNC])
 		return false;
+
+#ifdef CONFIG_F2FS_POWER_AWARE
+	/* >0 : AC; 0 : battery; <0 : error */
+	if (power_supply_is_system_supplied() == 0)
+		return 0;
+#endif
 
 	return f2fs_time_over(sbi, REQ_TIME);
 }

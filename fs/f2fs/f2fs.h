@@ -29,6 +29,9 @@
 #include <linux/fscrypt_notsupp.h>
 #endif
 #include <crypto/hash.h>
+#ifdef CONFIG_F2FS_POWER_AWARE
+#include <linux/power_supply.h>
+#endif
 
 #ifdef CONFIG_F2FS_CHECK_FS
 #define f2fs_bug_on(sbi, condition)	BUG_ON(condition)
@@ -1104,6 +1107,12 @@ static inline bool is_idle(struct f2fs_sb_info *sbi)
 
 	if (rl->count[BLK_RW_SYNC] || rl->count[BLK_RW_ASYNC])
 		return 0;
+
+#ifdef CONFIG_F2FS_POWER_AWARE
+	/* >0 : AC; 0 : battery; <0 : error */
+	if (power_supply_is_system_supplied() == 0)
+		return 0;
+#endif
 
 	return f2fs_time_over(sbi, REQ_TIME);
 }

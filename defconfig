@@ -1,6 +1,6 @@
 #
 # Automatically generated file; DO NOT EDIT.
-# Linux/x86 4.12.4-zen Kernel Configuration
+# Linux/x86 4.12.7-zen Kernel Configuration
 #
 CONFIG_64BIT=y
 CONFIG_X86_64=y
@@ -8330,6 +8330,7 @@ CONFIG_BTRFS_FS_POSIX_ACL=y
 CONFIG_NILFS2_FS=m
 CONFIG_F2FS_FS=y
 CONFIG_F2FS_STAT_FS=y
+CONFIG_F2FS_POWER_AWARE=y
 CONFIG_F2FS_FS_XATTR=y
 CONFIG_F2FS_FS_POSIX_ACL=y
 CONFIG_F2FS_FS_SECURITY=y

@@ -96,7 +96,8 @@ CFLAGS_REMOVE_vvar.o = -pg
 #
 
 CPPFLAGS_vdsox32.lds = $(CPPFLAGS_vdso.lds)
-VDSO_LDFLAGS_vdsox32.lds = -Wl,-m,elf32_x86_64 \
+VDSO_LDFLAGS_vdsox32.lds = -fuse-ld=bfd \
+			   -Wl,-m,elf32_x86_64 \
 			   -Wl,-soname=linux-vdso.so.1 \
 			   -Wl,-z,max-page-size=4096 \
 			   -Wl,-z,common-page-size=4096

@@ -17,7 +17,7 @@ instances of BFQ are available (otherwise only the first instance):
 - bfq-mq: development version of BFQ for blk-mq; this version contains
    also all latest features and fixes not yet landed in mainline, plus many
    safety checks
-- bfq: BFQ for legacy blk; also this version contains latest features
+- bfq-sq: BFQ for legacy blk; also this version contains latest features
    and fixes, as well as safety checks
 
 In its default configuration, BFQ privileges latency over
@@ -25,14 +25,16 @@ throughput. So, when needed for achieving a lower latency, BFQ builds
 schedules that may lead to a lower throughput. If your main or only
 goal, for a given device, is to achieve the maximum-possible
 throughput at all times, then do switch off all low-latency heuristics
-for that device, by setting low_latency to 0. Full details in Section 3.
+for that device, by setting low_latency to 0. See Section 3 for
+details on how to configure BFQ for the desired tradeoff between
+latency and throughput, or on how to maximize throughput.
 
 On average CPUs, the current version of BFQ can handle devices
 performing at most ~30K IOPS; at most ~50 KIOPS on faster CPUs. As a
 reference, 30-50 KIOPS correspond to very high bandwidths with
 sequential I/O (e.g., 8-12 GB/s if I/O requests are 256 KB large), and
-to 120-200 MB/s with 4KB random I/O. BFQ has not yet been tested on
-multi-queue devices.
+to 120-200 MB/s with 4KB random I/O. BFQ is currently being tested on
+multi-queue devices too.
 
 The table of contents follows. Impatients can just jump to Section 3.
 
@@ -163,10 +165,10 @@ plus a lot of code, are borrowed from CFQ.
 
       - With respect to idling for service guarantees, if several
 	processes are competing for the device at the same time, but
-	all processes (and groups, after the following commit) have
-	the same weight, then BFQ guarantees the expected throughput
-	distribution without ever idling the device. Throughput is
-	thus as high as possible in this common scenario.
+	all processes and groups have the same weight, then BFQ
+	guarantees the expected throughput distribution without ever
+	idling the device. Throughput is thus as high as possible in
+	this common scenario.
 
   - If low-latency mode is enabled (default configuration), BFQ
     executes some special heuristics to detect interactive and soft
@@ -200,10 +202,7 @@ plus a lot of code, are borrowed from CFQ.
   - Queues are scheduled according to a variant of WF2Q+, named
     B-WF2Q+, and implemented using an augmented rb-tree to preserve an
     O(log N) overall complexity.  See [2] for more details. B-WF2Q+ is
-    also ready for hierarchical scheduling. However, for a cleaner
-    logical breakdown, the code that enables and completes
-    hierarchical support is provided in the next commit, which focuses
-    exactly on this feature.
+    also ready for hierarchical scheduling, details in Section 4.
 
   - B-WF2Q+ guarantees a tight deviation with respect to an ideal,
     perfectly fair, and smooth service. In particular, B-WF2Q+

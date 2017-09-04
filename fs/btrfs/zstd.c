@@ -17,7 +17,6 @@
 #include <linux/kernel.h>
 #include <linux/mm.h>
 #include <linux/pagemap.h>
-#include <linux/refcount.h>
 #include <linux/sched.h>
 #include <linux/slab.h>
 #include <linux/zstd.h>
@@ -260,13 +259,13 @@ out:
 	return ret;
 }
 
-static int zstd_decompress_bio(struct list_head *ws, struct compressed_bio *cb)
+static int zstd_decompress_bio(struct list_head *ws,
+				struct page **pages_in,
+				u64 disk_start,
+				struct bio *orig_bio,
+				size_t srclen)
 {
 	struct workspace *workspace = list_entry(ws, struct workspace, list);
-	struct page **pages_in = cb->compressed_pages;
-	u64 disk_start = cb->start;
-	struct bio *orig_bio = cb->orig_bio;
-	size_t srclen = cb->compressed_len;
 	ZSTD_DStream *stream;
 	int ret = 0;
 	unsigned long page_in_index = 0;

@@ -89,6 +89,7 @@
 #include "blk-mq-tag.h"
 #include "blk-mq-sched.h"
 #include "bfq-mq.h"
+#include "blk-wbt.h"
 
 /* Expiration time of sync (0) and async (1) requests, in ns. */
 static const u64 bfq_fifo_expire[2] = { NSEC_PER_SEC / 4, NSEC_PER_SEC / 8 };
@@ -715,6 +716,15 @@ static unsigned int bfq_wr_duration(struct bfq_data *bfqd)
 	return dur;
 }
 
+/* switch back from soft real-time to interactive weight raising */
+static void switch_back_to_interactive_wr(struct bfq_queue *bfqq,
+					  struct bfq_data *bfqd)
+{
+	bfqq->wr_coeff = bfqd->bfq_wr_coeff;
+	bfqq->wr_cur_max_time = bfq_wr_duration(bfqd);
+	bfqq->last_wr_start_finish = bfqq->wr_start_at_switch_to_srt;
+}
+
 static void
 bfq_bfqq_resume_state(struct bfq_queue *bfqq, struct bfq_data *bfqd,
 		      struct bfq_io_cq *bic, bool bfq_already_existing)
@@ -743,15 +753,29 @@ bfq_bfqq_resume_state(struct bfq_queue *bfqq, struct bfq_data *bfqd,
 	bfqq->wr_cur_max_time = bic->saved_wr_cur_max_time;
 	BUG_ON(time_is_after_jiffies(bfqq->last_wr_start_finish));
 
+	bfq_log_bfqq(bfqq->bfqd, bfqq,
+		     "[%s] bic %p wr_coeff %d start_finish %lu max_time %lu",
+		     __func__,
+		     bic, bfqq->wr_coeff, bfqq->last_wr_start_finish,
+		     bfqq->wr_cur_max_time);
+
 	if (bfqq->wr_coeff > 1 && (bfq_bfqq_in_large_burst(bfqq) ||
 				   time_is_before_jiffies(bfqq->last_wr_start_finish +
 							  bfqq->wr_cur_max_time))) {
-		bfq_log_bfqq(bfqq->bfqd, bfqq,
+		if (bfqq->wr_cur_max_time == bfqd->bfq_wr_rt_max_time &&
+		    !bfq_bfqq_in_large_burst(bfqq) &&
+		    time_is_after_eq_jiffies(bfqq->wr_start_at_switch_to_srt +
+					     bfq_wr_duration(bfqd))) {
+			switch_back_to_interactive_wr(bfqq, bfqd);
+			bfq_log_bfqq(bfqq->bfqd, bfqq,
+			     "resume state: switching back to interactive");
+		} else {
+			bfqq->wr_coeff = 1;
+			bfq_log_bfqq(bfqq->bfqd, bfqq,
 			     "resume state: switching off wr (%lu + %lu < %lu)",
 			     bfqq->last_wr_start_finish, bfqq->wr_cur_max_time,
 			     jiffies);
-
-		bfqq->wr_coeff = 1;
+		}
 	}
 
 	/* make sure weight will be updated, however we got here */
@@ -1370,7 +1394,6 @@ static void bfq_bfqq_handle_idle_busy_switch(struct bfq_data *bfqd,
 	BUG_ON(bfqq->entity.budget < bfqq->entity.service);
 
 	BUG_ON(bfqq == bfqd->in_service_queue);
-	bfqg_stats_update_io_add(bfqq_group(RQ_BFQQ(rq)), bfqq, rq->cmd_flags);
 
 	/*
 	 * bfqq deserves to be weight-raised if:
@@ -1517,6 +1540,8 @@ static void bfq_add_request(struct request *rq)
 
 	BUG_ON(!RQ_BFQQ(rq));
 	BUG_ON(RQ_BFQQ(rq) != bfqq);
+	WARN_ON(blk_rq_sectors(rq) == 0);
+
 	elv_rb_add(&bfqq->sort_list, rq);
 
 	/*
@@ -1710,7 +1735,6 @@ static void bfq_remove_request(struct request_queue *q,
 		BUG_ON(bfqq->meta_pending == 0);
 		bfqq->meta_pending--;
 	}
-	bfqg_stats_update_io_remove(bfqq_group(bfqq), rq->cmd_flags);
 }
 
 static bool bfq_bio_merge(struct blk_mq_hw_ctx *hctx, struct bio *bio)
@@ -1800,7 +1824,7 @@ static void bfq_request_merged(struct request_queue *q, struct request *req,
 		bfqq->next_rq = next_rq;
 
 		bfq_log_bfqq(bfqd, bfqq,
-			"requests_merged: req %p prev %p next_rq %p bfqq %p",
+			"request_merged: req %p prev %p next_rq %p bfqq %p",
 			     req, prev, next_rq, bfqq);
 
 		/*
@@ -1855,6 +1879,7 @@ static void bfq_requests_merged(struct request_queue *q, struct request *rq,
 		bfqq->next_rq = rq;
 
 	bfq_remove_request(q, next);
+	bfqg_stats_update_io_remove(bfqq_group(bfqq), next->cmd_flags);
 
 	spin_unlock_irq(&bfqq->bfqd->lock);
 end:
@@ -2202,11 +2227,33 @@ static void bfq_bfqq_save_state(struct bfq_queue *bfqq)
 	bic->saved_IO_bound = bfq_bfqq_IO_bound(bfqq);
 	bic->saved_in_large_burst = bfq_bfqq_in_large_burst(bfqq);
 	bic->was_in_burst_list = !hlist_unhashed(&bfqq->burst_list_node);
-	bic->saved_wr_coeff = bfqq->wr_coeff;
-	bic->saved_wr_start_at_switch_to_srt = bfqq->wr_start_at_switch_to_srt;
-	bic->saved_last_wr_start_finish = bfqq->last_wr_start_finish;
-	bic->saved_wr_cur_max_time = bfqq->wr_cur_max_time;
+	if (unlikely(bfq_bfqq_just_created(bfqq) &&
+		     !bfq_bfqq_in_large_burst(bfqq))) {
+		/*
+		 * bfqq being merged ritgh after being created: bfqq
+		 * would have deserved interactive weight raising, but
+		 * did not make it to be set in a weight-raised state,
+		 * because of this early merge.  Store directly the
+		 * weight-raising state that would have been assigned
+		 * to bfqq, so that to avoid that bfqq unjustly fails
+		 * to enjoy weight raising if split soon.
+		 */
+		bic->saved_wr_coeff = bfqq->bfqd->bfq_wr_coeff;
+		bic->saved_wr_cur_max_time = bfq_wr_duration(bfqq->bfqd);
+		bic->saved_last_wr_start_finish = jiffies;
+	} else {
+		bic->saved_wr_coeff = bfqq->wr_coeff;
+		bic->saved_wr_start_at_switch_to_srt =
+			bfqq->wr_start_at_switch_to_srt;
+		bic->saved_last_wr_start_finish = bfqq->last_wr_start_finish;
+		bic->saved_wr_cur_max_time = bfqq->wr_cur_max_time;
+	}
 	BUG_ON(time_is_after_jiffies(bfqq->last_wr_start_finish));
+	bfq_log_bfqq(bfqq->bfqd, bfqq,
+		     "[%s] bic %p wr_coeff %d start_finish %lu max_time %lu",
+		     __func__,
+		     bic, bfqq->wr_coeff, bfqq->last_wr_start_finish,
+		     bfqq->wr_cur_max_time);
 }
 
 static void
@@ -2370,7 +2417,6 @@ static void __bfq_set_in_service_queue(struct bfq_data *bfqd,
 				       struct bfq_queue *bfqq)
 {
 	if (bfqq) {
-		bfqg_stats_update_avg_queue_size(bfqq_group(bfqq));
 		bfq_clear_bfqq_fifo_expire(bfqq);
 
 		bfqd->budgets_assigned = (bfqd->budgets_assigned*7 + 256) / 8;
@@ -3739,7 +3785,6 @@ check_queue:
 				 */
 				bfq_clear_bfqq_wait_request(bfqq);
 				hrtimer_try_to_cancel(&bfqd->idle_slice_timer);
-				bfqg_stats_update_idle_time(bfqq_group(bfqq));
 			}
 			goto keep_queue;
 		}
@@ -3808,11 +3853,7 @@ static void bfq_update_wr_data(struct bfq_data *bfqd, struct bfq_queue *bfqq)
 					bfq_wr_duration(bfqd)))
 				bfq_bfqq_end_wr(bfqq);
 			else {
-				/* switch back to interactive wr */
-				bfqq->wr_coeff = bfqd->bfq_wr_coeff;
-				bfqq->wr_cur_max_time = bfq_wr_duration(bfqd);
-				bfqq->last_wr_start_finish =
-					bfqq->wr_start_at_switch_to_srt;
+				switch_back_to_interactive_wr(bfqq, bfqd);
 				BUG_ON(time_is_after_jiffies(
 					       bfqq->last_wr_start_finish));
 				bfqq->entity.prio_changed = 1;
@@ -4031,11 +4072,66 @@ static struct request *bfq_dispatch_request(struct blk_mq_hw_ctx *hctx)
 {
 	struct bfq_data *bfqd = hctx->queue->elevator->elevator_data;
 	struct request *rq;
+#if defined(BFQ_GROUP_IOSCHED_ENABLED) &&  defined(CONFIG_DEBUG_BLK_CGROUP)
+	struct bfq_queue *in_serv_queue, *bfqq;
+	bool waiting_rq, idle_timer_disabled;
+#endif
 
 	spin_lock_irq(&bfqd->lock);
 
+#if defined(BFQ_GROUP_IOSCHED_ENABLED) &&  defined(CONFIG_DEBUG_BLK_CGROUP)
+	in_serv_queue = bfqd->in_service_queue;
+	waiting_rq = in_serv_queue && bfq_bfqq_wait_request(in_serv_queue);
+
 	rq = __bfq_dispatch_request(hctx);
+
+	idle_timer_disabled =
+		waiting_rq && !bfq_bfqq_wait_request(in_serv_queue);
+
+#else
+	rq = __bfq_dispatch_request(hctx);
+#endif
 	spin_unlock_irq(&bfqd->lock);
+
+#if defined(BFQ_GROUP_IOSCHED_ENABLED) &&  defined(CONFIG_DEBUG_BLK_CGROUP)
+	bfqq = rq ? RQ_BFQQ(rq) : NULL;
+	if (!idle_timer_disabled && !bfqq)
+		return rq;
+
+	/*
+	 * rq and bfqq are guaranteed to exist until this function
+	 * ends, for the following reasons. First, rq can be
+	 * dispatched to the device, and then can be completed and
+	 * freed, only after this function ends. Second, rq cannot be
+	 * merged (and thus freed because of a merge) any longer,
+	 * because it has already started. Thus rq cannot be freed
+	 * before this function ends, and, since rq has a reference to
+	 * bfqq, the same guarantee holds for bfqq too.
+	 *
+	 * In addition, the following queue lock guarantees that
+	 * bfqq_group(bfqq) exists as well.
+	 */
+	spin_lock_irq(hctx->queue->queue_lock);
+	if (idle_timer_disabled)
+		/*
+		 * Since the idle timer has been disabled,
+		 * in_serv_queue contained some request when
+		 * __bfq_dispatch_request was invoked above, which
+		 * implies that rq was picked exactly from
+		 * in_serv_queue. Thus in_serv_queue == bfqq, and is
+		 * therefore guaranteed to exist because of the above
+		 * arguments.
+		 */
+		bfqg_stats_update_idle_time(bfqq_group(in_serv_queue));
+	if (bfqq) {
+		struct bfq_group *bfqg = bfqq_group(bfqq);
+
+		bfqg_stats_update_avg_queue_size(bfqg);
+		bfqg_stats_set_start_empty_time(bfqg);
+		bfqg_stats_update_io_remove(bfqg, rq->cmd_flags);
+	}
+	spin_unlock_irq(hctx->queue->queue_lock);
+#endif
 
 	return rq;
 }
@@ -4069,16 +4165,37 @@ static void bfq_put_queue(struct bfq_queue *bfqq)
 	BUG_ON(bfqq->entity.tree);
 	BUG_ON(bfq_bfqq_busy(bfqq));
 
-	if (bfq_bfqq_sync(bfqq))
-		/*
-		 * The fact that this queue is being destroyed does not
-		 * invalidate the fact that this queue may have been
-		 * activated during the current burst. As a consequence,
-		 * although the queue does not exist anymore, and hence
-		 * needs to be removed from the burst list if there,
-		 * the burst size has not to be decremented.
-		 */
+	if (!hlist_unhashed(&bfqq->burst_list_node)) {
 		hlist_del_init(&bfqq->burst_list_node);
+		/*
+		 * Decrement also burst size after the removal, if the
+		 * process associated with bfqq is exiting, and thus
+		 * does not contribute to the burst any longer. This
+		 * decrement helps filter out false positives of large
+		 * bursts, when some short-lived process (often due to
+		 * the execution of commands by some service) happens
+		 * to start and exit while a complex application is
+		 * starting, and thus spawning several processes that
+		 * do I/O (and that *must not* be treated as a large
+		 * burst, see comments on bfq_handle_burst).
+		 *
+		 * In particular, the decrement is performed only if:
+		 * 1) bfqq is not a merged queue, because, if it is,
+		 * then this free of bfqq is not triggered by the exit
+		 * of the process bfqq is associated with, but exactly
+		 * by the fact that bfqq has just been merged.
+		 * 2) burst_size is greater than 0, to handle
+		 * unbalanced decrements. Unbalanced decrements may
+		 * happen in te following case: bfqq is inserted into
+		 * the current burst list--without incrementing
+		 * bust_size--because of a split, but the current
+		 * burst list is not the burst list bfqq belonged to
+		 * (see comments on the case of a split in
+		 * bfq_set_request).
+		 */
+		if (bfqq->bic && bfqq->bfqd->burst_size > 0)
+			bfqq->bfqd->burst_size--;
+	}
 
 	if (bfqq->bfqd)
 		bfq_log_bfqq(bfqq->bfqd, bfqq, "put_queue: %p freed", bfqq);
@@ -4134,7 +4251,6 @@ static void bfq_exit_icq_bfqq(struct bfq_io_cq *bic, bool is_sync)
 		unsigned long flags;
 
 		spin_lock_irqsave(&bfqd->lock, flags);
-
 		bfq_exit_bfqq(bfqd, bfqq);
 		bic_set_bfqq(bic, NULL, is_sync);
 		spin_unlock_irqrestore(&bfqd->lock, flags);
@@ -4488,7 +4604,6 @@ static void bfq_rq_enqueued(struct bfq_data *bfqd, struct bfq_queue *bfqq,
 		 */
 		bfq_clear_bfqq_wait_request(bfqq);
 		hrtimer_try_to_cancel(&bfqd->idle_slice_timer);
-		bfqg_stats_update_idle_time(bfqq_group(bfqq));
 
 		/*
 		 * The queue is not empty, because a new request just
@@ -4503,9 +4618,11 @@ static void bfq_rq_enqueued(struct bfq_data *bfqd, struct bfq_queue *bfqq,
 	}
 }
 
-static void __bfq_insert_request(struct bfq_data *bfqd, struct request *rq)
+/* returns true if it causes the idle timer to be disabled */
+static bool __bfq_insert_request(struct bfq_data *bfqd, struct request *rq)
 {
 	struct bfq_queue *bfqq = RQ_BFQQ(rq), *new_bfqq;
+	bool waiting, idle_timer_disabled = false;
 	BUG_ON(!bfqq);
 
 	assert_spin_locked(&bfqd->lock);
@@ -4535,7 +4652,6 @@ static void __bfq_insert_request(struct bfq_data *bfqd, struct request *rq)
 				     bfqq->allocated);
 
 			new_bfqq->ref++;
-			bfq_clear_bfqq_just_created(bfqq);
 			/*
 			 * If the bic associated with the process
 			 * issuing this request still points to bfqq
@@ -4547,6 +4663,8 @@ static void __bfq_insert_request(struct bfq_data *bfqd, struct request *rq)
 			if (bic_to_bfqq(RQ_BIC(rq), 1) == bfqq)
 				bfq_merge_bfqqs(bfqd, RQ_BIC(rq),
 						bfqq, new_bfqq);
+
+			bfq_clear_bfqq_just_created(bfqq);
 			/*
 			 * rq is about to be enqueued into new_bfqq,
 			 * release rq reference on bfqq
@@ -4557,12 +4675,16 @@ static void __bfq_insert_request(struct bfq_data *bfqd, struct request *rq)
 		}
 	}
 
+	waiting = bfqq && bfq_bfqq_wait_request(bfqq);
 	bfq_add_request(rq);
+	idle_timer_disabled = waiting && !bfq_bfqq_wait_request(bfqq);
 
 	rq->fifo_time = ktime_get_ns() + bfqd->bfq_fifo_expire[rq_is_sync(rq)];
 	list_add_tail(&rq->queuelist, &bfqq->fifo);
 
 	bfq_rq_enqueued(bfqd, bfqq, rq);
+
+	return idle_timer_disabled;
 }
 
 static void bfq_insert_request(struct blk_mq_hw_ctx *hctx, struct request *rq,
@@ -4570,6 +4692,11 @@ static void bfq_insert_request(struct blk_mq_hw_ctx *hctx, struct request *rq,
 {
 	struct request_queue *q = hctx->queue;
 	struct bfq_data *bfqd = q->elevator->elevator_data;
+	struct bfq_queue *bfqq = RQ_BFQQ(rq);
+#if defined(BFQ_GROUP_IOSCHED_ENABLED) &&  defined(CONFIG_DEBUG_BLK_CGROUP)
+	bool idle_timer_disabled = false;
+	unsigned int cmd_flags;
+#endif
 
 	spin_lock_irq(&bfqd->lock);
 	if (blk_mq_sched_try_insert_merge(q, rq)) {
@@ -4583,8 +4710,6 @@ static void bfq_insert_request(struct blk_mq_hw_ctx *hctx, struct request *rq,
 
 	spin_lock_irq(&bfqd->lock);
 	if (at_head || blk_rq_is_passthrough(rq)) {
-		struct bfq_queue *bfqq = RQ_BFQQ(rq);
-
 		if (at_head)
 			list_add(&rq->queuelist, &bfqd->dispatch);
 		else
@@ -4603,7 +4728,17 @@ static void bfq_insert_request(struct blk_mq_hw_ctx *hctx, struct request *rq,
 		BUG_ON(!(rq->rq_flags & RQF_GOT));
 		rq->rq_flags &= ~RQF_GOT;
 
+#if defined(BFQ_GROUP_IOSCHED_ENABLED) &&  defined(CONFIG_DEBUG_BLK_CGROUP)
+		idle_timer_disabled = __bfq_insert_request(bfqd, rq);
+		/*
+		 * Update bfqq, because, if a queue merge has occurred
+		 * in __bfq_insert_request, then rq has been
+		 * redirected into a new queue.
+		 */
+		bfqq = RQ_BFQQ(rq);
+#else
 		__bfq_insert_request(bfqd, rq);
+#endif
 
 		if (rq_mergeable(rq)) {
 			elv_rqhash_add(q, rq);
@@ -4611,8 +4746,34 @@ static void bfq_insert_request(struct blk_mq_hw_ctx *hctx, struct request *rq,
 				q->last_merge = rq;
 		}
 	}
-
+#if defined(BFQ_GROUP_IOSCHED_ENABLED) &&  defined(CONFIG_DEBUG_BLK_CGROUP)
+	/*
+	 * Cache cmd_flags before releasing scheduler lock, because rq
+	 * may disappear afterwards (for example, because of a request
+	 * merge).
+	 */
+	cmd_flags = rq->cmd_flags;
+#endif
 	spin_unlock_irq(&bfqd->lock);
+#if defined(BFQ_GROUP_IOSCHED_ENABLED) &&  defined(CONFIG_DEBUG_BLK_CGROUP)
+	if (!bfqq)
+		return;
+	/*
+	 * bfqq still exists, because it can disappear only after
+	 * either it is merged with another queue, or the process it
+	 * is associated with exits. But both actions must be taken by
+	 * the same process currently executing this flow of
+	 * instruction.
+	 *
+	 * In addition, the following queue lock guarantees that
+	 * bfqq_group(bfqq) exists as well.
+	 */
+	spin_lock_irq(q->queue_lock);
+	bfqg_stats_update_io_add(bfqq_group(bfqq), bfqq, cmd_flags);
+	if (idle_timer_disabled)
+		bfqg_stats_update_idle_time(bfqq_group(bfqq));
+	spin_unlock_irq(q->queue_lock);
+#endif
 }
 
 static void bfq_insert_requests(struct blk_mq_hw_ctx *hctx,
@@ -4803,7 +4964,7 @@ static void bfq_finish_request(struct request *rq)
 					     rq_io_start_time_ns(rq),
 					     rq->cmd_flags);
 
-	BUG_ON(blk_rq_sectors(rq) == 0 && !(rq->rq_flags & RQF_STARTED));
+	WARN_ON(blk_rq_sectors(rq) == 0 && !(rq->rq_flags & RQF_STARTED));
 
 	if (likely(rq->rq_flags & RQF_STARTED)) {
 		unsigned long flags;
@@ -4829,8 +4990,11 @@ static void bfq_finish_request(struct request *rq)
 		BUG_ON(in_interrupt());
 
 		assert_spin_locked(&bfqd->lock);
-		if (!RB_EMPTY_NODE(&rq->rb_node))
+		if (!RB_EMPTY_NODE(&rq->rb_node)) {
 			bfq_remove_request(rq->q, rq);
+			bfqg_stats_update_io_remove(bfqq_group(bfqq),
+						    rq->cmd_flags);
+		}
 		bfq_put_rq_priv_body(bfqq);
 	}
 
@@ -4903,6 +5067,34 @@ static struct bfq_queue *bfq_get_bfqq_handle_split(struct bfq_data *bfqd,
 				     "large burst");
 			bfq_clear_bfqq_in_large_burst(bfqq);
 			if (bic->was_in_burst_list)
+				/*
+				 * If bfqq was in the current
+				 * burst list before being
+				 * merged, then we have to add
+				 * it back. And we do not need
+				 * to increase burst_size, as
+				 * we did not decrement
+				 * burst_size when we removed
+				 * bfqq from the burst list as
+				 * a consequence of a merge
+				 * (see comments in
+				 * bfq_put_queue). In this
+				 * respect, it would be rather
+				 * costly to know whether the
+				 * current burst list is still
+				 * the same burst list from
+				 * which bfqq was removed on
+				 * the merge. To avoid this
+				 * cost, if bfqq was in a
+				 * burst list, then we add
+				 * bfqq to the current burst
+				 * list without any further
+				 * check. This can cause
+				 * inappropriate insertions,
+				 * but rarely enough to not
+				 * harm the detection of large
+				 * bursts significantly.
+				 */
 				hlist_add_head(&bfqq->burst_list_node,
 					       &bfqd->burst_list);
 		}
@@ -4949,6 +5141,7 @@ static void bfq_prepare_request(struct request *rq, struct bio *bio)
 				bic->saved_in_large_burst = true;
 
 			bfqq = bfq_split_bfqq(bic, bfqq);
+			split = true;
 
 			if (!bfqq)
 				bfqq = bfq_get_bfqq_handle_split(bfqd, bic, bio,
@@ -5272,6 +5465,7 @@ static int bfq_init_queue(struct request_queue *q, struct elevator_type *e)
 	bfq_init_root_group(bfqd->root_group, bfqd);
 	bfq_init_entity(&bfqd->oom_bfqq.entity, bfqd->root_group);
 
+	wbt_disable_default(q);
 	return 0;
 
 out_free:

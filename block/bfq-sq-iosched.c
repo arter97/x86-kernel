@@ -83,6 +83,7 @@
 #include <linux/ioprio.h>
 #include "blk.h"
 #include "bfq.h"
+#include "blk-wbt.h"
 
 /* Expiration time of sync (0) and async (1) requests, in ns. */
 static const u64 bfq_fifo_expire[2] = { NSEC_PER_SEC / 4, NSEC_PER_SEC / 8 };
@@ -677,6 +678,15 @@ static unsigned int bfq_wr_duration(struct bfq_data *bfqd)
 	return dur;
 }
 
+/* switch back from soft real-time to interactive weight raising */
+static void switch_back_to_interactive_wr(struct bfq_queue *bfqq,
+					  struct bfq_data *bfqd)
+{
+	bfqq->wr_coeff = bfqd->bfq_wr_coeff;
+	bfqq->wr_cur_max_time = bfq_wr_duration(bfqd);
+	bfqq->last_wr_start_finish = bfqq->wr_start_at_switch_to_srt;
+}
+
 static void
 bfq_bfqq_resume_state(struct bfq_queue *bfqq, struct bfq_data *bfqd,
 		      struct bfq_io_cq *bic, bool bfq_already_existing)
@@ -704,15 +714,29 @@ bfq_bfqq_resume_state(struct bfq_queue *bfqq, struct bfq_data *bfqd,
 	bfqq->wr_cur_max_time = bic->saved_wr_cur_max_time;
 	BUG_ON(time_is_after_jiffies(bfqq->last_wr_start_finish));
 
+	bfq_log_bfqq(bfqq->bfqd, bfqq,
+		     "[%s] bic %p wr_coeff %d start_finish %lu max_time %lu",
+		     __func__,
+		     bic, bfqq->wr_coeff, bfqq->last_wr_start_finish,
+		     bfqq->wr_cur_max_time);
+
 	if (bfqq->wr_coeff > 1 && (bfq_bfqq_in_large_burst(bfqq) ||
 				   time_is_before_jiffies(bfqq->last_wr_start_finish +
 							  bfqq->wr_cur_max_time))) {
-		bfq_log_bfqq(bfqq->bfqd, bfqq,
+		if (bfqq->wr_cur_max_time == bfqd->bfq_wr_rt_max_time &&
+		    !bfq_bfqq_in_large_burst(bfqq) &&
+		    time_is_after_eq_jiffies(bfqq->wr_start_at_switch_to_srt +
+					     bfq_wr_duration(bfqd))) {
+			switch_back_to_interactive_wr(bfqq, bfqd);
+			bfq_log_bfqq(bfqq->bfqd, bfqq,
+			     "resume state: switching back to interactive");
+		} else {
+			bfqq->wr_coeff = 1;
+			bfq_log_bfqq(bfqq->bfqd, bfqq,
 			     "resume state: switching off wr (%lu + %lu < %lu)",
 			     bfqq->last_wr_start_finish, bfqq->wr_cur_max_time,
 			     jiffies);
-
-		bfqq->wr_coeff = 1;
+		}
 	}
 
 	/* make sure weight will be updated, however we got here */
@@ -2081,10 +2105,27 @@ static void bfq_bfqq_save_state(struct bfq_queue *bfqq)
 	bic->saved_IO_bound = bfq_bfqq_IO_bound(bfqq);
 	bic->saved_in_large_burst = bfq_bfqq_in_large_burst(bfqq);
 	bic->was_in_burst_list = !hlist_unhashed(&bfqq->burst_list_node);
-	bic->saved_wr_coeff = bfqq->wr_coeff;
-	bic->saved_wr_start_at_switch_to_srt = bfqq->wr_start_at_switch_to_srt;
-	bic->saved_last_wr_start_finish = bfqq->last_wr_start_finish;
-	bic->saved_wr_cur_max_time = bfqq->wr_cur_max_time;
+	if (unlikely(bfq_bfqq_just_created(bfqq) &&
+		     !bfq_bfqq_in_large_burst(bfqq))) {
+		/*
+		 * bfqq being merged ritgh after being created: bfqq
+		 * would have deserved interactive weight raising, but
+		 * did not make it to be set in a weight-raised state,
+		 * because of this early merge.	Store directly the
+		 * weight-raising state that would have been assigned
+		 * to bfqq, so that to avoid that bfqq unjustly fails
+		 * to enjoy weight raising if split soon.
+		 */
+		bic->saved_wr_coeff = bfqq->bfqd->bfq_wr_coeff;
+		bic->saved_wr_cur_max_time = bfq_wr_duration(bfqq->bfqd);
+		bic->saved_last_wr_start_finish = jiffies;
+	} else {
+		bic->saved_wr_coeff = bfqq->wr_coeff;
+		bic->saved_wr_start_at_switch_to_srt =
+			bfqq->wr_start_at_switch_to_srt;
+		bic->saved_last_wr_start_finish = bfqq->last_wr_start_finish;
+		bic->saved_wr_cur_max_time = bfqq->wr_cur_max_time;
+	}
 	BUG_ON(time_is_after_jiffies(bfqq->last_wr_start_finish));
 }
 
@@ -3702,11 +3743,7 @@ static void bfq_update_wr_data(struct bfq_data *bfqd, struct bfq_queue *bfqq)
 					bfq_wr_duration(bfqd)))
 				bfq_bfqq_end_wr(bfqq);
 			else {
-				/* switch back to interactive wr */
-				bfqq->wr_coeff = bfqd->bfq_wr_coeff;
-				bfqq->wr_cur_max_time = bfq_wr_duration(bfqd);
-				bfqq->last_wr_start_finish =
-					bfqq->wr_start_at_switch_to_srt;
+				switch_back_to_interactive_wr(bfqq, bfqd);
 				BUG_ON(time_is_after_jiffies(
 					       bfqq->last_wr_start_finish));
 				bfqq->entity.prio_changed = 1;
@@ -3908,16 +3945,37 @@ static void bfq_put_queue(struct bfq_queue *bfqq)
 	BUG_ON(bfqq->entity.tree);
 	BUG_ON(bfq_bfqq_busy(bfqq));
 
-	if (bfq_bfqq_sync(bfqq))
-		/*
-		 * The fact that this queue is being destroyed does not
-		 * invalidate the fact that this queue may have been
-		 * activated during the current burst. As a consequence,
-		 * although the queue does not exist anymore, and hence
-		 * needs to be removed from the burst list if there,
-		 * the burst size has not to be decremented.
-		 */
+	if (!hlist_unhashed(&bfqq->burst_list_node)) {
 		hlist_del_init(&bfqq->burst_list_node);
+		/*
+		 * Decrement also burst size after the removal, if the
+		 * process associated with bfqq is exiting, and thus
+		 * does not contribute to the burst any longer. This
+		 * decrement helps filter out false positives of large
+		 * bursts, when some short-lived process (often due to
+		 * the execution of commands by some service) happens
+		 * to start and exit while a complex application is
+		 * starting, and thus spawning several processes that
+		 * do I/O (and that *must not* be treated as a large
+		 * burst, see comments on bfq_handle_burst).
+		 *
+		 * In particular, the decrement is performed only if:
+		 * 1) bfqq is not a merged queue, because, if it is,
+		 * then this free of bfqq is not triggered by the exit
+		 * of the process bfqq is associated with, but exactly
+		 * by the fact that bfqq has just been merged.
+		 * 2) burst_size is greater than 0, to handle
+		 * unbalanced decrements. Unbalanced decrements may
+		 * happen in te following case: bfqq is inserted into
+		 * the current burst list--without incrementing
+		 * bust_size--because of a split, but the current
+		 * burst list is not the burst list bfqq belonged to
+		 * (see comments on the case of a split in
+		 * bfq_set_request).
+		 */
+		if (bfqq->bic && bfqq->bfqd->burst_size > 0)
+			bfqq->bfqd->burst_size--;
+	}
 
 	bfq_log_bfqq(bfqq->bfqd, bfqq, "put_queue: %p freed", bfqq);
 
@@ -4363,10 +4421,11 @@ static void bfq_insert_request(struct request_queue *q, struct request *rq)
 			new_bfqq->allocated[rq_data_dir(rq)]++;
 			bfqq->allocated[rq_data_dir(rq)]--;
 			new_bfqq->ref++;
-			bfq_clear_bfqq_just_created(bfqq);
 			if (bic_to_bfqq(RQ_BIC(rq), 1) == bfqq)
 				bfq_merge_bfqqs(bfqd, RQ_BIC(rq),
 						bfqq, new_bfqq);
+
+			bfq_clear_bfqq_just_created(bfqq);
 			/*
 			 * rq is about to be enqueued into new_bfqq,
 			 * release rq reference on bfqq
@@ -4659,6 +4718,34 @@ new_queue:
 					     "large burst");
 				bfq_clear_bfqq_in_large_burst(bfqq);
 				if (bic->was_in_burst_list)
+					/*
+					 * If bfqq was in the current
+					 * burst list before being
+					 * merged, then we have to add
+					 * it back. And we do not need
+					 * to increase burst_size, as
+					 * we did not decrement
+					 * burst_size when we removed
+					 * bfqq from the burst list as
+					 * a consequence of a merge
+					 * (see comments in
+					 * bfq_put_queue). In this
+					 * respect, it would be rather
+					 * costly to know whether the
+					 * current burst list is still
+					 * the same burst list from
+					 * which bfqq was removed on
+					 * the merge. To avoid this
+					 * cost, if bfqq was in a
+					 * burst list, then we add
+					 * bfqq to the current burst
+					 * list without any further
+					 * check. This can cause
+					 * inappropriate insertions,
+					 * but rarely enough to not
+					 * harm the detection of large
+					 * bursts significantly.
+					 */
 					hlist_add_head(&bfqq->burst_list_node,
 						       &bfqd->burst_list);
 			}
@@ -4988,6 +5075,11 @@ out_free:
 	return -ENOMEM;
 }
 
+static void bfq_registered_queue(struct request_queue *q)
+{
+	wbt_disable_default(q);
+}
+
 static void bfq_slab_kill(void)
 {
 	kmem_cache_destroy(bfq_pool);
@@ -5297,6 +5389,7 @@ static struct elevator_type iosched_bfq = {
 		.elevator_may_queue_fn =	bfq_may_queue,
 		.elevator_init_fn =		bfq_init_queue,
 		.elevator_exit_fn =		bfq_exit_queue,
+		.elevator_registered_fn =	bfq_registered_queue,
 	},
 	.icq_size =		sizeof(struct bfq_io_cq),
 	.icq_align =		__alignof__(struct bfq_io_cq),

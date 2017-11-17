@@ -2,8 +2,8 @@
 VERSION = 4
 PATCHLEVEL = 14
 SUBLEVEL = 0
-EXTRAVERSION =
-NAME = Fearless Coyote
+EXTRAVERSION = -zen
+NAME = My Bodhi is Ready
 
 # *DOCUMENTATION*
 # To see a list of typical targets execute "make help"

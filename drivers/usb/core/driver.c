@@ -244,6 +244,8 @@ static const struct usb_device_id *usb_match_dynamic_id(struct usb_interface *in
 	return NULL;
 }
 
+static bool __read_mostly probe = true;
+module_param(probe, bool, S_IWUSR | S_IRUGO);
 
 /* called from driver core with dev locked */
 static int usb_probe_device(struct device *dev)
@@ -262,8 +264,12 @@ static int usb_probe_device(struct device *dev)
 	if (!udriver->supports_autosuspend)
 		error = usb_autoresume_device(udev);
 
-	if (!error)
-		error = udriver->probe(udev);
+	if (!error) {
+		if (probe)
+			error = udriver->probe(udev);
+		else
+			pr_info("usb: skipping device probe as requested\n");
+	}
 	return error;
 }
 
@@ -290,6 +296,11 @@ static int usb_probe_interface(struct device *dev)
 	int lpm_disable_error = -ENODEV;
 
 	dev_dbg(dev, "%s\n", __func__);
+
+	if (!probe) {
+		pr_info("usb: skipping interface probe as requested\n");
+		return 0;
+	}
 
 	intf->needs_binding = 0;
 

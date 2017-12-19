@@ -3201,37 +3201,78 @@ static bool bfq_bfqq_is_slow(struct bfq_data *bfqd, struct bfq_queue *bfqq,
  * whereas soft_rt_next_start is set to infinity for applications that do
  * not.
  *
- * Unfortunately, even a greedy application may happen to behave in an
- * isochronous way if the CPU load is high. In fact, the application may
- * stop issuing requests while the CPUs are busy serving other processes,
- * then restart, then stop again for a while, and so on. In addition, if
- * the disk achieves a low enough throughput with the request pattern
- * issued by the application (e.g., because the request pattern is random
- * and/or the device is slow), then the application may meet the above
- * bandwidth requirement too. To prevent such a greedy application to be
- * deemed as soft real-time, a further rule is used in the computation of
- * soft_rt_next_start: soft_rt_next_start must be higher than the current
- * time plus the maximum time for which the arrival of a request is waited
- * for when a sync queue becomes idle, namely bfqd->bfq_slice_idle.
- * This filters out greedy applications, as the latter issue instead their
- * next request as soon as possible after the last one has been completed
- * (in contrast, when a batch of requests is completed, a soft real-time
- * application spends some time processing data).
+ * Unfortunately, even a greedy (i.e., I/O-bound) application may
+ * happen to meet, occasionally or systematically, both the above
+ * bandwidth and isochrony requirements. This may happen at least in
+ * the following circumstances. First, if the CPU load is high. The
+ * application may stop issuing requests while the CPUs are busy
+ * serving other processes, then restart, then stop again for a while,
+ * and so on. The other circumstances are related to the storage
+ * device: the storage device is highly loaded or reaches a low-enough
+ * throughput with the I/O of the application (e.g., because the I/O
+ * is random and/or the device is slow). In all these cases, the
+ * I/O of the application may be simply slowed down enough to meet
+ * the bandwidth and isochrony requirements. To reduce the probability
+ * that greedy applications are deemed as soft real-time in these
+ * corner cases, a further rule is used in the computation of
+ * soft_rt_next_start: the return value of this function is forced to
+ * be higher than the maximum between the following two quantities.
  *
- * Unfortunately, the last filter may easily generate false positives if
- * only bfqd->bfq_slice_idle is used as a reference time interval and one
- * or both the following cases occur:
- * 1) HZ is so low that the duration of a jiffy is comparable to or higher
- *    than bfqd->bfq_slice_idle. This happens, e.g., on slow devices with
- *    HZ=100.
+ * (a) Current time plus: (1) the maximum time for which the arrival
+ *     of a request is waited for when a sync queue becomes idle,
+ *     namely bfqd->bfq_slice_idle, and (2) a few extra jiffies. We
+ *     postpone for a moment the reason for adding a few extra
+ *     jiffies; we get back to it after next item (b).  Lower-bounding
+ *     the return value of this function with the current time plus
+ *     bfqd->bfq_slice_idle tends to filter out greedy applications,
+ *     because the latter issue their next request as soon as possible
+ *     after the last one has been completed. In contrast, a soft
+ *     real-time application spends some time processing data, after a
+ *     batch of its requests has been completed.
+ *
+ * (b) Current value of bfqq->soft_rt_next_start. As pointed out
+ *     above, greedy applications may happen to meet both the
+ *     bandwidth and isochrony requirements under heavy CPU or
+ *     storage-device load. In more detail, in these scenarios, these
+ *     applications happen, only for limited time periods, to do I/O
+ *     slowly enough to meet all the requirements described so far,
+ *     including the filtering in above item (a). These slow-speed
+ *     time intervals are usually interspersed between other time
+ *     intervals during which these applications do I/O at a very high
+ *     speed. Fortunately, exactly because of the high speed of the
+ *     I/O in the high-speed intervals, the values returned by this
+ *     function happen to be so high, near the end of any such
+ *     high-speed interval, to be likely to fall *after* the end of
+ *     the low-speed time interval that follows. These high values are
+ *     stored in bfqq->soft_rt_next_start after each invocation of
+ *     this function. As a consequence, if the last value of
+ *     bfqq->soft_rt_next_start is constantly used to lower-bound the
+ *     next value that this function may return, then, from the very
+ *     beginning of a low-speed interval, bfqq->soft_rt_next_start is
+ *     likely to be constantly kept so high that any I/O request
+ *     issued during the low-speed interval is considered as arriving
+ *     to soon for the application to be deemed as soft
+ *     real-time. Then, in the high-speed interval that follows, the
+ *     application will not be deemed as soft real-time, just because
+ *     it will do I/O at a high speed. And so on.
+ *
+ * Getting back to the filtering in item (a), in the following two
+ * cases this filtering might be easily passed by a greedy
+ * application, if the reference quantity was just
+ * bfqd->bfq_slice_idle:
+ * 1) HZ is so low that the duration of a jiffy is comparable to or
+ *    higher than bfqd->bfq_slice_idle. This happens, e.g., on slow
+ *    devices with HZ=100. The time granularity may be so coarse
+ *    that the approximation, in jiffies, of bfqd->bfq_slice_idle
+ *    is rather lower than the exact value.
  * 2) jiffies, instead of increasing at a constant rate, may stop increasing
  *    for a while, then suddenly 'jump' by several units to recover the lost
  *    increments. This seems to happen, e.g., inside virtual machines.
- * To address this issue, we do not use as a reference time interval just
- * bfqd->bfq_slice_idle, but bfqd->bfq_slice_idle plus a few jiffies. In
- * particular we add the minimum number of jiffies for which the filter
- * seems to be quite precise also in embedded systems and KVM/QEMU virtual
- * machines.
+ * To address this issue, in the filtering in (a) we do not use as a
+ * reference time interval just bfqd->bfq_slice_idle, but
+ * bfqd->bfq_slice_idle plus a few jiffies. In particular, we add the
+ * minimum number of jiffies for which the filter seems to be quite
+ * precise also in embedded systems and KVM/QEMU virtual machines.
  */
 static unsigned long bfq_bfqq_softrt_next_start(struct bfq_data *bfqd,
 						struct bfq_queue *bfqq)
@@ -3243,10 +3284,11 @@ static unsigned long bfq_bfqq_softrt_next_start(struct bfq_data *bfqd,
 		     jiffies_to_msecs(HZ * bfqq->service_from_backlogged /
 				      bfqd->bfq_wr_max_softrt_rate));
 
-	return max(bfqq->last_idle_bklogged +
-		   HZ * bfqq->service_from_backlogged /
-		   bfqd->bfq_wr_max_softrt_rate,
-		   jiffies + nsecs_to_jiffies(bfqq->bfqd->bfq_slice_idle) + 4);
+	return max3(bfqq->soft_rt_next_start,
+		    bfqq->last_idle_bklogged +
+		    HZ * bfqq->service_from_backlogged /
+		    bfqd->bfq_wr_max_softrt_rate,
+		    jiffies + nsecs_to_jiffies(bfqq->bfqd->bfq_slice_idle) + 4);
 }
 
 /**
@@ -3976,20 +4018,20 @@ static struct request *__bfq_dispatch_request(struct blk_mq_hw_ctx *hctx)
 			/*
 			 * TESTING: reset DISP_LIST flag, because: 1)
 			 * this rq this request has passed through
-			 * get_rq_private, 2) then it will have
-			 * put_rq_private invoked on it, and 3) in
-			 * put_rq_private we use this flag to check
-			 * that put_rq_private is not invoked on
-			 * requests for which get_rq_private has been
-			 * invoked.
+			 * bfq_prepare_request, 2) then it will have
+			 * bfq_finish_request invoked on it, and 3) in
+			 * bfq_finish_request we use this flag to check
+			 * that bfq_finish_request is not invoked on
+			 * requests for which bfq_prepare_request has
+			 * been invoked.
 			 */
 			rq->rq_flags &= ~RQF_DISP_LIST;
 			goto inc_in_driver_start_rq;
 		}
 
 		/*
-		 * We exploit the put_rq_private hook to decrement
-		 * rq_in_driver, but put_rq_private will not be
+		 * We exploit the bfq_finish_request hook to decrement
+		 * rq_in_driver, but bfq_finish_request will not be
 		 * invoked on this request. So, to avoid unbalance,
 		 * just start this request, without incrementing
 		 * rq_in_driver. As a negative consequence,
@@ -3998,14 +4040,14 @@ static struct request *__bfq_dispatch_request(struct blk_mq_hw_ctx *hctx)
 		 * bfq_schedule_dispatch to be invoked uselessly.
 		 *
 		 * As for implementing an exact solution, the
-		 * put_request hook, if defined, is probably invoked
-		 * also on this request. So, by exploiting this hook,
-		 * we could 1) increment rq_in_driver here, and 2)
-		 * decrement it in put_request. Such a solution would
-		 * let the value of the counter be always accurate,
-		 * but it would entail using an extra interface
-		 * function. This cost seems higher than the benefit,
-		 * being the frequency of non-elevator-private
+		 * bfq_finish_request hook, if defined, is probably
+		 * invoked also on this request. So, by exploiting
+		 * this hook, we could 1) increment rq_in_driver here,
+		 * and 2) decrement it in bfq_finish_request. Such a
+		 * solution would let the value of the counter be
+		 * always accurate, but it would entail using an extra
+		 * interface function. This cost seems higher than the
+		 * benefit, being the frequency of non-elevator-private
 		 * requests very low.
 		 */
 		goto start_rq;
@@ -4395,10 +4437,15 @@ static void bfq_init_bfqq(struct bfq_data *bfqd, struct bfq_queue *bfqq,
 	bfqq->split_time = bfq_smallest_from_now();
 
 	/*
-	 * Set to the value for which bfqq will not be deemed as
-	 * soft rt when it becomes backlogged.
+	 * To not forget the possibly high bandwidth consumed by a
+	 * process/queue in the recent past,
+	 * bfq_bfqq_softrt_next_start() returns a value at least equal
+	 * to the current value of bfqq->soft_rt_next_start (see
+	 * comments on bfq_bfqq_softrt_next_start).  Set
+	 * soft_rt_next_start to now, to mean that bfqq has consumed
+	 * no bandwidth so far.
 	 */
-	bfqq->soft_rt_next_start = bfq_greatest_from_now();
+	bfqq->soft_rt_next_start = jiffies;
 
 	/* first request is almost certainly seeky */
 	bfqq->seek_history = 1;
@@ -4916,7 +4963,7 @@ static void bfq_completed_request(struct bfq_queue *bfqq, struct bfq_data *bfqd)
 	}
 }
 
-static void bfq_put_rq_priv_body(struct bfq_queue *bfqq)
+static void bfq_finish_request_body(struct bfq_queue *bfqq)
 {
 	bfq_log_bfqq(bfqq->bfqd, bfqq,
 		     "put_request_body: allocated %d", bfqq->allocated);
@@ -4972,7 +5019,7 @@ static void bfq_finish_request(struct request *rq)
 		spin_lock_irqsave(&bfqd->lock, flags);
 
 		bfq_completed_request(bfqq, bfqd);
-		bfq_put_rq_priv_body(bfqq);
+		bfq_finish_request_body(bfqq);
 
 		spin_unlock_irqrestore(&bfqd->lock, flags);
 	} else {
@@ -4995,7 +5042,7 @@ static void bfq_finish_request(struct request *rq)
 			bfqg_stats_update_io_remove(bfqq_group(bfqq),
 						    rq->cmd_flags);
 		}
-		bfq_put_rq_priv_body(bfqq);
+		bfq_finish_request_body(bfqq);
 	}
 
 	rq->elv.priv[0] = NULL;

@@ -332,6 +332,11 @@ struct bfq_queue {
 	 */
 	unsigned long service_from_backlogged;
 	/*
+	 * Cumulative service received from the @bfq_queue since its
+	 * last transition to weight-raised state.
+	 */
+	unsigned long service_from_wr;
+	/*
 	 * Value of wr start time when switching to soft rt
 	 */
 	unsigned long wr_start_at_switch_to_srt;
@@ -619,6 +624,18 @@ struct bfq_data {
 	struct bfq_queue *bio_bfqq;
 	/* Extra flag used only for TESTING */
 	bool bio_bfqq_set;
+
+	/*
+	 * Cached sbitmap shift, used to compute depth limits in
+	 * bfq_update_depths.
+	 */
+	unsigned int sb_shift;
+
+	/*
+	 * Depth limits used in bfq_limit_depth (see comments on the
+	 * function)
+	 */
+	unsigned int word_depths[2][2];
 };
 
 enum bfqq_state_flags {

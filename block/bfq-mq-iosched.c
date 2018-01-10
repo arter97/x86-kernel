@@ -4385,10 +4385,11 @@ static void bfq_put_queue(struct bfq_queue *bfqq)
 	if (bfqq->bfqd)
 		bfq_log_bfqq(bfqq->bfqd, bfqq, "put_queue: %p freed", bfqq);
 
-	kmem_cache_free(bfq_pool, bfqq);
 #ifdef BFQ_GROUP_IOSCHED_ENABLED
+	bfq_log_bfqq(bfqq->bfqd, bfqq, "[%s] putting blkg and bfqg %p\n", __func__, bfqg);
 	bfqg_and_blkg_put(bfqg);
 #endif
+	kmem_cache_free(bfq_pool, bfqq);
 }
 
 static void bfq_put_cooperator(struct bfq_queue *bfqq)
@@ -5506,6 +5507,9 @@ static void bfq_exit_queue(struct elevator_queue *e)
 	hrtimer_cancel(&bfqd->idle_slice_timer);
 
 	BUG_ON(hrtimer_active(&bfqd->idle_slice_timer));
+
+	/* release oom-queue reference to root group */
+	bfqg_and_blkg_put(bfqd->root_group);
 
 #ifdef BFQ_GROUP_IOSCHED_ENABLED
 	blkcg_deactivate_policy(bfqd->queue, &blkcg_policy_bfq);

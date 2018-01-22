@@ -517,6 +517,9 @@ choice
 	config OPTIMIZE_FOR_5820K
 		bool "Intel Core i7-5820K (Haswell)"
 
+	config OPTIMIZE_FOR_4170
+		bool "Intel Core i3-4170 (Haswell)"
+
 endchoice
 
 #

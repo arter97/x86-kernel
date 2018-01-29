@@ -2,8 +2,8 @@
 VERSION = 4
 PATCHLEVEL = 17
 SUBLEVEL = 0
-EXTRAVERSION =
-NAME = Merciless Moray
+EXTRAVERSION = -zen
+NAME = Thermonuclear Telephone
 
 # *DOCUMENTATION*
 # To see a list of typical targets execute "make help"

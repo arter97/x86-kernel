@@ -16,6 +16,7 @@
 #include <linux/bitmap.h>
 #include <linux/slab.h>
 #include <linux/seq_file.h>
+#include <linux/iversion.h>
 
 /* Mark the filesystem dirty, so that chkdsk checks it when os/2 booted */
 
@@ -235,7 +236,7 @@ static struct inode *hpfs_alloc_inode(struct super_block *sb)
 	ei = kmem_cache_alloc(hpfs_inode_cachep, GFP_NOFS);
 	if (!ei)
 		return NULL;
-	ei->vfs_inode.i_version = 1;
+	inode_set_iversion(&ei->vfs_inode, 1);
 	return &ei->vfs_inode;
 }
 

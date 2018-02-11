@@ -8,6 +8,7 @@
  */
 
 #include <linux/slab.h>
+#include <linux/iversion.h>
 #include "hpfs_fn.h"
 
 static int hpfs_dir_release(struct inode *inode, struct file *filp)
@@ -150,7 +151,7 @@ static int hpfs_readdir(struct file *file, struct dir_context *ctx)
 			if (unlikely(ret < 0))
 				goto out;
 			ctx->pos = ((loff_t) hpfs_de_as_down_as_possible(inode->i_sb, hpfs_inode->i_dno) << 4) + 1;
-			file->f_version = inode->i_version;
+			file->f_version = inode_query_iversion(inode);
 		}
 		next_pos = ctx->pos;
 		if (!(de = map_pos_dirent(inode, &next_pos, &qbh))) {

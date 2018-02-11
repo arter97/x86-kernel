@@ -34,6 +34,7 @@
 #include <linux/uaccess.h>
 #include <linux/seq_file.h>
 #include <linux/blkdev.h>
+#include <linux/iversion.h>
 
 #include "jfs_incore.h"
 #include "jfs_filsys.h"
@@ -853,7 +854,7 @@ out:
 	}
 	if (inode->i_size < off+len-towrite)
 		i_size_write(inode, off+len-towrite);
-	inode->i_version++;
+	inode_inc_iversion(inode);
 	inode->i_mtime = inode->i_ctime = current_time(inode);
 	mark_inode_dirty(inode);
 	inode_unlock(inode);

@@ -7,6 +7,7 @@
  *  handling directory dnode tree - adding, deleteing & searching for dirents
  */
 
+#include <linux/iversion.h>
 #include "hpfs_fn.h"
 
 static loff_t get_pos(struct dnode *d, struct hpfs_dirent *fde)
@@ -419,7 +420,7 @@ int hpfs_add_dirent(struct inode *i,
 		c = 1;
 		goto ret;
 	}	
-	i->i_version++;
+	inode_inc_iversion(i);
 	c = hpfs_add_to_dnode(i, dno, name, namelen, new_de, 0);
 	ret:
 	return c;
@@ -726,7 +727,7 @@ int hpfs_remove_dirent(struct inode *i, dnode_secno dno, struct hpfs_dirent *de,
 			return 2;
 		}
 	}
-	i->i_version++;
+	inode_inc_iversion(i);
 	for_all_poss(i, hpfs_pos_del, (t = get_pos(dnode, de)) + 1, 1);
 	hpfs_delete_de(i->i_sb, dnode, de);
 	hpfs_mark_4buffers_dirty(qbh);

@@ -88,8 +88,9 @@ config CFG80211_CERTIFICATION_ONUS
 	  and approved environment by your local regulatory agency.
 
 config CFG80211_REQUIRE_SIGNED_REGDB
-	bool "require regdb signature" if CFG80211_CERTIFICATION_ONUS
+	bool "require regdb signature"
 	default y
+	depends on CFG80211_CERTIFICATION_ONUS
 	select SYSTEM_DATA_VERIFICATION
 	help
 	  Require that in addition to the "regulatory.db" file a
@@ -98,7 +99,7 @@ config CFG80211_REQUIRE_SIGNED_REGDB
 	  keys in the certs/ directory.
 
 config CFG80211_USE_KERNEL_REGDB_KEYS
-	bool "allow regdb keys shipped with the kernel" if CFG80211_CERTIFICATION_ONUS
+	bool "allow regdb keys shipped with the kernel"
 	default y
 	depends on CFG80211_REQUIRE_SIGNED_REGDB
 	help
@@ -110,7 +111,7 @@ config CFG80211_USE_KERNEL_REGDB_KEYS
 	  database maintainer.
 
 config CFG80211_EXTRA_REGDB_KEYDIR
-	string "additional regdb key directory" if CFG80211_CERTIFICATION_ONUS
+	string "additional regdb key directory"
 	depends on CFG80211_REQUIRE_SIGNED_REGDB
 	help
 	  If selected, point to a directory with DER-encoded X.509

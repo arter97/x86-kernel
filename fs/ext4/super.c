@@ -3663,6 +3663,12 @@ static int ext4_fill_super(struct super_block *sb, void *data, int silent)
 			ext4_msg(sb, KERN_INFO, "mounting ext2 file system "
 				 "using the ext4 subsystem");
 		else {
+			/*
+			 * If we're probing be silent, if this looks like
+			 * it's actually an ext[34] filesystem.
+			 */
+			if (silent && ext4_feature_set_ok(sb, sb_rdonly(sb)))
+				goto failed_mount;
 			ext4_msg(sb, KERN_ERR, "couldn't mount as ext2 due "
 				 "to feature incompatibilities");
 			goto failed_mount;
@@ -3674,6 +3680,12 @@ static int ext4_fill_super(struct super_block *sb, void *data, int silent)
 			ext4_msg(sb, KERN_INFO, "mounting ext3 file system "
 				 "using the ext4 subsystem");
 		else {
+			/*
+			 * If we're probing be silent, if this looks like
+			 * it's actually an ext4 filesystem.
+			 */
+			if (silent && ext4_feature_set_ok(sb, sb_rdonly(sb)))
+				goto failed_mount;
 			ext4_msg(sb, KERN_ERR, "couldn't mount as ext3 due "
 				 "to feature incompatibilities");
 			goto failed_mount;
@@ -5868,5 +5880,6 @@ static void __exit ext4_exit_fs(void)
 MODULE_AUTHOR("Remy Card, Stephen Tweedie, Andrew Morton, Andreas Dilger, Theodore Ts'o and others");
 MODULE_DESCRIPTION("Fourth Extended Filesystem");
 MODULE_LICENSE("GPL");
+MODULE_SOFTDEP("pre: crc32c");
 module_init(ext4_init_fs)
 module_exit(ext4_exit_fs)

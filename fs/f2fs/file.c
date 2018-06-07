@@ -95,7 +95,8 @@ static int f2fs_vm_page_mkwrite(struct vm_fault *vmf)
 	/* page is wholly or partially inside EOF */
 	if (((loff_t)(page->index + 1) << PAGE_SHIFT) >
 						i_size_read(inode)) {
-		unsigned offset;
+		loff_t offset;
+
 		offset = i_size_read(inode) & ~PAGE_MASK;
 		zero_user_segment(page, offset, PAGE_SIZE);
 	}
@@ -413,6 +414,7 @@ static loff_t f2fs_seek_block(struct file *file, loff_t offset, int whence)
 				dn.ofs_in_node++, pgofs++,
 				data_ofs = (loff_t)pgofs << PAGE_SHIFT) {
 			block_t blkaddr;
+
 			blkaddr = datablock_addr(dn.inode,
 					dn.node_page, dn.ofs_in_node);
 
@@ -503,6 +505,7 @@ void f2fs_truncate_data_blocks_range(struct dnode_of_data *dn, int count)
 
 	for (; count > 0; count--, addr++, dn->ofs_in_node++) {
 		block_t blkaddr = le32_to_cpu(*addr);
+
 		if (blkaddr == NULL_ADDR)
 			continue;
 
@@ -540,7 +543,7 @@ void f2fs_truncate_data_blocks(struct dnode_of_data *dn)
 static int truncate_partial_data_page(struct inode *inode, u64 from,
 								bool cache_only)
 {
-	unsigned offset = from & (PAGE_SIZE - 1);
+	loff_t offset = from & (PAGE_SIZE - 1);
 	pgoff_t index = from >> PAGE_SHIFT;
 	struct address_space *mapping = inode->i_mapping;
 	struct page *page;
@@ -1477,7 +1480,7 @@ static int expand_inode_data(struct inode *inode, loff_t offset,
 		last_off = map.m_lblk + map.m_len - 1;
 
 		/* update new size to the failed position */
-		new_size = (last_off == pg_end) ? offset + len:
+		new_size = (last_off == pg_end) ? offset + len :
 					(loff_t)(last_off + 1) << PAGE_SHIFT;
 	} else {
 		new_size = ((loff_t)pg_end << PAGE_SHIFT) + off_end;
@@ -1559,11 +1562,11 @@ static int f2fs_release_file(struct inode *inode, struct file *filp)
 	if (f2fs_is_atomic_file(inode))
 		f2fs_drop_inmem_pages(inode);
 	if (f2fs_is_volatile_file(inode)) {
-		clear_inode_flag(inode, FI_VOLATILE_FILE);
-		stat_dec_volatile_write(inode);
 		set_inode_flag(inode, FI_DROP_CACHE);
 		filemap_fdatawrite(inode->i_mapping);
 		clear_inode_flag(inode, FI_DROP_CACHE);
+		clear_inode_flag(inode, FI_VOLATILE_FILE);
+		stat_dec_volatile_write(inode);
 	}
 	return 0;
 }
@@ -2122,7 +2125,7 @@ static int f2fs_defragment_range(struct f2fs_sb_info *sbi,
 	struct inode *inode = file_inode(filp);
 	struct f2fs_map_blocks map = { .m_next_extent = NULL,
 					.m_seg_type = NO_CHECK_TYPE };
-	struct extent_info ei = {0,0,0};
+	struct extent_info ei = {0, 0, 0};
 	pgoff_t pg_start, pg_end, next_pgofs;
 	unsigned int blk_per_seg = sbi->blocks_per_seg;
 	unsigned int total = 0, sec_num;

@@ -185,11 +185,11 @@ static unsigned long sugov_aggregate_util(struct sugov_cpu *sg_cpu)
 	struct rq *rq = cpu_rq(sg_cpu->cpu);
 	unsigned long util;
 
-	if (rq->rt.rt_nr_running) {
+	if (rq_rt_nr_running(rq)) {
 		util = sg_cpu->max;
 	} else {
 		util = sg_cpu->util_dl;
-		if (rq->cfs.h_nr_running)
+		if (rq_h_nr_running(rq))
 			util += sg_cpu->util_cfs;
 	}
 
@@ -474,7 +474,11 @@ static int sugov_kthread_create(struct sugov_policy *sg_policy)
 	struct task_struct *thread;
 	struct sched_attr attr = {
 		.size		= sizeof(struct sched_attr),
+#ifdef CONFIG_SCHED_MUQSS
+		.sched_policy	= SCHED_RR,
+#else
 		.sched_policy	= SCHED_DEADLINE,
+#endif
 		.sched_flags	= SCHED_FLAG_SUGOV,
 		.sched_nice	= 0,
 		.sched_priority	= 0,

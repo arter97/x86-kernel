@@ -621,7 +621,6 @@ enum {
 
 enum {
 	GC_FAILURE_PIN,
-	GC_FAILURE_ATOMIC,
 	MAX_GC_FAILURE
 };
 
@@ -1066,6 +1065,7 @@ enum {
 	SBI_POR_DOING,				/* recovery is doing or not */
 	SBI_NEED_SB_WRITE,			/* need to recover superblock */
 	SBI_NEED_CP,				/* need to checkpoint */
+	SBI_DISABLE_ATOMIC_WRITE,		/* turn off atomic write */
 };
 
 enum {
@@ -2829,7 +2829,7 @@ void f2fs_destroy_node_manager_caches(void);
  */
 bool f2fs_need_SSR(struct f2fs_sb_info *sbi);
 void f2fs_register_inmem_page(struct inode *inode, struct page *page);
-void f2fs_drop_inmem_pages_all(struct f2fs_sb_info *sbi, bool gc_failure);
+void f2fs_disable_atomic_write(struct f2fs_sb_info *sbi);
 void f2fs_drop_inmem_pages(struct inode *inode);
 void f2fs_drop_inmem_page(struct inode *inode, struct page *page);
 int f2fs_commit_inmem_pages(struct inode *inode);

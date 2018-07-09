@@ -2191,8 +2191,9 @@ static int f2fs_write_begin(struct file *file, struct address_space *mapping,
 	trace_f2fs_write_begin(inode, pos, len, flags);
 
 	if (f2fs_is_atomic_file(inode) &&
-			!f2fs_available_free_memory(sbi, INMEM_PAGES)) {
-		err = -ENOMEM;
+			(is_sbi_flag_set(sbi, SBI_DISABLE_ATOMIC_WRITE) ||
+			!f2fs_available_free_memory(sbi, INMEM_PAGES))) {
+		err = -EINVAL;
 		drop_atomic = true;
 		goto fail;
 	}
@@ -2275,7 +2276,7 @@ fail:
 	f2fs_put_page(page, 1);
 	f2fs_write_failed(mapping, pos + len);
 	if (drop_atomic)
-		f2fs_drop_inmem_pages_all(sbi, false);
+		f2fs_disable_atomic_write(sbi);
 	return err;
 }
 

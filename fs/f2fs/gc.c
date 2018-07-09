@@ -631,7 +631,6 @@ static void move_data_block(struct inode *inode, block_t bidx,
 		goto out;
 
 	if (f2fs_is_atomic_file(inode)) {
-		F2FS_I(inode)->i_gc_failures[GC_FAILURE_ATOMIC]++;
 		F2FS_I_SB(inode)->skipped_atomic_files[gc_type]++;
 		goto out;
 	}
@@ -747,7 +746,6 @@ static void move_data_page(struct inode *inode, block_t bidx, int gc_type,
 		goto out;
 
 	if (f2fs_is_atomic_file(inode)) {
-		F2FS_I(inode)->i_gc_failures[GC_FAILURE_ATOMIC]++;
 		F2FS_I_SB(inode)->skipped_atomic_files[gc_type]++;
 		goto out;
 	}
@@ -1102,7 +1100,7 @@ gc_more:
 		if (has_not_enough_free_secs(sbi, sec_freed, 0)) {
 			if (skipped_round > MAX_SKIP_ATOMIC_COUNT &&
 				skipped_round * 2 >= round)
-				f2fs_drop_inmem_pages_all(sbi, true);
+				f2fs_disable_atomic_write(sbi);
 			segno = NULL_SEGNO;
 			goto gc_more;
 		}

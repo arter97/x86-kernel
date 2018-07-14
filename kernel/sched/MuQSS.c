@@ -5939,8 +5939,8 @@ static int __set_cpus_allowed_ptr(struct task_struct *p,
 	bool queued = false, running_wrong = false, kthread;
 	struct cpumask old_mask;
 	unsigned long flags;
+	int cpu, ret = 0;
 	struct rq *rq;
-	int ret = 0;
 
 	rq = task_rq_lock(p, &flags);
 	update_rq_clock(rq);
@@ -5991,13 +5991,14 @@ static int __set_cpus_allowed_ptr(struct task_struct *p,
 	if (task_running(rq, p)) {
 		/* Task is running on the wrong cpu now, reschedule it. */
 		if (rq == this_rq()) {
+			cpu = cpumask_any_and(cpu_valid_mask, new_mask);
+			set_task_cpu(p, cpu);
 			set_tsk_need_resched(p);
 			running_wrong = true;
 		} else
 			resched_task(p);
 	} else {
-		int cpu = cpumask_any_and(cpu_valid_mask, new_mask);
-
+		cpu = cpumask_any_and(cpu_valid_mask, new_mask);
 		if (queued) {
 			/*
 			 * Switch runqueue locks after dequeueing the task

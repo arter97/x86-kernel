@@ -274,11 +274,14 @@ next:
 	return err;
 }
 
-void f2fs_drop_inmem_pages_all(struct f2fs_sb_info *sbi, bool gc_failure)
+void f2fs_disable_atomic_write(struct f2fs_sb_info *sbi)
 {
 	struct list_head *head = &sbi->inode_list[ATOMIC_FILE];
 	struct inode *inode;
 	struct f2fs_inode_info *fi;
+
+	/* just turn it off */
+	set_sbi_flag(sbi, SBI_DISABLE_ATOMIC_WRITE);
 next:
 	spin_lock(&sbi->inode_lock[ATOMIC_FILE]);
 	if (list_empty(head)) {
@@ -290,17 +293,16 @@ next:
 	spin_unlock(&sbi->inode_lock[ATOMIC_FILE]);
 
 	if (inode) {
-		if (gc_failure) {
-			if (fi->i_gc_failures[GC_FAILURE_ATOMIC])
-				goto drop;
-			goto skip;
+		inode_lock(inode);
+		/* need to check whether it was already revoked */
+		if (f2fs_is_atomic_file(inode)) {
+			f2fs_drop_inmem_pages(inode);
+			set_inode_flag(inode, FI_ATOMIC_REVOKE_REQUEST);
 		}
-drop:
-		set_inode_flag(inode, FI_ATOMIC_REVOKE_REQUEST);
-		f2fs_drop_inmem_pages(inode);
+		inode_unlock(inode);
 		iput(inode);
 	}
-skip:
+
 	congestion_wait(BLK_RW_ASYNC, HZ/50);
 	cond_resched();
 	goto next;
@@ -320,7 +322,6 @@ void f2fs_drop_inmem_pages(struct inode *inode)
 	mutex_unlock(&fi->inmem_lock);
 
 	clear_inode_flag(inode, FI_ATOMIC_FILE);
-	fi->i_gc_failures[GC_FAILURE_ATOMIC] = 0;
 	stat_dec_atomic_write(inode);
 }
 
@@ -934,6 +935,7 @@ static void __init_discard_policy(struct f2fs_sb_info *sbi,
 	/* common policy */
 	dpolicy->type = discard_type;
 	dpolicy->sync = true;
+	dpolicy->ordered = false;
 	dpolicy->granularity = granularity;
 
 	dpolicy->max_requests = DEF_MAX_DISCARD_REQUEST;
@@ -945,6 +947,7 @@ static void __init_discard_policy(struct f2fs_sb_info *sbi,
 		dpolicy->max_interval = DEF_MAX_DISCARD_ISSUE_TIME;
 		dpolicy->io_aware = true;
 		dpolicy->sync = false;
+		dpolicy->ordered = true;
 		if (utilization(sbi) > DEF_DISCARD_URGENT_UTIL) {
 			dpolicy->granularity = 1;
 			dpolicy->max_interval = DEF_MIN_DISCARD_ISSUE_TIME;
@@ -1181,6 +1184,63 @@ static int __queue_discard_cmd(struct f2fs_sb_info *sbi,
 	return 0;
 }
 
+static unsigned int __issue_discard_cmd_orderly(struct f2fs_sb_info *sbi,
+					struct discard_policy *dpolicy)
+{
+	struct discard_cmd_control *dcc = SM_I(sbi)->dcc_info;
+	struct discard_cmd *prev_dc = NULL, *next_dc = NULL;
+	struct rb_node **insert_p = NULL, *insert_parent = NULL;
+	struct discard_cmd *dc;
+	struct blk_plug plug;
+	unsigned int pos = dcc->next_pos;
+	unsigned int issued = 0;
+	bool io_interrupted = false;
+
+	mutex_lock(&dcc->cmd_lock);
+	dc = (struct discard_cmd *)f2fs_lookup_rb_tree_ret(&dcc->root,
+					NULL, pos,
+					(struct rb_entry **)&prev_dc,
+					(struct rb_entry **)&next_dc,
+					&insert_p, &insert_parent, true);
+	if (!dc)
+		dc = next_dc;
+
+	blk_start_plug(&plug);
+
+	while (dc) {
+		struct rb_node *node;
+
+		if (dc->state != D_PREP)
+			goto next;
+
+		if (dpolicy->io_aware && !is_idle(sbi)) {
+			io_interrupted = true;
+			break;
+		}
+
+		dcc->next_pos = dc->lstart + dc->len;
+		__submit_discard_cmd(sbi, dpolicy, dc);
+
+		if (++issued >= dpolicy->max_requests)
+			break;
+next:
+		node = rb_next(&dc->rb_node);
+		dc = rb_entry_safe(node, struct discard_cmd, rb_node);
+	}
+
+	blk_finish_plug(&plug);
+
+	if (!dc)
+		dcc->next_pos = 0;
+
+	mutex_unlock(&dcc->cmd_lock);
+
+	if (!issued && io_interrupted)
+		issued = -1;
+
+	return issued;
+}
+
 static int __issue_discard_cmd(struct f2fs_sb_info *sbi,
 					struct discard_policy *dpolicy)
 {
@@ -1188,12 +1248,16 @@ static int __issue_discard_cmd(struct f2fs_sb_info *sbi,
 	struct list_head *pend_list;
 	struct discard_cmd *dc, *tmp;
 	struct blk_plug plug;
-	int i, iter = 0, issued = 0;
+	int i, issued = 0;
 	bool io_interrupted = false;
 
 	for (i = MAX_PLIST_NUM - 1; i >= 0; i--) {
 		if (i + 1 < dpolicy->granularity)
 			break;
+
+		if (i < DEFAULT_DISCARD_GRANULARITY && dpolicy->ordered)
+			return __issue_discard_cmd_orderly(sbi, dpolicy);
+
 		pend_list = &dcc->pend_list[i];
 
 		mutex_lock(&dcc->cmd_lock);
@@ -1208,20 +1272,19 @@ static int __issue_discard_cmd(struct f2fs_sb_info *sbi,
 			if (dpolicy->io_aware && i < dpolicy->io_aware_gran &&
 								!is_idle(sbi)) {
 				io_interrupted = true;
-				goto skip;
+				break;
 			}
 
 			__submit_discard_cmd(sbi, dpolicy, dc);
-			issued++;
-skip:
-			if (++iter >= dpolicy->max_requests)
+
+			if (++issued >= dpolicy->max_requests)
 				break;
 		}
 		blk_finish_plug(&plug);
 next:
 		mutex_unlock(&dcc->cmd_lock);
 
-		if (iter >= dpolicy->max_requests)
+		if (issued >= dpolicy->max_requests || io_interrupted)
 			break;
 	}
 
@@ -1319,21 +1382,22 @@ next:
 	return trimmed;
 }
 
-static void __wait_all_discard_cmd(struct f2fs_sb_info *sbi,
+static unsigned int __wait_all_discard_cmd(struct f2fs_sb_info *sbi,
 						struct discard_policy *dpolicy)
 {
 	struct discard_policy dp;
+	unsigned int discard_blks;
 
-	if (dpolicy) {
-		__wait_discard_cmd_range(sbi, dpolicy, 0, UINT_MAX);
-		return;
-	}
+	if (dpolicy)
+		return __wait_discard_cmd_range(sbi, dpolicy, 0, UINT_MAX);
 
 	/* wait all */
 	__init_discard_policy(sbi, &dp, DPOLICY_FSTRIM, 1);
-	__wait_discard_cmd_range(sbi, &dp, 0, UINT_MAX);
+	discard_blks = __wait_discard_cmd_range(sbi, &dp, 0, UINT_MAX);
 	__init_discard_policy(sbi, &dp, DPOLICY_UMOUNT, 1);
-	__wait_discard_cmd_range(sbi, &dp, 0, UINT_MAX);
+	discard_blks += __wait_discard_cmd_range(sbi, &dp, 0, UINT_MAX);
+
+	return discard_blks;
 }
 
 /* This should be covered by global mutex, &sit_i->sentry_lock */
@@ -1386,6 +1450,8 @@ bool f2fs_wait_discard_bios(struct f2fs_sb_info *sbi)
 
 	/* just to make sure there is no pending discard commands */
 	__wait_all_discard_cmd(sbi, NULL);
+
+	f2fs_bug_on(sbi, atomic_read(&dcc->discard_cmd_cnt));
 	return dropped;
 }
 
@@ -1751,6 +1817,7 @@ static int create_discard_cmd_control(struct f2fs_sb_info *sbi)
 	dcc->nr_discards = 0;
 	dcc->max_discards = MAIN_SEGS(sbi) << sbi->log_blocks_per_seg;
 	dcc->undiscard_blks = 0;
+	dcc->next_pos = 0;
 	dcc->root = RB_ROOT;
 
 	init_waitqueue_head(&dcc->discard_wait_queue);
@@ -2366,7 +2433,7 @@ bool f2fs_exist_trim_candidates(struct f2fs_sb_info *sbi,
 	return has_candidate;
 }
 
-static void __issue_discard_cmd_range(struct f2fs_sb_info *sbi,
+static unsigned int __issue_discard_cmd_range(struct f2fs_sb_info *sbi,
 					struct discard_policy *dpolicy,
 					unsigned int start, unsigned int end)
 {
@@ -2376,6 +2443,7 @@ static void __issue_discard_cmd_range(struct f2fs_sb_info *sbi,
 	struct discard_cmd *dc;
 	struct blk_plug plug;
 	int issued;
+	unsigned int trimmed = 0;
 
 next:
 	issued = 0;
@@ -2411,7 +2479,7 @@ next:
 
 			blk_finish_plug(&plug);
 			mutex_unlock(&dcc->cmd_lock);
-			__wait_all_discard_cmd(sbi, NULL);
+			trimmed += __wait_all_discard_cmd(sbi, NULL);
 			congestion_wait(BLK_RW_ASYNC, HZ/50);
 			goto next;
 		}
@@ -2425,6 +2493,8 @@ skip:
 
 	blk_finish_plug(&plug);
 	mutex_unlock(&dcc->cmd_lock);
+
+	return trimmed;
 }
 
 int f2fs_trim_fs(struct f2fs_sb_info *sbi, struct fstrim_range *range)
@@ -2469,23 +2539,25 @@ int f2fs_trim_fs(struct f2fs_sb_info *sbi, struct fstrim_range *range)
 	if (err)
 		goto out;
 
-	start_block = START_BLOCK(sbi, start_segno);
-	end_block = START_BLOCK(sbi, end_segno + 1);
-
-	__init_discard_policy(sbi, &dpolicy, DPOLICY_FSTRIM, cpc.trim_minlen);
-	__issue_discard_cmd_range(sbi, &dpolicy, start_block, end_block);
-
 	/*
 	 * We filed discard candidates, but actually we don't need to wait for
 	 * all of them, since they'll be issued in idle time along with runtime
 	 * discard option. User configuration looks like using runtime discard
 	 * or periodic fstrim instead of it.
 	 */
-	if (!test_opt(sbi, DISCARD)) {
-		trimmed = __wait_discard_cmd_range(sbi, &dpolicy,
+	if (test_opt(sbi, DISCARD))
+		goto out;
+
+	start_block = START_BLOCK(sbi, start_segno);
+	end_block = START_BLOCK(sbi, end_segno + 1);
+
+	__init_discard_policy(sbi, &dpolicy, DPOLICY_FSTRIM, cpc.trim_minlen);
+	trimmed = __issue_discard_cmd_range(sbi, &dpolicy,
 					start_block, end_block);
-		range->len = F2FS_BLK_TO_BYTES(trimmed);
-	}
+
+	trimmed += __wait_discard_cmd_range(sbi, &dpolicy,
+					start_block, end_block);
+	range->len = F2FS_BLK_TO_BYTES(trimmed);
 out:
 	return err;
 }

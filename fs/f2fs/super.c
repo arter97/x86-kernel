@@ -41,7 +41,7 @@ static struct kmem_cache *f2fs_inode_cachep;
 
 #ifdef CONFIG_F2FS_FAULT_INJECTION
 
-char *fault_name[FAULT_MAX] = {
+char *f2fs_fault_name[FAULT_MAX] = {
 	[FAULT_KMALLOC]		= "kmalloc",
 	[FAULT_KVMALLOC]	= "kvmalloc",
 	[FAULT_PAGE_ALLOC]	= "page alloc",
@@ -57,8 +57,7 @@ char *fault_name[FAULT_MAX] = {
 	[FAULT_CHECKPOINT]	= "checkpoint error",
 };
 
-static void f2fs_build_fault_attr(struct f2fs_sb_info *sbi,
-						unsigned int rate)
+void f2fs_build_fault_attr(struct f2fs_sb_info *sbi, unsigned int rate)
 {
 	struct f2fs_fault_info *ffi = &F2FS_OPTION(sbi).fault_info;
 
@@ -1357,7 +1356,8 @@ static void default_options(struct f2fs_sb_info *sbi)
 	F2FS_OPTION(sbi).alloc_mode = ALLOC_MODE_DEFAULT;
 	F2FS_OPTION(sbi).fsync_mode = FSYNC_MODE_POSIX;
 	F2FS_OPTION(sbi).test_dummy_encryption = false;
-	sbi->readdir_ra = 1;
+	F2FS_OPTION(sbi).s_resuid = make_kuid(&init_user_ns, F2FS_DEF_RESUID);
+	F2FS_OPTION(sbi).s_resgid = make_kgid(&init_user_ns, F2FS_DEF_RESGID);
 
 	set_opt(sbi, BG_GC);
 	set_opt(sbi, INLINE_XATTR);
@@ -1381,9 +1381,7 @@ static void default_options(struct f2fs_sb_info *sbi)
 	set_opt(sbi, POSIX_ACL);
 #endif
 
-#ifdef CONFIG_F2FS_FAULT_INJECTION
 	f2fs_build_fault_attr(sbi, 0);
-#endif
 }
 
 #ifdef CONFIG_QUOTA
@@ -2655,6 +2653,8 @@ static void f2fs_tuning_parameters(struct f2fs_sb_info *sbi)
 		sm_i->dcc_info->discard_granularity = 1;
 		sm_i->ipu_policy = 1 << F2FS_IPU_FORCE;
 	}
+
+	sbi->readdir_ra = 1;
 }
 
 static int f2fs_fill_super(struct super_block *sb, void *data, int silent)
@@ -2703,9 +2703,6 @@ try_onemore:
 
 	sb->s_fs_info = sbi;
 	sbi->raw_super = raw_super;
-
-	F2FS_OPTION(sbi).s_resuid = make_kuid(&init_user_ns, F2FS_DEF_RESUID);
-	F2FS_OPTION(sbi).s_resgid = make_kgid(&init_user_ns, F2FS_DEF_RESGID);
 
 	/* precompute checksum seed for metadata */
 	if (f2fs_sb_has_inode_chksum(sb))
@@ -2916,7 +2913,7 @@ try_onemore:
 	if (!S_ISDIR(root->i_mode) || !root->i_blocks || !root->i_size) {
 		iput(root);
 		err = -EINVAL;
-		goto free_node_inode;
+		goto free_stats;
 	}
 
 	sb->s_root = d_make_root(root); /* allocate root dentry */
@@ -3091,9 +3088,19 @@ static struct dentry *f2fs_mount(struct file_system_type *fs_type, int flags,
 static void kill_f2fs_super(struct super_block *sb)
 {
 	if (sb->s_root) {
-		set_sbi_flag(F2FS_SB(sb), SBI_IS_CLOSE);
-		f2fs_stop_gc_thread(F2FS_SB(sb));
-		f2fs_stop_discard_thread(F2FS_SB(sb));
+		struct f2fs_sb_info *sbi = F2FS_SB(sb);
+
+		set_sbi_flag(sbi, SBI_IS_CLOSE);
+		f2fs_stop_gc_thread(sbi);
+		f2fs_stop_discard_thread(sbi);
+
+		if (is_sbi_flag_set(sbi, SBI_IS_DIRTY) ||
+				!is_set_ckpt_flags(sbi, CP_UMOUNT_FLAG)) {
+			struct cp_control cpc = {
+				.reason = CP_UMOUNT,
+			};
+			f2fs_write_checkpoint(sbi, &cpc);
+		}
 	}
 	kill_block_super(sb);
 }

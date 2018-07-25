@@ -68,7 +68,7 @@ struct f2fs_fault_info {
 	unsigned int inject_type;
 };
 
-extern char *fault_name[FAULT_MAX];
+extern char *f2fs_fault_name[FAULT_MAX];
 #define IS_FAULT_SET(fi, type) ((fi)->inject_type & (1 << (type)))
 #endif
 
@@ -292,6 +292,7 @@ struct discard_policy {
 	unsigned int io_aware_gran;	/* minimum granularity discard not be aware of I/O */
 	bool io_aware;			/* issue discard in idle time */
 	bool sync;			/* submit discard with REQ_SYNC flag */
+	bool ordered;			/* issue discard by lba order */
 	unsigned int granularity;	/* discard granularity */
 };
 
@@ -308,6 +309,7 @@ struct discard_cmd_control {
 	unsigned int max_discards;		/* max. discards to be issued */
 	unsigned int discard_granularity;	/* discard granularity */
 	unsigned int undiscard_blks;		/* # of undiscard blocks */
+	unsigned int next_pos;			/* next discard position */
 	atomic_t issued_discard;		/* # of issued discard */
 	atomic_t issing_discard;		/* # of issing discard */
 	atomic_t discard_cmd_cnt;		/* # of cached cmd count */
@@ -624,7 +626,6 @@ enum {
 
 enum {
 	GC_FAILURE_PIN,
-	GC_FAILURE_ATOMIC,
 	MAX_GC_FAILURE
 };
 
@@ -1069,6 +1070,8 @@ enum {
 	SBI_POR_DOING,				/* recovery is doing or not */
 	SBI_NEED_SB_WRITE,			/* need to recover superblock */
 	SBI_NEED_CP,				/* need to checkpoint */
+	SBI_DISABLE_ATOMIC_WRITE,		/* turn off atomic write */
+	SBI_IS_SHUTDOWN,			/* shutdown by ioctl */
 };
 
 enum {
@@ -1282,7 +1285,7 @@ struct f2fs_sb_info {
 #ifdef CONFIG_F2FS_FAULT_INJECTION
 #define f2fs_show_injection_info(type)				\
 	printk("%sF2FS-fs : inject %s in %s of %pF\n",		\
-		KERN_INFO, fault_name[type],			\
+		KERN_INFO, f2fs_fault_name[type],		\
 		__func__, __builtin_return_address(0))
 static inline bool time_to_inject(struct f2fs_sb_info *sbi, int type)
 {
@@ -2817,7 +2820,7 @@ int f2fs_fsync_node_pages(struct f2fs_sb_info *sbi, struct inode *inode,
 int f2fs_sync_node_pages(struct f2fs_sb_info *sbi,
 			struct writeback_control *wbc,
 			bool do_balance, enum iostat_type io_type);
-void f2fs_build_free_nids(struct f2fs_sb_info *sbi, bool sync, bool mount);
+int f2fs_build_free_nids(struct f2fs_sb_info *sbi, bool sync, bool mount);
 bool f2fs_alloc_nid(struct f2fs_sb_info *sbi, nid_t *nid);
 void f2fs_alloc_nid_done(struct f2fs_sb_info *sbi, nid_t nid);
 void f2fs_alloc_nid_failed(struct f2fs_sb_info *sbi, nid_t nid);
@@ -2838,7 +2841,7 @@ void f2fs_destroy_node_manager_caches(void);
  */
 bool f2fs_need_SSR(struct f2fs_sb_info *sbi);
 void f2fs_register_inmem_page(struct inode *inode, struct page *page);
-void f2fs_drop_inmem_pages_all(struct f2fs_sb_info *sbi, bool gc_failure);
+void f2fs_disable_atomic_write(struct f2fs_sb_info *sbi);
 void f2fs_drop_inmem_pages(struct inode *inode);
 void f2fs_drop_inmem_page(struct inode *inode, struct page *page);
 int f2fs_commit_inmem_pages(struct inode *inode);
@@ -3370,5 +3373,11 @@ static inline bool f2fs_force_buffered_io(struct inode *inode, int rw)
 			(rw == WRITE && test_opt(F2FS_I_SB(inode), LFS)) ||
 			F2FS_I_SB(inode)->s_ndevs);
 }
+
+#ifdef CONFIG_F2FS_FAULT_INJECTION
+extern void f2fs_build_fault_attr(struct f2fs_sb_info *sbi, unsigned int rate);
+#else
+#define f2fs_build_fault_attr(sbi, rate)		do { } while (0)
+#endif
 
 #endif

@@ -58,6 +58,13 @@ config FS_DAX_PMD
 	depends on ZONE_DEVICE
 	depends on TRANSPARENT_HUGEPAGE
 
+config VFS_THROTTLER
+	bool "VFS throttler"
+	depends on DEBUG_KERNEL && EXPERT
+	help
+	  Artifically throttles VFS operations for testing purposes.
+	  Delays for each operations are specifiable by the user on runtime.
+
 endif # BLOCK
 
 # Posix ACL utility routines

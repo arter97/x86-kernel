@@ -52,6 +52,8 @@ obj-$(CONFIG_SYSCTL)		+= drop_caches.o
 obj-$(CONFIG_FHANDLE)		+= fhandle.o
 obj-$(CONFIG_FS_IOMAP)		+= iomap.o
 
+obj-$(CONFIG_VFS_THROTTLER)	+= vfs_throttler.o
+
 obj-y				+= quota/
 
 obj-$(CONFIG_PROC_FS)		+= proc/

@@ -35,6 +35,9 @@
 #include <linux/delayed_call.h>
 #include <linux/uuid.h>
 #include <linux/errseq.h>
+#ifdef CONFIG_VFS_THROTTLER
+#include <linux/delay.h>
+#endif
 
 #include <asm/byteorder.h>
 #include <uapi/linux/fs.h>

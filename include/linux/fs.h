@@ -119,6 +119,11 @@ struct vfs_throttler_type {
 
 extern struct vfs_throttler_type vfs_delay;
 extern struct vfs_throttler_type vfs_count;
+
+#define VFS_THROTTLE(x) do { \
+		vfs_count.x++; \
+		udelay(vfs_delay.x); \
+	} while(0)
 #endif
 
 typedef __kernel_rwf_t rwf_t;

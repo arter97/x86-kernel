@@ -103,8 +103,25 @@ static const struct kernel_param_ops vfs_count_param_ops = {
 	.get = param_get_vfs_count,
 };
 
+static int param_reset_vfs_count(const char *val,
+			const struct kernel_param *kp)
+{
+	memset(&vfs_count, 0, sizeof(vfs_count));
+	pr_info("vfs_throttler: count reset!\n");
+
+	return 0;
+}
+
+static const struct kernel_param_ops vfs_reset_count_param_ops = {
+	.set = param_reset_vfs_count,
+	.get = NULL,
+};
+
 // View count statistics
 module_param_cb(count, &vfs_count_param_ops, NULL, 0444);
+
+// Reset count statistics
+module_param_cb(reset_count, &vfs_reset_count_param_ops, NULL, 0200);
 
 static __init int vfs_throttler_init(void)
 {

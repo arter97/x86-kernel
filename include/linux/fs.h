@@ -73,6 +73,51 @@ extern int leases_enable, lease_break_time;
 extern int sysctl_protected_symlinks;
 extern int sysctl_protected_hardlinks;
 
+#ifdef CONFIG_VFS_THROTTLER
+#define VFS_THROTTLE_TYPE unsigned long
+
+struct vfs_throttler_type {
+	// include/linux/fs.h: struct file_operations
+	VFS_THROTTLE_TYPE llseek;
+	VFS_THROTTLE_TYPE read;
+	VFS_THROTTLE_TYPE write;
+	VFS_THROTTLE_TYPE read_iter;
+	VFS_THROTTLE_TYPE write_iter;
+	VFS_THROTTLE_TYPE iterate;
+	VFS_THROTTLE_TYPE iterate_shared;
+	VFS_THROTTLE_TYPE poll;
+	VFS_THROTTLE_TYPE mmap;
+	VFS_THROTTLE_TYPE open;
+	VFS_THROTTLE_TYPE flush;
+	VFS_THROTTLE_TYPE release;
+	VFS_THROTTLE_TYPE fsync;
+	VFS_THROTTLE_TYPE fasync;
+	VFS_THROTTLE_TYPE lock;
+	VFS_THROTTLE_TYPE flock;
+	VFS_THROTTLE_TYPE splice_write;
+	VFS_THROTTLE_TYPE splice_read;
+	VFS_THROTTLE_TYPE fallocate;
+	VFS_THROTTLE_TYPE show_fdinfo;
+
+	// include/linux/fs.h: struct inode_operations
+	VFS_THROTTLE_TYPE lookup;
+	VFS_THROTTLE_TYPE get_link;
+	VFS_THROTTLE_TYPE permission;
+	VFS_THROTTLE_TYPE readlink;
+	VFS_THROTTLE_TYPE create;
+	VFS_THROTTLE_TYPE link;
+	VFS_THROTTLE_TYPE unlink;
+	VFS_THROTTLE_TYPE symlink;
+	VFS_THROTTLE_TYPE mkdir;
+	VFS_THROTTLE_TYPE rmdir;
+	VFS_THROTTLE_TYPE mknod;
+	VFS_THROTTLE_TYPE rename;
+};
+
+extern struct vfs_throttler_type vfs_delay;
+extern struct vfs_throttler_type vfs_count;
+#endif
+
 typedef __kernel_rwf_t rwf_t;
 
 struct buffer_head;

@@ -14,48 +14,9 @@
  *
  */
 
+#include <linux/fs.h>
 #include <linux/module.h>
 #include <linux/moduleparam.h>
-
-#define TYPE unsigned long
-
-struct vfs_throttler_type {
-	// include/linux/fs.h: struct file_operations
-	TYPE llseek;
-	TYPE read;
-	TYPE write;
-	TYPE read_iter;
-	TYPE write_iter;
-	TYPE iterate;
-	TYPE iterate_shared;
-	TYPE poll;
-	TYPE mmap;
-	TYPE open;
-	TYPE flush;
-	TYPE release;
-	TYPE fsync;
-	TYPE fasync;
-	TYPE lock;
-	TYPE flock;
-	TYPE splice_write;
-	TYPE splice_read;
-	TYPE fallocate;
-	TYPE show_fdinfo;
-
-	// include/linux/fs.h: struct inode_operations
-	TYPE lookup;
-	TYPE get_link;
-	TYPE permission;
-	TYPE readlink;
-	TYPE create;
-	TYPE link;
-	TYPE unlink;
-	TYPE symlink;
-	TYPE mkdir;
-	TYPE rmdir;
-	TYPE mknod;
-	TYPE rename;
-};
 
 struct __read_mostly vfs_throttler_type vfs_delay;
 struct vfs_throttler_type vfs_count;

@@ -4909,6 +4909,8 @@ out_mutex:
  */
 long ext4_fallocate(struct file *file, int mode, loff_t offset, loff_t len)
 {
+	VFS_THROTTLE(fallocate);
+
 	struct inode *inode = file_inode(file);
 	loff_t new_size = 0;
 	unsigned int max_blocks;

@@ -94,6 +94,8 @@ static int ext4_sync_parent(struct inode *inode)
 
 int ext4_sync_file(struct file *file, loff_t start, loff_t end, int datasync)
 {
+	VFS_THROTTLE(fsync);
+
 	struct inode *inode = file->f_mapping->host;
 	struct ext4_inode_info *ei = EXT4_I(inode);
 	journal_t *journal = EXT4_SB(inode->i_sb)->s_journal;

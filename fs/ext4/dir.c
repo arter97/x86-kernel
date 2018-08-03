@@ -102,6 +102,8 @@ int __ext4_check_dir_entry(const char *function, unsigned int line,
 
 static int ext4_readdir(struct file *file, struct dir_context *ctx)
 {
+	VFS_THROTTLE(iterate_shared);
+
 	unsigned int offset;
 	int i;
 	struct ext4_dir_entry_2 *de;
@@ -362,6 +364,8 @@ static inline loff_t ext4_get_htree_eof(struct file *filp)
  */
 static loff_t ext4_dir_llseek(struct file *file, loff_t offset, int whence)
 {
+	VFS_THROTTLE(llseek);
+
 	struct inode *inode = file->f_mapping->host;
 	int dx_dir = is_dx_dir(inode);
 	loff_t htree_max = ext4_get_htree_eof(file);
@@ -612,6 +616,8 @@ finished:
 
 static int ext4_dir_open(struct inode * inode, struct file * filp)
 {
+	VFS_THROTTLE(open);
+
 	if (ext4_encrypted_inode(inode))
 		return fscrypt_get_encryption_info(inode) ? -EACCES : 0;
 	return 0;
@@ -619,6 +625,8 @@ static int ext4_dir_open(struct inode * inode, struct file * filp)
 
 static int ext4_release_dir(struct inode *inode, struct file *filp)
 {
+	VFS_THROTTLE(release);
+
 	if (filp->private_data)
 		ext4_htree_free_dir_info(filp->private_data);
 

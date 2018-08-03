@@ -62,6 +62,8 @@ static ssize_t ext4_dax_read_iter(struct kiocb *iocb, struct iov_iter *to)
 
 static ssize_t ext4_file_read_iter(struct kiocb *iocb, struct iov_iter *to)
 {
+	VFS_THROTTLE(read_iter);
+
 	if (unlikely(ext4_forced_shutdown(EXT4_SB(file_inode(iocb->ki_filp)->i_sb))))
 		return -EIO;
 
@@ -82,6 +84,8 @@ static ssize_t ext4_file_read_iter(struct kiocb *iocb, struct iov_iter *to)
  */
 static int ext4_release_file(struct inode *inode, struct file *filp)
 {
+	VFS_THROTTLE(release);
+
 	if (ext4_test_inode_state(inode, EXT4_STATE_DA_ALLOC_CLOSE)) {
 		ext4_alloc_da_blocks(inode);
 		ext4_clear_inode_state(inode, EXT4_STATE_DA_ALLOC_CLOSE);
@@ -211,6 +215,8 @@ out:
 static ssize_t
 ext4_file_write_iter(struct kiocb *iocb, struct iov_iter *from)
 {
+	VFS_THROTTLE(write_iter);
+
 	struct inode *inode = file_inode(iocb->ki_filp);
 	int o_direct = iocb->ki_flags & IOCB_DIRECT;
 	int unaligned_aio = 0;
@@ -345,6 +351,8 @@ static const struct vm_operations_struct ext4_file_vm_ops = {
 
 static int ext4_file_mmap(struct file *file, struct vm_area_struct *vma)
 {
+	VFS_THROTTLE(mmap);
+
 	struct inode *inode = file->f_mapping->host;
 
 	if (unlikely(ext4_forced_shutdown(EXT4_SB(inode->i_sb))))
@@ -362,6 +370,8 @@ static int ext4_file_mmap(struct file *file, struct vm_area_struct *vma)
 
 static int ext4_file_open(struct inode * inode, struct file * filp)
 {
+	VFS_THROTTLE(open);
+
 	struct super_block *sb = inode->i_sb;
 	struct ext4_sb_info *sbi = EXT4_SB(inode->i_sb);
 	struct vfsmount *mnt = filp->f_path.mnt;
@@ -687,6 +697,8 @@ static loff_t ext4_seek_hole(struct file *file, loff_t offset, loff_t maxsize)
  */
 loff_t ext4_llseek(struct file *file, loff_t offset, int whence)
 {
+	VFS_THROTTLE(llseek);
+
 	struct inode *inode = file->f_mapping->host;
 	loff_t maxbytes;
 

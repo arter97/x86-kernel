@@ -2,8 +2,8 @@
 VERSION = 4
 PATCHLEVEL = 18
 SUBLEVEL = 0
-EXTRAVERSION =
-NAME = Merciless Moray
+EXTRAVERSION = -zen
+NAME = Short and Stout
 
 # *DOCUMENTATION*
 # To see a list of typical targets execute "make help"

@@ -47,6 +47,7 @@ menu "General setup"
 
 config SCHED_PDS
 	bool "PDS-mq cpu scheduler"
+	default n
 	help
 	  The Priority and Deadline based Skip list multiple queue CPU
 	  Scheduler for excellent interactivity and responsiveness on the
@@ -55,10 +56,6 @@ config SCHED_PDS
 
 	  Currently incompatible with the Group CPU scheduler, and RCU TORTURE
           TEST so these options are disabled.
-
-          Say Y here.
-	default y
-
 
 config BROKEN
 	bool

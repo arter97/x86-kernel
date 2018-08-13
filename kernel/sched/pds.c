@@ -118,7 +118,11 @@ static inline int task_on_rq_migrating(struct task_struct *p)
  * Value is in ms and set to a minimum of 6ms. Scales with number of cpus.
  * Tunable via /proc interface.
  */
+#ifdef CONFIG_ZEN_INTERACTIVE
+#define SCHED_DEFAULT_RR (3)
+#else
 #define SCHED_DEFAULT_RR (6)
+#endif
 int rr_interval __read_mostly = SCHED_DEFAULT_RR;
 
 static int __init rr_interval_set(char *str)
@@ -156,7 +160,11 @@ static const u64 sched_prio2deadline[NICE_WIDTH] = {
  * are allowed to run five seconds as real time tasks. This is the total over
  * all online cpus.
  */
+#ifdef CONFIG_ZEN_INTERACTIVE
+int sched_iso_cpu __read_mostly = 25;
+#else
 int sched_iso_cpu __read_mostly = 70;
+#endif
 
 /**
  * sched_yield_type - Choose what sort of yield sched_yield will perform.

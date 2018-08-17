@@ -136,9 +136,13 @@ static bool bfq_update_next_in_service(struct bfq_sched_data *sd,
 	if (!change_without_lookup) /* lookup needed */
 		next_in_service = bfq_lookup_next_entity(sd, expiration);
 
-	if (next_in_service)
-		parent_sched_may_change = !sd->next_in_service ||
+	if (next_in_service) {
+		bool new_budget_triggers_change =
 			bfq_update_parent_budget(next_in_service);
+
+		parent_sched_may_change = !sd->next_in_service ||
+			new_budget_triggers_change;
+	}
 
 	sd->next_in_service = next_in_service;
 
@@ -201,6 +205,9 @@ static bool bfq_update_parent_budget(struct bfq_entity *next_in_service)
 	if (bfqg_entity) {
 		if (bfqg_entity->budget > next_in_service->budget)
 			ret = true;
+		bfq_log_bfqg((struct bfq_data *)bfqg->bfqd, bfqg,
+			"old budg: %d, new budg: %d",
+			bfqg_entity->budget, next_in_service->budget);
 		bfqg_entity->budget = next_in_service->budget;
 	}
 
@@ -991,20 +998,19 @@ static void bfq_bfqq_charge_time(struct bfq_data *bfqd, struct bfq_queue *bfqq,
 				 unsigned long time_ms)
 {
 	struct bfq_entity *entity = &bfqq->entity;
-	int tot_serv_to_charge = entity->service;
-	unsigned int timeout_ms = jiffies_to_msecs(bfq_timeout);
-
-	if (time_ms > 0 && time_ms < timeout_ms)
-		tot_serv_to_charge =
-			(bfqd->bfq_max_budget * time_ms) / timeout_ms;
-
-	if (tot_serv_to_charge < entity->service)
-		tot_serv_to_charge = entity->service;
+	unsigned long timeout_ms = jiffies_to_msecs(bfq_timeout);
+	unsigned long bounded_time_ms = min(time_ms, timeout_ms);
+	int serv_to_charge_for_time =
+		(bfqd->bfq_max_budget * bounded_time_ms) / timeout_ms;
+	int tot_serv_to_charge = max(serv_to_charge_for_time, entity->service);
 
 	bfq_log_bfqq(bfqq->bfqd, bfqq,
-		     "%lu/%u ms, %d/%d/%d sectors",
-		     time_ms, timeout_ms, entity->service,
-		     tot_serv_to_charge, entity->budget);
+		     "%lu/%lu ms, %d/%d/%d/%d sectors",
+		     time_ms, timeout_ms,
+		     entity->service,
+		     tot_serv_to_charge,
+		     bfqd->bfq_max_budget,
+		     entity->budget);
 
 	/* Increase budget to avoid inconsistencies */
 	if (tot_serv_to_charge > entity->budget)

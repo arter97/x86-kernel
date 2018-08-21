@@ -55,7 +55,7 @@ struct rq {
 	struct task_struct *curr, *idle, *stop;
 	struct mm_struct *prev_mm;
 
-	struct skiplist_node sl_header;
+	struct skiplist_node *sl_header;
 
 	/* switch count */
 	u64 nr_switches;
@@ -68,6 +68,9 @@ struct rq {
 #ifdef CONFIG_SMP
 	int cpu;		/* cpu of this runqueue */
 	bool online;
+
+	unsigned long queued_level;
+	unsigned long pending_level;
 
 #ifdef CONFIG_SCHED_SMT
 	int active_balance;
@@ -94,9 +97,6 @@ struct rq {
 
 	unsigned long nr_running;
 	unsigned long nr_uninterruptible;
-
-	unsigned long nr_running_level;
-	unsigned long queued_level;
 
 #ifdef CONFIG_SCHED_HRTICK
 #ifdef CONFIG_SMP

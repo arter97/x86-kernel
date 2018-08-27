@@ -2,10 +2,6 @@
 /*
  * Scheduler internal types and methods:
  */
-#ifdef CONFIG_SCHED_PDS
-#include "pds_sched.h"
-#else
-
 #include <linux/sched.h>
 
 #include <linux/sched/autogroup.h>
@@ -2198,4 +2194,3 @@ static inline unsigned long cpu_util_cfs(struct rq *rq)
 	return util;
 }
 #endif
-#endif /* CONFIG_SCHED_PDS */

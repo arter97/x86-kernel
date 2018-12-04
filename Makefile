@@ -2,11 +2,15 @@
 VERSION = 4
 PATCHLEVEL = 18
 <<<<<<< HEAD
+<<<<<<< HEAD
 SUBLEVEL = 16
 EXTRAVERSION = -zen
 NAME = Short and Stout
 =======
 SUBLEVEL = 17
+=======
+SUBLEVEL = 18
+>>>>>>> v4.18.18
 EXTRAVERSION =
 NAME = Merciless Moray
 >>>>>>> v4.18.17

@@ -1,9 +1,15 @@
 # SPDX-License-Identifier: GPL-2.0
 VERSION = 4
 PATCHLEVEL = 18
+<<<<<<< HEAD
 SUBLEVEL = 16
 EXTRAVERSION = -zen
 NAME = Short and Stout
+=======
+SUBLEVEL = 17
+EXTRAVERSION =
+NAME = Merciless Moray
+>>>>>>> v4.18.17
 
 # *DOCUMENTATION*
 # To see a list of typical targets execute "make help"

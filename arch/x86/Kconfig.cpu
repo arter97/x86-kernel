@@ -508,6 +508,9 @@ choice
 	  Specify CPU for CONFIG_OPTIMIZE_SPECIFICALLY.
 	  Invalid, unsupported CPU will break the build.
 
+	config OPTIMIZE_FOR_8600K
+		bool "Intel Core i5-8600K (Coffee Lake)"
+
 	config OPTIMIZE_FOR_8250U
 		bool "Intel Core i5-8250U (Kabylake-R)"
 

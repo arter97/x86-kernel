@@ -697,7 +697,7 @@ struct sk_buff {
 	 * want to keep them across layers you have to do a skb_clone()
 	 * first. This is owned by whoever has the skb queued ATM.
 	 */
-	char			cb[48] __aligned(8);
+	char			cb[80] __aligned(8);
 
 	union {
 		struct {
@@ -3225,6 +3225,11 @@ static inline int __skb_grow_rcsum(struct sk_buff *skb, unsigned int len)
 #define skb_rbtree_walk(skb, root)						\
 		for (skb = skb_rb_first(root); skb != NULL;			\
 		     skb = skb_rb_next(skb))
+
+#define skb_rbtree_walk_safe(skb, root, tmp)					\
+		for (skb = skb_rb_first(root);					\
+		     tmp = skb ? skb_rb_next(skb) : NULL, (skb != NULL);	\
+		     skb = tmp)
 
 #define skb_rbtree_walk_from(skb)						\
 		for (; skb != NULL;						\

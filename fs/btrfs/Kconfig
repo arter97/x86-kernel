@@ -41,6 +41,10 @@ config BTRFS_FS_POSIX_ACL
 
 	  If you don't know what Access Control Lists are, say N
 
+config BTRFS_FS_ZSTD_LEVEL
+	int "zstd default compression level for btrfs"
+	default 3
+
 config BTRFS_FS_CHECK_INTEGRITY
 	bool "Btrfs with integrity check tool compiled in (DANGEROUS)"
 	depends on BTRFS_FS

@@ -19,11 +19,10 @@
 
 #define ZSTD_BTRFS_MAX_WINDOWLOG 17
 #define ZSTD_BTRFS_MAX_INPUT (1 << ZSTD_BTRFS_MAX_WINDOWLOG)
-#define ZSTD_BTRFS_DEFAULT_LEVEL 3
 
 static ZSTD_parameters zstd_get_btrfs_parameters(size_t src_len)
 {
-	ZSTD_parameters params = ZSTD_getParams(ZSTD_BTRFS_DEFAULT_LEVEL,
+	ZSTD_parameters params = ZSTD_getParams(CONFIG_BTRFS_FS_ZSTD_LEVEL,
 						src_len, 0);
 
 	if (params.cParams.windowLog > ZSTD_BTRFS_MAX_WINDOWLOG)

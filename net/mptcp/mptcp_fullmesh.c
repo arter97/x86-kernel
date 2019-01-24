@@ -1369,24 +1369,6 @@ static void full_mesh_create_subflows(struct sock *meta_sk)
 	}
 }
 
-static void full_mesh_subflow_error(struct sock *meta_sk, struct sock *sk)
-{
-	const struct mptcp_cb *mpcb = tcp_sk(meta_sk)->mpcb;
-
-	if (!create_on_err)
-		return;
-
-	if (mpcb->infinite_mapping_snd || mpcb->infinite_mapping_rcv ||
-	    mpcb->send_infinite_mapping ||
-	    mpcb->server_side || sock_flag(meta_sk, SOCK_DEAD))
-		return;
-
-	if (sk->sk_err != ETIMEDOUT)
-		return;
-
-	full_mesh_create_subflows(meta_sk);
-}
-
 /* Called upon release_sock, if the socket was owned by the user during
  * a path-management event.
  */
@@ -1534,11 +1516,12 @@ removal:
 	rcu_read_unlock_bh();
 }
 
-static int full_mesh_get_local_id(sa_family_t family, union inet_addr *addr,
-				  struct net *net, bool *low_prio)
+static int full_mesh_get_local_id(const struct sock *meta_sk,
+				  sa_family_t family, union inet_addr *addr,
+				  bool *low_prio)
 {
 	struct mptcp_loc_addr *mptcp_local;
-	const struct mptcp_fm_ns *fm_ns = fm_get_ns(net);
+	const struct mptcp_fm_ns *fm_ns = fm_get_ns(sock_net(meta_sk));
 	int index, id = -1;
 
 	/* Handle the backup-flows */
@@ -1703,10 +1686,14 @@ static void full_mesh_delete_subflow(struct sock *sk)
 {
 	struct fullmesh_priv *fmp = fullmesh_get_priv(tcp_sk(sk)->mpcb);
 	struct mptcp_fm_ns *fm_ns = fm_get_ns(sock_net(sk));
+	struct sock *meta_sk = mptcp_meta_sk(sk);
 	struct mptcp_loc_addr *mptcp_local;
 	int index, i;
 
 	if (!create_on_err)
+		return;
+
+	if (!mptcp_can_new_subflow(meta_sk))
 		return;
 
 	rcu_read_lock_bh();
@@ -1758,6 +1745,10 @@ static void full_mesh_delete_subflow(struct sock *sk)
 
 out:
 	rcu_read_unlock_bh();
+
+	/* re-schedule the creation of failed subflows */
+	if (tcp_sk(sk)->mptcp->sk_err == ETIMEDOUT || sk->sk_err == ETIMEDOUT)
+		full_mesh_create_subflows(meta_sk);
 }
 
 /* Output /proc/net/mptcp_fullmesh */
@@ -1872,7 +1863,6 @@ static struct mptcp_pm_ops full_mesh __read_mostly = {
 	.release_sock = full_mesh_release_sock,
 	.fully_established = full_mesh_create_subflows,
 	.new_remote_address = full_mesh_create_subflows,
-	.subflow_error = full_mesh_subflow_error,
 	.get_local_id = full_mesh_get_local_id,
 	.addr_signal = full_mesh_addr_signal,
 	.add_raddr = full_mesh_add_raddr,

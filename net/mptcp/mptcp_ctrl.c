@@ -548,6 +548,7 @@ found:
 	rcu_read_unlock_bh();
 	return meta_sk;
 }
+EXPORT_SYMBOL_GPL(mptcp_hash_find);
 
 void mptcp_hash_remove_bh(struct tcp_sock *meta_tp)
 {
@@ -605,7 +606,6 @@ EXPORT_SYMBOL(mptcp_select_ack_sock);
 static void mptcp_sock_def_error_report(struct sock *sk)
 {
 	const struct mptcp_cb *mpcb = tcp_sk(sk)->mpcb;
-	struct sock *meta_sk = mptcp_meta_sk(sk);
 	struct tcp_sock *tp = tcp_sk(sk);
 
 	if (!sock_flag(sk, SOCK_DEAD)) {
@@ -621,8 +621,12 @@ static void mptcp_sock_def_error_report(struct sock *sk)
 		}
 	}
 
+	/* record this info that can be used by PM after the sf close */
+	tp->mptcp->sk_err = sk->sk_err;
+
 	if (mpcb->infinite_mapping_rcv || mpcb->infinite_mapping_snd ||
 	    mpcb->send_infinite_mapping) {
+		struct sock *meta_sk = mptcp_meta_sk(sk);
 
 		meta_sk->sk_err = sk->sk_err;
 		meta_sk->sk_err_soft = sk->sk_err_soft;
@@ -638,9 +642,6 @@ static void mptcp_sock_def_error_report(struct sock *sk)
 		if (meta_sk->sk_state != TCP_CLOSE)
 			tcp_done(meta_sk);
 	}
-
-	if (mpcb->pm_ops->subflow_error)
-		mpcb->pm_ops->subflow_error(meta_sk, sk);
 
 	sk->sk_err = 0;
 	return;
@@ -1856,6 +1857,9 @@ adjudge_to_death:
 		write_unlock_bh(&sk_it->sk_callback_lock);
 	}
 
+	if (mpcb->pm_ops->close_session)
+		mpcb->pm_ops->close_session(meta_sk);
+
 	/* It is the last release_sock in its life. It will remove backlog. */
 	release_sock(meta_sk);
 
@@ -2253,6 +2257,9 @@ struct sock *mptcp_check_req_child(struct sock *meta_sk,
 
 	sock_rps_save_rxhash(child, skb);
 	tcp_synack_rtt_meas(child, req);
+
+	if (mpcb->pm_ops->established_subflow)
+		mpcb->pm_ops->established_subflow(child);
 
 	/* Subflows do not use the accept queue, as they
 	 * are attached immediately to the mpcb.

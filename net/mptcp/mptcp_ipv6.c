@@ -149,7 +149,7 @@ static int mptcp_v6_join_init_req(struct request_sock *req, const struct sock *m
 						    tcp_hdr(skb)->source,
 						    tcp_hdr(skb)->dest);
 	addr.in6 = inet_rsk(req)->ir_v6_loc_addr;
-	loc_id = mpcb->pm_ops->get_local_id(AF_INET6, &addr, sock_net(meta_sk), &low_prio);
+	loc_id = mpcb->pm_ops->get_local_id(meta_sk, AF_INET6, &addr, &low_prio);
 	if (loc_id == -1)
 		return -1;
 	mtreq->loc_id = loc_id;
@@ -282,8 +282,9 @@ reset_and_discard:
  *
  * We are in user-context and meta-sock-lock is hold.
  */
-int mptcp_init6_subsockets(struct sock *meta_sk, const struct mptcp_loc6 *loc,
-			   struct mptcp_rem6 *rem)
+int __mptcp_init6_subsockets(struct sock *meta_sk, const struct mptcp_loc6 *loc,
+			     __be16 sport, struct mptcp_rem6 *rem,
+			     struct sock **subsk)
 {
 	struct tcp_sock *tp;
 	struct sock *sk;
@@ -327,7 +328,7 @@ int mptcp_init6_subsockets(struct sock *meta_sk, const struct mptcp_loc6 *loc,
 	/** Then, connect the socket to the peer */
 	loc_in.sin6_family = AF_INET6;
 	rem_in.sin6_family = AF_INET6;
-	loc_in.sin6_port = 0;
+	loc_in.sin6_port = sport;
 	if (rem->port)
 		rem_in.sin6_port = rem->port;
 	else
@@ -369,6 +370,9 @@ int mptcp_init6_subsockets(struct sock *meta_sk, const struct mptcp_loc6 *loc,
 	sk_set_socket(sk, meta_sk->sk_socket);
 	sk->sk_wq = meta_sk->sk_wq;
 
+	if (subsk)
+		*subsk = sk;
+
 	return 0;
 
 error:
@@ -382,7 +386,7 @@ error:
 	}
 	return ret;
 }
-EXPORT_SYMBOL(mptcp_init6_subsockets);
+EXPORT_SYMBOL(__mptcp_init6_subsockets);
 
 const struct inet_connection_sock_af_ops mptcp_v6_specific = {
 	.queue_xmit	   = inet6_csk_xmit,

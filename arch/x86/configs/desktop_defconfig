@@ -1,6 +1,6 @@
 #
 # Automatically generated file; DO NOT EDIT.
-# Linux/x86 4.19.17-zen Kernel Configuration
+# Linux/x86 4.19.18-zen Kernel Configuration
 #
 
 #
@@ -347,6 +347,7 @@ CONFIG_OPTIMIZE_SPECIFICALLY=y
 CONFIG_OPTIMIZE_FOR_8600K=y
 # CONFIG_OPTIMIZE_FOR_8250U is not set
 # CONFIG_OPTIMIZE_FOR_4170 is not set
+# CONFIG_OPTIMIZE_FOR_R5_2600 is not set
 CONFIG_X86_INTERNODE_CACHE_SHIFT=6
 CONFIG_X86_L1_CACHE_SHIFT=6
 CONFIG_X86_INTEL_USERCOPY=y

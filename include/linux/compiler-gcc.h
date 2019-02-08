@@ -156,3 +156,5 @@
 #else
 #define __diag_GCC_8(s)
 #endif
+
+#define __copy(symbol)                 __attribute__((__copy__(symbol)))

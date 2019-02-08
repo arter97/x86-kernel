@@ -172,3 +172,4 @@
 #endif
 
 #define __no_fgcse __attribute__((optimize("-fno-gcse")))
+#define __copy(symbol)                 __attribute__((__copy__(symbol)))

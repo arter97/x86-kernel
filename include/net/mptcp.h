@@ -871,7 +871,7 @@ void mptcp_disable_static_key(void);
 void mptcp_cookies_reqsk_init(struct request_sock *req,
 			      struct mptcp_options_received *mopt,
 			      struct sk_buff *skb);
-void mptcp_sock_destruct(struct sock *sk);
+void mptcp_mpcb_put(struct mptcp_cb *mpcb);
 int mptcp_finish_handshake(struct sock *child, struct sk_buff *skb);
 int mptcp_get_info(const struct sock *meta_sk, char __user *optval, int optlen);
 void mptcp_clear_sk(struct sock *sk, int size);
@@ -1273,6 +1273,14 @@ static inline bool mptcp_v6_is_v4_mapped(const struct sock *sk)
 {
 	return sk->sk_family == AF_INET6 &&
 	       ipv6_addr_type(&inet6_sk(sk)->saddr) == IPV6_ADDR_MAPPED;
+}
+
+/* We are in or are becoming to be in infinite mapping mode */
+static inline bool mptcp_in_infinite_mapping_weak(const struct mptcp_cb *mpcb)
+{
+	return mpcb->infinite_mapping_rcv ||
+	       mpcb->infinite_mapping_snd ||
+	       mpcb->send_infinite_mapping;
 }
 
 static inline bool mptcp_can_new_subflow(const struct sock *meta_sk)

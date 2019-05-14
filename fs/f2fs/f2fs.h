@@ -2195,6 +2195,9 @@ static inline struct bio *f2fs_bio_alloc(struct f2fs_sb_info *sbi,
 
 static inline bool is_idle(struct f2fs_sb_info *sbi, int type)
 {
+	if (sbi->gc_mode == GC_URGENT)
+		return true;
+
 #ifdef CONFIG_F2FS_POWER_AWARE
 	/* >0 : AC; 0 : battery; <0 : error */
 	if (power_supply_is_system_supplied() == 0)

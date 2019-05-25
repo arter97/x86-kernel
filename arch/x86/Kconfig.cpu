@@ -502,17 +502,14 @@ config OPTIMIZE_SPECIFICALLY
 
 choice
 	prompt "Specify CPU"
-	default OPTIMIZE_FOR_8250U
+	default OPTIMIZE_FOR_8550U
 	depends on OPTIMIZE_SPECIFICALLY
 	help
 	  Specify CPU for CONFIG_OPTIMIZE_SPECIFICALLY.
 	  Invalid, unsupported CPU will break the build.
 
-	config OPTIMIZE_FOR_8600K
-		bool "Intel Core i5-8600K (Coffee Lake)"
-
-	config OPTIMIZE_FOR_8250U
-		bool "Intel Core i5-8250U (Kabylake-R)"
+	config OPTIMIZE_FOR_8550U
+		bool "Intel Core i7-8550U (Kabylake-R)"
 
 	config OPTIMIZE_FOR_4170
 		bool "Intel Core i3-4170 (Haswell)"

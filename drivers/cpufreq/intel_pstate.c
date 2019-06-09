@@ -681,6 +681,7 @@ static int intel_pstate_set_epb(int cpu, s16 pref)
 
 enum energy_perf_value_index {
 	EPP_INDEX_DEFAULT = 0,
+	EPP_INDEX_FULL_PERFORMANCE,
 	EPP_INDEX_PERFORMANCE,
 	EPP_INDEX_BALANCE_PERFORMANCE,
 	EPP_INDEX_BALANCE_POWERSAVE,
@@ -689,6 +690,7 @@ enum energy_perf_value_index {
 
 static const char * const energy_perf_strings[] = {
 	[EPP_INDEX_DEFAULT] = "default",
+	[EPP_INDEX_FULL_PERFORMANCE] = "full_performance",
 	[EPP_INDEX_PERFORMANCE] = "performance",
 	[EPP_INDEX_BALANCE_PERFORMANCE] = "balance_performance",
 	[EPP_INDEX_BALANCE_POWERSAVE] = "balance_power",
@@ -697,6 +699,7 @@ static const char * const energy_perf_strings[] = {
 };
 static unsigned int epp_values[] = {
 	[EPP_INDEX_DEFAULT] = 0, /* Unused index */
+	[EPP_INDEX_FULL_PERFORMANCE] = HWP_EPP_FULL_PERFORMANCE,
 	[EPP_INDEX_PERFORMANCE] = HWP_EPP_PERFORMANCE,
 	[EPP_INDEX_BALANCE_PERFORMANCE] = HWP_EPP_BALANCE_PERFORMANCE,
 	[EPP_INDEX_BALANCE_POWERSAVE] = HWP_EPP_BALANCE_POWERSAVE,
@@ -714,6 +717,8 @@ static int intel_pstate_get_energy_pref_index(struct cpudata *cpu_data, int *raw
 		return epp;
 
 	if (boot_cpu_has(X86_FEATURE_HWP_EPP)) {
+		if (epp == epp_values[EPP_INDEX_FULL_PERFORMANCE])
+			return EPP_INDEX_FULL_PERFORMANCE;
 		if (epp == epp_values[EPP_INDEX_PERFORMANCE])
 			return EPP_INDEX_PERFORMANCE;
 		if (epp == epp_values[EPP_INDEX_BALANCE_PERFORMANCE])

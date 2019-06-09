@@ -287,7 +287,8 @@
 #define HWP_MAX_PERF(x) 		((x & 0xff) << 8)
 #define HWP_DESIRED_PERF(x)		((x & 0xff) << 16)
 #define HWP_ENERGY_PERF_PREFERENCE(x)	(((unsigned long long) x & 0xff) << 24)
-#define HWP_EPP_PERFORMANCE		0x00
+#define HWP_EPP_FULL_PERFORMANCE	0x00
+#define HWP_EPP_PERFORMANCE		0x20
 #define HWP_EPP_BALANCE_PERFORMANCE	0x80
 #define HWP_EPP_BALANCE_POWERSAVE	0xC0
 #define HWP_EPP_POWERSAVE		0xFF

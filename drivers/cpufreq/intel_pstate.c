@@ -569,6 +569,7 @@ static int intel_pstate_set_epb(int cpu, s16 pref)
  */
 static const char * const energy_perf_strings[] = {
 	"default",
+	"full_performance",
 	"performance",
 	"balance_performance",
 	"balance_power",
@@ -576,6 +577,7 @@ static const char * const energy_perf_strings[] = {
 	NULL
 };
 static const unsigned int epp_values[] = {
+	HWP_EPP_FULL_PERFORMANCE,
 	HWP_EPP_PERFORMANCE,
 	HWP_EPP_BALANCE_PERFORMANCE,
 	HWP_EPP_BALANCE_POWERSAVE,
@@ -592,14 +594,16 @@ static int intel_pstate_get_energy_pref_index(struct cpudata *cpu_data)
 		return epp;
 
 	if (boot_cpu_has(X86_FEATURE_HWP_EPP)) {
-		if (epp == HWP_EPP_PERFORMANCE)
+		if (epp == HWP_EPP_FULL_PERFORMANCE)
 			return 1;
-		if (epp <= HWP_EPP_BALANCE_PERFORMANCE)
+		if (epp <= HWP_EPP_PERFORMANCE)
 			return 2;
-		if (epp <= HWP_EPP_BALANCE_POWERSAVE)
+		if (epp <= HWP_EPP_BALANCE_PERFORMANCE)
 			return 3;
-		else
+		if (epp <= HWP_EPP_BALANCE_POWERSAVE)
 			return 4;
+		else
+			return 5;
 	} else if (boot_cpu_has(X86_FEATURE_EPB)) {
 		/*
 		 * Range:

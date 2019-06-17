@@ -457,7 +457,7 @@ CONFIG_HOTPLUG_CPU=y
 # CONFIG_LEGACY_VSYSCALL_EMULATE is not set
 CONFIG_LEGACY_VSYSCALL_NONE=y
 CONFIG_CMDLINE_BOOL=y
-CONFIG_CMDLINE="nordrand pti=off spectre_v2=off l1tf=off nospec_store_bypass_disable no_stf_barrier"
+CONFIG_CMDLINE="nordrand pti=off spectre_v2=off l1tf=off nospec_store_bypass_disable no_stf_barrier printk.devkmsg=on"
 # CONFIG_CMDLINE_OVERRIDE is not set
 CONFIG_MODIFY_LDT_SYSCALL=y
 CONFIG_HAVE_LIVEPATCH=y

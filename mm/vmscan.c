@@ -79,6 +79,8 @@ struct scan_control {
 	 */
 	struct mem_cgroup *target_mem_cgroup;
 
+	int swappiness;
+
 	/*
 	 * Scan pressure balancing between anon and file LRUs
 	 */
@@ -2112,6 +2114,7 @@ unsigned long reclaim_pages(struct list_head *page_list)
 		.may_writepage = 1,
 		.may_unmap = 1,
 		.may_swap = 1,
+		.swappiness = vm_swappiness,
 	};
 
 	while (!list_empty(page_list)) {
@@ -2200,16 +2203,22 @@ static bool inactive_is_low(struct lruvec *lruvec, enum lru_list inactive_lru)
 	enum lru_list active_lru = inactive_lru + LRU_ACTIVE;
 	unsigned long inactive, active;
 	unsigned long inactive_ratio;
+#ifndef CONFIG_FIX_INACTIVE_RATIO
 	unsigned long gb;
+#endif
 
 	inactive = lruvec_page_state(lruvec, NR_LRU_BASE + inactive_lru);
 	active = lruvec_page_state(lruvec, NR_LRU_BASE + active_lru);
 
+#ifdef CONFIG_FIX_INACTIVE_RATIO
+	inactive_ratio = 1;
+#else
 	gb = (inactive + active) >> (30 - PAGE_SHIFT);
 	if (gb)
 		inactive_ratio = int_sqrt(10 * gb);
 	else
 		inactive_ratio = 1;
+#endif
 
 	return inactive * inactive_ratio < active;
 }
@@ -3239,7 +3248,16 @@ unsigned long try_to_free_pages(struct zonelist *zonelist, int order,
 		.priority = DEF_PRIORITY,
 		.may_writepage = !laptop_mode,
 		.may_unmap = 1,
+#ifdef CONFIG_DIRECT_RECLAIM_FILE_PAGES_ONLY
+		.may_swap = 0,
+#else
 		.may_swap = 1,
+#endif
+#ifdef CONFIG_ZSWAP
+		.swappiness = vm_swappiness / 2,
+#else
+		.swappiness = vm_swappiness,
+#endif
 	};
 
 	/*
@@ -3285,6 +3303,7 @@ unsigned long mem_cgroup_shrink_node(struct mem_cgroup *memcg,
 		.may_unmap = 1,
 		.reclaim_idx = MAX_NR_ZONES - 1,
 		.may_swap = !noswap,
+		.swappiness = vm_swappiness,
 	};
 
 	WARN_ON_ONCE(!current->reclaim_state);
@@ -3328,6 +3347,7 @@ unsigned long try_to_free_mem_cgroup_pages(struct mem_cgroup *memcg,
 		.may_writepage = !laptop_mode,
 		.may_unmap = 1,
 		.may_swap = may_swap,
+		.swappiness = vm_swappiness,
 	};
 	/*
 	 * Traverse the ZONELIST_FALLBACK zonelist of the current node to put
@@ -3549,6 +3569,7 @@ static int balance_pgdat(pg_data_t *pgdat, int order, int highest_zoneidx)
 		.gfp_mask = GFP_KERNEL,
 		.order = order,
 		.may_unmap = 1,
+		.swappiness = vm_swappiness,
 	};
 
 	set_task_reclaim_state(current, &sc.reclaim_state);
@@ -4005,6 +4026,7 @@ unsigned long shrink_all_memory(unsigned long nr_to_reclaim)
 		.may_writepage = 1,
 		.may_unmap = 1,
 		.may_swap = 1,
+		.swappiness = vm_swappiness,
 		.hibernation_mode = 1,
 	};
 	struct zonelist *zonelist = node_zonelist(numa_node_id(), sc.gfp_mask);
@@ -4160,6 +4182,7 @@ static int __node_reclaim(struct pglist_data *pgdat, gfp_t gfp_mask, unsigned in
 		.nr_to_reclaim = max(nr_pages, SWAP_CLUSTER_MAX),
 		.gfp_mask = current_gfp_context(gfp_mask),
 		.order = order,
+		.swappiness = vm_swappiness,
 		.priority = NODE_RECLAIM_PRIORITY,
 		.may_writepage = !!(node_reclaim_mode & RECLAIM_WRITE),
 		.may_unmap = !!(node_reclaim_mode & RECLAIM_UNMAP),

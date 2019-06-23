@@ -558,7 +558,7 @@ config ZSWAP
 choice
 	prompt "Compressed cache for swap pages default compressor"
 	depends on ZSWAP
-	default ZSWAP_COMPRESSOR_DEFAULT_LZO
+	default ZSWAP_COMPRESSOR_DEFAULT_LZ4
 	help
 	  Selects the default compression algorithm for the compressed cache
 	  for swap pages.

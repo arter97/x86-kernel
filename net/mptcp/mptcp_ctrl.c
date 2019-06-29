@@ -384,7 +384,7 @@ static void mptcp_set_key_sk(const struct sock *sk)
 		       &tp->mptcp_loc_token, NULL);
 }
 
-#ifdef HAVE_JUMP_LABEL
+#ifdef CONFIG_JUMP_LABEL
 static atomic_t mptcp_needed_deferred;
 static atomic_t mptcp_wanted;
 
@@ -405,7 +405,7 @@ static DECLARE_WORK(mptcp_work, mptcp_clear);
 
 static void mptcp_enable_static_key_bh(void)
 {
-#ifdef HAVE_JUMP_LABEL
+#ifdef CONFIG_JUMP_LABEL
 	int wanted;
 
 	while (1) {
@@ -424,7 +424,7 @@ static void mptcp_enable_static_key_bh(void)
 
 static void mptcp_enable_static_key(void)
 {
-#ifdef HAVE_JUMP_LABEL
+#ifdef CONFIG_JUMP_LABEL
 	atomic_inc(&mptcp_wanted);
 	static_key_enable(&mptcp_static_key);
 #else
@@ -434,7 +434,7 @@ static void mptcp_enable_static_key(void)
 
 void mptcp_disable_static_key(void)
 {
-#ifdef HAVE_JUMP_LABEL
+#ifdef CONFIG_JUMP_LABEL
 	int wanted;
 
 	while (1) {
@@ -3093,7 +3093,7 @@ void __init mptcp_init(void)
 	if (mptcp_register_scheduler(&mptcp_sched_default))
 		goto register_sched_failed;
 
-	pr_info("MPTCP: Stable release v0.95-rc");
+	pr_info("MPTCP: Stable release v0.95");
 
 	mptcp_init_failed = false;
 

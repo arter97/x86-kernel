@@ -286,7 +286,7 @@ struct mptcp_cb {
 
 #define MPTCP_SCHED_DATA_SIZE 8
 	u8 mptcp_sched[MPTCP_SCHED_DATA_SIZE] __aligned(8);
-	struct mptcp_sched_ops *sched_ops;
+	const struct mptcp_sched_ops *sched_ops;
 
 	struct sk_buff_head reinject_queue;
 	/* First cache-line boundary is here minus 8 bytes. But from the
@@ -327,7 +327,7 @@ struct mptcp_cb {
 
 #define MPTCP_PM_SIZE 608
 	u8 mptcp_pm[MPTCP_PM_SIZE] __aligned(8);
-	struct mptcp_pm_ops *pm_ops;
+	const struct mptcp_pm_ops *pm_ops;
 
 	unsigned long path_index_bits;
 
@@ -1196,6 +1196,7 @@ static inline void mptcp_set_rto(struct sock *sk)
 
 		if ((mptcp_sk_can_send(sk_it) || sk_it->sk_state == TCP_SYN_RECV) &&
 		    inet_csk(sk_it)->icsk_retransmits == 0 &&
+		    inet_csk(sk_it)->icsk_backoff == 0 &&
 		    inet_csk(sk_it)->icsk_rto > max_rto)
 			max_rto = inet_csk(sk_it)->icsk_rto;
 	}

@@ -2,8 +2,8 @@
 VERSION = 5
 PATCHLEVEL = 2
 SUBLEVEL = 0
-EXTRAVERSION =
-NAME = Bobtail Squid
+EXTRAVERSION = -zen
+NAME = The Beauty and the Bug
 
 # *DOCUMENTATION*
 # To see a list of typical targets execute "make help"

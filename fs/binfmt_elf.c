@@ -833,10 +833,12 @@ static int load_elf_binary(struct linux_binprm *bprm)
 	unsigned long reloc_func_desc __maybe_unused = 0;
 	int executable_stack = EXSTACK_DEFAULT;
 	struct elfhdr *elf_ex = (struct elfhdr *)bprm->buf;
-	struct elfhdr *interp_elf_ex = NULL;
+	struct elfhdr interp_elf_ex;
 	struct arch_elf_state arch_state = INIT_ARCH_ELF_STATE;
 	struct mm_struct *mm;
 	struct pt_regs *regs;
+	char elf_interpreter[PATH_MAX] __aligned(sizeof(long));
+	bool interp_present = false;
 
 	retval = -ENOEXEC;
 	/* First of all, some simple consistency checks */
@@ -858,8 +860,6 @@ static int load_elf_binary(struct linux_binprm *bprm)
 
 	elf_ppnt = elf_phdata;
 	for (i = 0; i < elf_ex->e_phnum; i++, elf_ppnt++) {
-		char *elf_interpreter;
-
 		if (elf_ppnt->p_type == PT_GNU_PROPERTY) {
 			elf_property_phdata = elf_ppnt;
 			continue;
@@ -876,22 +876,18 @@ static int load_elf_binary(struct linux_binprm *bprm)
 		if (elf_ppnt->p_filesz > PATH_MAX || elf_ppnt->p_filesz < 2)
 			goto out_free_ph;
 
-		retval = -ENOMEM;
-		elf_interpreter = kmalloc(elf_ppnt->p_filesz, GFP_KERNEL);
-		if (!elf_interpreter)
-			goto out_free_ph;
+		interp_present = true;
 
 		retval = elf_read(bprm->file, elf_interpreter, elf_ppnt->p_filesz,
 				  elf_ppnt->p_offset);
 		if (retval < 0)
-			goto out_free_interp;
+			goto out_free_ph;
 		/* make sure path is NULL terminated */
 		retval = -ENOEXEC;
 		if (elf_interpreter[elf_ppnt->p_filesz - 1] != '\0')
-			goto out_free_interp;
+			goto out_free_ph;
 
 		interpreter = open_exec(elf_interpreter);
-		kfree(elf_interpreter);
 		retval = PTR_ERR(interpreter);
 		if (IS_ERR(interpreter))
 			goto out_free_ph;
@@ -902,23 +898,13 @@ static int load_elf_binary(struct linux_binprm *bprm)
 		 */
 		would_dump(bprm, interpreter);
 
-		interp_elf_ex = kmalloc(sizeof(*interp_elf_ex), GFP_KERNEL);
-		if (!interp_elf_ex) {
-			retval = -ENOMEM;
-			goto out_free_file;
-		}
-
 		/* Get the exec headers */
-		retval = elf_read(interpreter, interp_elf_ex,
-				  sizeof(*interp_elf_ex), 0);
+		retval = elf_read(interpreter, &interp_elf_ex,
+				  sizeof(interp_elf_ex), 0);
 		if (retval < 0)
 			goto out_free_dentry;
 
 		break;
-
-out_free_interp:
-		kfree(elf_interpreter);
-		goto out_free_ph;
 	}
 
 	elf_ppnt = elf_phdata;
@@ -941,18 +927,18 @@ out_free_interp:
 		}
 
 	/* Some simple consistency checks for the interpreter */
-	if (interpreter) {
+	if (interp_present) {
 		retval = -ELIBBAD;
 		/* Not an ELF interpreter */
-		if (memcmp(interp_elf_ex->e_ident, ELFMAG, SELFMAG) != 0)
+		if (memcmp(interp_elf_ex.e_ident, ELFMAG, SELFMAG) != 0)
 			goto out_free_dentry;
 		/* Verify the interpreter has a valid arch */
-		if (!elf_check_arch(interp_elf_ex) ||
-		    elf_check_fdpic(interp_elf_ex))
+		if (!elf_check_arch(&interp_elf_ex) ||
+		    elf_check_fdpic(&interp_elf_ex))
 			goto out_free_dentry;
 
 		/* Load the interpreter program headers */
-		interp_elf_phdata = load_elf_phdrs(interp_elf_ex,
+		interp_elf_phdata = load_elf_phdrs(&interp_elf_ex,
 						   interpreter);
 		if (!interp_elf_phdata)
 			goto out_free_dentry;
@@ -960,14 +946,14 @@ out_free_interp:
 		/* Pass PT_LOPROC..PT_HIPROC headers to arch code */
 		elf_property_phdata = NULL;
 		elf_ppnt = interp_elf_phdata;
-		for (i = 0; i < interp_elf_ex->e_phnum; i++, elf_ppnt++)
+		for (i = 0; i < interp_elf_ex.e_phnum; i++, elf_ppnt++)
 			switch (elf_ppnt->p_type) {
 			case PT_GNU_PROPERTY:
 				elf_property_phdata = elf_ppnt;
 				break;
 
 			case PT_LOPROC ... PT_HIPROC:
-				retval = arch_elf_pt_proc(interp_elf_ex,
+				retval = arch_elf_pt_proc(&interp_elf_ex,
 							  elf_ppnt, interpreter,
 							  true, &arch_state);
 				if (retval)
@@ -987,7 +973,7 @@ out_free_interp:
 	 * the exec syscall.
 	 */
 	retval = arch_check_elf(elf_ex,
-				!!interpreter, interp_elf_ex,
+				!!interpreter, &interp_elf_ex,
 				&arch_state);
 	if (retval)
 		goto out_free_dentry;
@@ -1083,7 +1069,7 @@ out_free_interp:
 			 * independently randomized mmap region (0 load_bias
 			 * without MAP_FIXED nor MAP_FIXED_NOREPLACE).
 			 */
-			if (interpreter) {
+			if (interp_present) {
 				load_bias = ELF_ET_DYN_BASE;
 				if (current->flags & PF_RANDOMIZE)
 					load_bias += arch_mmap_rnd();
@@ -1196,8 +1182,8 @@ out_free_interp:
 
 	current->mm->start_brk = current->mm->brk = ELF_PAGEALIGN(elf_brk);
 
-	if (interpreter) {
-		elf_entry = load_elf_interp(interp_elf_ex,
+	if (interp_present) {
+		elf_entry = load_elf_interp(&interp_elf_ex,
 					    interpreter,
 					    load_bias, interp_elf_phdata,
 					    &arch_state);
@@ -1207,7 +1193,7 @@ out_free_interp:
 			 * adjustment
 			 */
 			interp_load_addr = elf_entry;
-			elf_entry += interp_elf_ex->e_entry;
+			elf_entry += interp_elf_ex.e_entry;
 		}
 		if (BAD_ADDR(elf_entry)) {
 			retval = IS_ERR_VALUE(elf_entry) ?
@@ -1219,7 +1205,6 @@ out_free_interp:
 		allow_write_access(interpreter);
 		fput(interpreter);
 
-		kfree(interp_elf_ex);
 		kfree(interp_elf_phdata);
 	} else {
 		elf_entry = e_entry;
@@ -1234,7 +1219,7 @@ out_free_interp:
 	set_binfmt(&elf_format);
 
 #ifdef ARCH_HAS_SETUP_ADDITIONAL_PAGES
-	retval = ARCH_SETUP_ADDITIONAL_PAGES(bprm, elf_ex, !!interpreter);
+	retval = ARCH_SETUP_ADDITIONAL_PAGES(bprm, elf_ex, interp_present);
 	if (retval < 0)
 		goto out;
 #endif /* ARCH_HAS_SETUP_ADDITIONAL_PAGES */
@@ -1302,9 +1287,7 @@ out:
 
 	/* error cleanup */
 out_free_dentry:
-	kfree(interp_elf_ex);
 	kfree(interp_elf_phdata);
-out_free_file:
 	allow_write_access(interpreter);
 	if (interpreter)
 		fput(interpreter);

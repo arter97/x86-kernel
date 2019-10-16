@@ -419,7 +419,7 @@ pipe_write(struct kiocb *iocb, struct iov_iter *from)
 
 	tail = pipe->tail;
 	head = pipe->head;
-	max_usage = pipe->ring_size;
+	max_usage = pipe->max_usage;
 	mask = pipe->ring_size - 1;
 
 	/* We try to merge small writes */
@@ -586,7 +586,7 @@ pipe_poll(struct file *filp, poll_table *wait)
 	}
 
 	if (filp->f_mode & FMODE_WRITE) {
-		if (!pipe_full(head, tail, pipe->ring_size))
+		if (!pipe_full(head, tail, pipe->max_usage))
 			mask |= EPOLLOUT | EPOLLWRNORM;
 		/*
 		 * Most Unices do not set EPOLLERR for FIFOs but on Linux they
@@ -711,6 +711,7 @@ struct pipe_inode_info *alloc_pipe_info(void)
 	if (pipe->bufs) {
 		init_waitqueue_head(&pipe->wait);
 		pipe->r_counter = pipe->w_counter = 1;
+		pipe->max_usage = pipe_bufs;
 		pipe->ring_size = pipe_bufs;
 		pipe->user = user;
 		mutex_init(&pipe->mutex);
@@ -1167,9 +1168,10 @@ static long pipe_set_size(struct pipe_inode_info *pipe, unsigned long arg)
 	kfree(pipe->bufs);
 	pipe->bufs = bufs;
 	pipe->ring_size = nr_slots;
+	pipe->max_usage = nr_slots;
 	pipe->tail = tail;
 	pipe->head = head;
-	return pipe->ring_size * PAGE_SIZE;
+	return pipe->max_usage * PAGE_SIZE;
 
 out_revert_acct:
 	(void) account_pipe_buffers(pipe->user, nr_slots, pipe->ring_size);
@@ -1202,7 +1204,7 @@ long pipe_fcntl(struct file *file, unsigned int cmd, unsigned long arg)
 		ret = pipe_set_size(pipe, arg);
 		break;
 	case F_GETPIPE_SZ:
-		ret = pipe->ring_size * PAGE_SIZE;
+		ret = pipe->max_usage * PAGE_SIZE;
 		break;
 	default:
 		ret = -EINVAL;

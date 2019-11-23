@@ -119,7 +119,7 @@
 #define HCLGE_DEFAULT_UMV_SPACE_PER_PF \
 	(HCLGE_UMV_TBL_SIZE / HCLGE_MAX_PF_NUM)
 
-#define HCLGE_TQP_RESET_TRY_TIMES	10
+#define HCLGE_TQP_RESET_TRY_TIMES	200
 
 #define HCLGE_PHY_PAGE_MDIX		0
 #define HCLGE_PHY_PAGE_COPPER		0
@@ -148,6 +148,8 @@ enum HLCGE_PORT_TYPE {
 	NETWORK_PORT
 };
 
+#define PF_VPORT_ID			0
+
 #define HCLGE_PF_ID_S			0
 #define HCLGE_PF_ID_M			GENMASK(2, 0)
 #define HCLGE_VF_ID_S			3
@@ -164,6 +166,7 @@ enum HLCGE_PORT_TYPE {
 #define HCLGE_GLOBAL_RESET_BIT		0
 #define HCLGE_CORE_RESET_BIT		1
 #define HCLGE_IMP_RESET_BIT		2
+#define HCLGE_RESET_INT_M		GENMASK(2, 0)
 #define HCLGE_FUN_RST_ING		0x20C00
 #define HCLGE_FUN_RST_ING_B		0
 
@@ -178,6 +181,8 @@ enum HLCGE_PORT_TYPE {
 #define HCLGE_VECTOR0_RX_CMDQ_INT_B	1
 
 #define HCLGE_VECTOR0_IMP_RESET_INT_B	1
+#define HCLGE_VECTOR0_IMP_CMDQ_ERR_B	4U
+#define HCLGE_VECTOR0_IMP_RD_POISON_B	5U
 
 #define HCLGE_MAC_DEFAULT_FRAME \
 	(ETH_HLEN + ETH_FCS_LEN + 2 * VLAN_HLEN + ETH_DATA_LEN)
@@ -537,50 +542,6 @@ enum HCLGE_FD_META_DATA {
 struct key_info {
 	u8 key_type;
 	u8 key_length; /* use bit as unit */
-};
-
-static const struct key_info meta_data_key_info[] = {
-	{ PACKET_TYPE_ID, 6},
-	{ IP_FRAGEMENT, 1},
-	{ ROCE_TYPE, 1},
-	{ NEXT_KEY, 5},
-	{ VLAN_NUMBER, 2},
-	{ SRC_VPORT, 12},
-	{ DST_VPORT, 12},
-	{ TUNNEL_PACKET, 1},
-};
-
-static const struct key_info tuple_key_info[] = {
-	{ OUTER_DST_MAC, 48},
-	{ OUTER_SRC_MAC, 48},
-	{ OUTER_VLAN_TAG_FST, 16},
-	{ OUTER_VLAN_TAG_SEC, 16},
-	{ OUTER_ETH_TYPE, 16},
-	{ OUTER_L2_RSV, 16},
-	{ OUTER_IP_TOS, 8},
-	{ OUTER_IP_PROTO, 8},
-	{ OUTER_SRC_IP, 32},
-	{ OUTER_DST_IP, 32},
-	{ OUTER_L3_RSV, 16},
-	{ OUTER_SRC_PORT, 16},
-	{ OUTER_DST_PORT, 16},
-	{ OUTER_L4_RSV, 32},
-	{ OUTER_TUN_VNI, 24},
-	{ OUTER_TUN_FLOW_ID, 8},
-	{ INNER_DST_MAC, 48},
-	{ INNER_SRC_MAC, 48},
-	{ INNER_VLAN_TAG_FST, 16},
-	{ INNER_VLAN_TAG_SEC, 16},
-	{ INNER_ETH_TYPE, 16},
-	{ INNER_L2_RSV, 16},
-	{ INNER_IP_TOS, 8},
-	{ INNER_IP_PROTO, 8},
-	{ INNER_SRC_IP, 32},
-	{ INNER_DST_IP, 32},
-	{ INNER_L3_RSV, 16},
-	{ INNER_SRC_PORT, 16},
-	{ INNER_DST_PORT, 16},
-	{ INNER_L4_RSV, 32},
 };
 
 #define MAX_KEY_LENGTH	400
@@ -1031,4 +992,6 @@ int hclge_push_vf_port_base_vlan_info(struct hclge_vport *vport, u8 vfid,
 void hclge_task_schedule(struct hclge_dev *hdev, unsigned long delay_time);
 int hclge_query_bd_num_cmd_send(struct hclge_dev *hdev,
 				struct hclge_desc *desc);
+void hclge_report_hw_error(struct hclge_dev *hdev,
+			   enum hnae3_hw_error_type type);
 #endif

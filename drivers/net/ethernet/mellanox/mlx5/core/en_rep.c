@@ -763,6 +763,7 @@ mlx5e_rep_indr_setup_tc_block(struct net_device *netdev,
 	if (f->binder_type != FLOW_BLOCK_BINDER_TYPE_CLSACT_INGRESS)
 		return -EOPNOTSUPP;
 
+	f->unlocked_driver_cb = true;
 	f->driver_block_list = &mlx5e_block_cb_list;
 
 	switch (f->command) {
@@ -1245,9 +1246,11 @@ static int mlx5e_rep_setup_tc(struct net_device *dev, enum tc_setup_type type,
 			      void *type_data)
 {
 	struct mlx5e_priv *priv = netdev_priv(dev);
+	struct flow_block_offload *f = type_data;
 
 	switch (type) {
 	case TC_SETUP_BLOCK:
+		f->unlocked_driver_cb = true;
 		return flow_block_cb_setup_simple(type_data,
 						  &mlx5e_rep_block_cb_list,
 						  mlx5e_rep_setup_tc_cb,
@@ -1618,7 +1621,7 @@ static int mlx5e_init_rep_tx(struct mlx5e_priv *priv)
 {
 	struct mlx5e_rep_priv *rpriv = priv->ppriv;
 	struct mlx5_rep_uplink_priv *uplink_priv;
-	int tc, err;
+	int err;
 
 	err = mlx5e_create_tises(priv);
 	if (err) {
@@ -1654,18 +1657,15 @@ static int mlx5e_init_rep_tx(struct mlx5e_priv *priv)
 tc_esw_cleanup:
 	mlx5e_tc_esw_cleanup(&uplink_priv->tc_ht);
 destroy_tises:
-	for (tc = 0; tc < priv->profile->max_tc; tc++)
-		mlx5e_destroy_tis(priv->mdev, priv->tisn[tc]);
+	mlx5e_destroy_tises(priv);
 	return err;
 }
 
 static void mlx5e_cleanup_rep_tx(struct mlx5e_priv *priv)
 {
 	struct mlx5e_rep_priv *rpriv = priv->ppriv;
-	int tc;
 
-	for (tc = 0; tc < priv->profile->max_tc; tc++)
-		mlx5e_destroy_tis(priv->mdev, priv->tisn[tc]);
+	mlx5e_destroy_tises(priv);
 
 	if (rpriv->rep->vport == MLX5_VPORT_UPLINK) {
 		/* clean indirect TC block notifications */

@@ -2054,26 +2054,93 @@ static int mv88e6xxx_setup_egress_floods(struct mv88e6xxx_chip *chip, int port)
 	return 0;
 }
 
+static irqreturn_t mv88e6xxx_serdes_irq_thread_fn(int irq, void *dev_id)
+{
+	struct mv88e6xxx_port *mvp = dev_id;
+	struct mv88e6xxx_chip *chip = mvp->chip;
+	irqreturn_t ret = IRQ_NONE;
+	int port = mvp->port;
+	u8 lane;
+
+	mv88e6xxx_reg_lock(chip);
+	lane = mv88e6xxx_serdes_get_lane(chip, port);
+	if (lane)
+		ret = mv88e6xxx_serdes_irq_status(chip, port, lane);
+	mv88e6xxx_reg_unlock(chip);
+
+	return ret;
+}
+
+static int mv88e6xxx_serdes_irq_request(struct mv88e6xxx_chip *chip, int port,
+					u8 lane)
+{
+	struct mv88e6xxx_port *dev_id = &chip->ports[port];
+	unsigned int irq;
+	int err;
+
+	/* Nothing to request if this SERDES port has no IRQ */
+	irq = mv88e6xxx_serdes_irq_mapping(chip, port);
+	if (!irq)
+		return 0;
+
+	/* Requesting the IRQ will trigger IRQ callbacks, so release the lock */
+	mv88e6xxx_reg_unlock(chip);
+	err = request_threaded_irq(irq, NULL, mv88e6xxx_serdes_irq_thread_fn,
+				   IRQF_ONESHOT, "mv88e6xxx-serdes", dev_id);
+	mv88e6xxx_reg_lock(chip);
+	if (err)
+		return err;
+
+	dev_id->serdes_irq = irq;
+
+	return mv88e6xxx_serdes_irq_enable(chip, port, lane);
+}
+
+static int mv88e6xxx_serdes_irq_free(struct mv88e6xxx_chip *chip, int port,
+				     u8 lane)
+{
+	struct mv88e6xxx_port *dev_id = &chip->ports[port];
+	unsigned int irq = dev_id->serdes_irq;
+	int err;
+
+	/* Nothing to free if no IRQ has been requested */
+	if (!irq)
+		return 0;
+
+	err = mv88e6xxx_serdes_irq_disable(chip, port, lane);
+
+	/* Freeing the IRQ will trigger IRQ callbacks, so release the lock */
+	mv88e6xxx_reg_unlock(chip);
+	free_irq(irq, dev_id);
+	mv88e6xxx_reg_lock(chip);
+
+	dev_id->serdes_irq = 0;
+
+	return err;
+}
+
 static int mv88e6xxx_serdes_power(struct mv88e6xxx_chip *chip, int port,
 				  bool on)
 {
+	u8 lane;
 	int err;
 
-	if (!chip->info->ops->serdes_power)
+	lane = mv88e6xxx_serdes_get_lane(chip, port);
+	if (!lane)
 		return 0;
 
 	if (on) {
-		err = chip->info->ops->serdes_power(chip, port, true);
+		err = mv88e6xxx_serdes_power_up(chip, port, lane);
 		if (err)
 			return err;
 
-		if (chip->info->ops->serdes_irq_setup)
-			err = chip->info->ops->serdes_irq_setup(chip, port);
+		err = mv88e6xxx_serdes_irq_request(chip, port, lane);
 	} else {
-		if (chip->info->ops->serdes_irq_free)
-			chip->info->ops->serdes_irq_free(chip, port);
+		err = mv88e6xxx_serdes_irq_free(chip, port, lane);
+		if (err)
+			return err;
 
-		err = chip->info->ops->serdes_power(chip, port, false);
+		err = mv88e6xxx_serdes_power_down(chip, port, lane);
 	}
 
 	return err;
@@ -2317,60 +2384,6 @@ static int mv88e6xxx_stats_setup(struct mv88e6xxx_chip *chip)
 	return mv88e6xxx_g1_stats_clear(chip);
 }
 
-/* The mv88e6390 has some hidden registers used for debug and
- * development. The errata also makes use of them.
- */
-static int mv88e6390_hidden_write(struct mv88e6xxx_chip *chip, int port,
-				  int reg, u16 val)
-{
-	u16 ctrl;
-	int err;
-
-	err = mv88e6xxx_port_write(chip, PORT_RESERVED_1A_DATA_PORT,
-				   PORT_RESERVED_1A, val);
-	if (err)
-		return err;
-
-	ctrl = PORT_RESERVED_1A_BUSY | PORT_RESERVED_1A_WRITE |
-	       PORT_RESERVED_1A_BLOCK | port << PORT_RESERVED_1A_PORT_SHIFT |
-	       reg;
-
-	return mv88e6xxx_port_write(chip, PORT_RESERVED_1A_CTRL_PORT,
-				    PORT_RESERVED_1A, ctrl);
-}
-
-static int mv88e6390_hidden_wait(struct mv88e6xxx_chip *chip)
-{
-	int bit = __bf_shf(PORT_RESERVED_1A_BUSY);
-
-	return mv88e6xxx_wait_bit(chip, PORT_RESERVED_1A_CTRL_PORT,
-				  PORT_RESERVED_1A, bit, 0);
-}
-
-
-static int mv88e6390_hidden_read(struct mv88e6xxx_chip *chip, int port,
-				  int reg, u16 *val)
-{
-	u16 ctrl;
-	int err;
-
-	ctrl = PORT_RESERVED_1A_BUSY | PORT_RESERVED_1A_READ |
-	       PORT_RESERVED_1A_BLOCK | port << PORT_RESERVED_1A_PORT_SHIFT |
-	       reg;
-
-	err = mv88e6xxx_port_write(chip, PORT_RESERVED_1A_CTRL_PORT,
-				   PORT_RESERVED_1A, ctrl);
-	if (err)
-		return err;
-
-	err = mv88e6390_hidden_wait(chip);
-	if (err)
-		return err;
-
-	return 	mv88e6xxx_port_read(chip, PORT_RESERVED_1A_DATA_PORT,
-				    PORT_RESERVED_1A, val);
-}
-
 /* Check if the errata has already been applied. */
 static bool mv88e6390_setup_errata_applied(struct mv88e6xxx_chip *chip)
 {
@@ -2379,7 +2392,7 @@ static bool mv88e6390_setup_errata_applied(struct mv88e6xxx_chip *chip)
 	u16 val;
 
 	for (port = 0; port < mv88e6xxx_num_ports(chip); port++) {
-		err = mv88e6390_hidden_read(chip, port, 0, &val);
+		err = mv88e6xxx_port_hidden_read(chip, 0xf, port, 0, &val);
 		if (err) {
 			dev_err(chip->dev,
 				"Error reading hidden register: %d\n", err);
@@ -2412,7 +2425,7 @@ static int mv88e6390_setup_errata(struct mv88e6xxx_chip *chip)
 	}
 
 	for (port = 0; port < mv88e6xxx_num_ports(chip); port++) {
-		err = mv88e6390_hidden_write(chip, port, 0, 0x01c0);
+		err = mv88e6xxx_port_hidden_write(chip, 0xf, port, 0, 0x01c0);
 		if (err)
 			return err;
 	}
@@ -2967,6 +2980,7 @@ static const struct mv88e6xxx_ops mv88e6141_ops = {
 	.port_disable_pri_override = mv88e6xxx_port_disable_pri_override,
 	.port_link_state = mv88e6352_port_link_state,
 	.port_get_cmode = mv88e6352_port_get_cmode,
+	.port_set_cmode = mv88e6341_port_set_cmode,
 	.port_setup_message_port = mv88e6xxx_setup_message_port,
 	.stats_snapshot = mv88e6390_g1_stats_snapshot,
 	.stats_set_histogram = mv88e6095_g1_stats_set_histogram,
@@ -2981,7 +2995,11 @@ static const struct mv88e6xxx_ops mv88e6141_ops = {
 	.reset = mv88e6352_g1_reset,
 	.vtu_getnext = mv88e6352_g1_vtu_getnext,
 	.vtu_loadpurge = mv88e6352_g1_vtu_loadpurge,
-	.serdes_power = mv88e6341_serdes_power,
+	.serdes_power = mv88e6390_serdes_power,
+	.serdes_get_lane = mv88e6341_serdes_get_lane,
+	.serdes_irq_mapping = mv88e6390_serdes_irq_mapping,
+	.serdes_irq_enable = mv88e6390_serdes_irq_enable,
+	.serdes_irq_status = mv88e6390_serdes_irq_status,
 	.gpio_ops = &mv88e6352_gpio_ops,
 	.phylink_validate = mv88e6341_phylink_validate,
 };
@@ -3141,6 +3159,7 @@ static const struct mv88e6xxx_ops mv88e6172_ops = {
 	.rmu_disable = mv88e6352_g1_rmu_disable,
 	.vtu_getnext = mv88e6352_g1_vtu_getnext,
 	.vtu_loadpurge = mv88e6352_g1_vtu_loadpurge,
+	.serdes_get_lane = mv88e6352_serdes_get_lane,
 	.serdes_power = mv88e6352_serdes_power,
 	.gpio_ops = &mv88e6352_gpio_ops,
 	.phylink_validate = mv88e6352_phylink_validate,
@@ -3226,9 +3245,11 @@ static const struct mv88e6xxx_ops mv88e6176_ops = {
 	.rmu_disable = mv88e6352_g1_rmu_disable,
 	.vtu_getnext = mv88e6352_g1_vtu_getnext,
 	.vtu_loadpurge = mv88e6352_g1_vtu_loadpurge,
+	.serdes_get_lane = mv88e6352_serdes_get_lane,
 	.serdes_power = mv88e6352_serdes_power,
-	.serdes_irq_setup = mv88e6352_serdes_irq_setup,
-	.serdes_irq_free = mv88e6352_serdes_irq_free,
+	.serdes_irq_mapping = mv88e6352_serdes_irq_mapping,
+	.serdes_irq_enable = mv88e6352_serdes_irq_enable,
+	.serdes_irq_status = mv88e6352_serdes_irq_status,
 	.gpio_ops = &mv88e6352_gpio_ops,
 	.phylink_validate = mv88e6352_phylink_validate,
 };
@@ -3309,8 +3330,10 @@ static const struct mv88e6xxx_ops mv88e6190_ops = {
 	.vtu_getnext = mv88e6390_g1_vtu_getnext,
 	.vtu_loadpurge = mv88e6390_g1_vtu_loadpurge,
 	.serdes_power = mv88e6390_serdes_power,
-	.serdes_irq_setup = mv88e6390_serdes_irq_setup,
-	.serdes_irq_free = mv88e6390_serdes_irq_free,
+	.serdes_get_lane = mv88e6390_serdes_get_lane,
+	.serdes_irq_mapping = mv88e6390_serdes_irq_mapping,
+	.serdes_irq_enable = mv88e6390_serdes_irq_enable,
+	.serdes_irq_status = mv88e6390_serdes_irq_status,
 	.gpio_ops = &mv88e6352_gpio_ops,
 	.phylink_validate = mv88e6390_phylink_validate,
 };
@@ -3354,9 +3377,11 @@ static const struct mv88e6xxx_ops mv88e6190x_ops = {
 	.rmu_disable = mv88e6390_g1_rmu_disable,
 	.vtu_getnext = mv88e6390_g1_vtu_getnext,
 	.vtu_loadpurge = mv88e6390_g1_vtu_loadpurge,
-	.serdes_power = mv88e6390x_serdes_power,
-	.serdes_irq_setup = mv88e6390x_serdes_irq_setup,
-	.serdes_irq_free = mv88e6390x_serdes_irq_free,
+	.serdes_power = mv88e6390_serdes_power,
+	.serdes_get_lane = mv88e6390x_serdes_get_lane,
+	.serdes_irq_mapping = mv88e6390_serdes_irq_mapping,
+	.serdes_irq_enable = mv88e6390_serdes_irq_enable,
+	.serdes_irq_status = mv88e6390_serdes_irq_status,
 	.gpio_ops = &mv88e6352_gpio_ops,
 	.phylink_validate = mv88e6390x_phylink_validate,
 };
@@ -3401,8 +3426,10 @@ static const struct mv88e6xxx_ops mv88e6191_ops = {
 	.vtu_getnext = mv88e6390_g1_vtu_getnext,
 	.vtu_loadpurge = mv88e6390_g1_vtu_loadpurge,
 	.serdes_power = mv88e6390_serdes_power,
-	.serdes_irq_setup = mv88e6390_serdes_irq_setup,
-	.serdes_irq_free = mv88e6390_serdes_irq_free,
+	.serdes_get_lane = mv88e6390_serdes_get_lane,
+	.serdes_irq_mapping = mv88e6390_serdes_irq_mapping,
+	.serdes_irq_enable = mv88e6390_serdes_irq_enable,
+	.serdes_irq_status = mv88e6390_serdes_irq_status,
 	.avb_ops = &mv88e6390_avb_ops,
 	.ptp_ops = &mv88e6352_ptp_ops,
 	.phylink_validate = mv88e6390_phylink_validate,
@@ -3448,9 +3475,11 @@ static const struct mv88e6xxx_ops mv88e6240_ops = {
 	.rmu_disable = mv88e6352_g1_rmu_disable,
 	.vtu_getnext = mv88e6352_g1_vtu_getnext,
 	.vtu_loadpurge = mv88e6352_g1_vtu_loadpurge,
+	.serdes_get_lane = mv88e6352_serdes_get_lane,
 	.serdes_power = mv88e6352_serdes_power,
-	.serdes_irq_setup = mv88e6352_serdes_irq_setup,
-	.serdes_irq_free = mv88e6352_serdes_irq_free,
+	.serdes_irq_mapping = mv88e6352_serdes_irq_mapping,
+	.serdes_irq_enable = mv88e6352_serdes_irq_enable,
+	.serdes_irq_status = mv88e6352_serdes_irq_status,
 	.gpio_ops = &mv88e6352_gpio_ops,
 	.avb_ops = &mv88e6352_avb_ops,
 	.ptp_ops = &mv88e6352_ptp_ops,
@@ -3537,8 +3566,10 @@ static const struct mv88e6xxx_ops mv88e6290_ops = {
 	.vtu_getnext = mv88e6390_g1_vtu_getnext,
 	.vtu_loadpurge = mv88e6390_g1_vtu_loadpurge,
 	.serdes_power = mv88e6390_serdes_power,
-	.serdes_irq_setup = mv88e6390_serdes_irq_setup,
-	.serdes_irq_free = mv88e6390_serdes_irq_free,
+	.serdes_get_lane = mv88e6390_serdes_get_lane,
+	.serdes_irq_mapping = mv88e6390_serdes_irq_mapping,
+	.serdes_irq_enable = mv88e6390_serdes_irq_enable,
+	.serdes_irq_status = mv88e6390_serdes_irq_status,
 	.gpio_ops = &mv88e6352_gpio_ops,
 	.avb_ops = &mv88e6390_avb_ops,
 	.ptp_ops = &mv88e6352_ptp_ops,
@@ -3657,6 +3688,7 @@ static const struct mv88e6xxx_ops mv88e6341_ops = {
 	.port_disable_pri_override = mv88e6xxx_port_disable_pri_override,
 	.port_link_state = mv88e6352_port_link_state,
 	.port_get_cmode = mv88e6352_port_get_cmode,
+	.port_set_cmode = mv88e6341_port_set_cmode,
 	.port_setup_message_port = mv88e6xxx_setup_message_port,
 	.stats_snapshot = mv88e6390_g1_stats_snapshot,
 	.stats_set_histogram = mv88e6095_g1_stats_set_histogram,
@@ -3671,7 +3703,11 @@ static const struct mv88e6xxx_ops mv88e6341_ops = {
 	.reset = mv88e6352_g1_reset,
 	.vtu_getnext = mv88e6352_g1_vtu_getnext,
 	.vtu_loadpurge = mv88e6352_g1_vtu_loadpurge,
-	.serdes_power = mv88e6341_serdes_power,
+	.serdes_power = mv88e6390_serdes_power,
+	.serdes_get_lane = mv88e6341_serdes_get_lane,
+	.serdes_irq_mapping = mv88e6390_serdes_irq_mapping,
+	.serdes_irq_enable = mv88e6390_serdes_irq_enable,
+	.serdes_irq_status = mv88e6390_serdes_irq_status,
 	.gpio_ops = &mv88e6352_gpio_ops,
 	.avb_ops = &mv88e6390_avb_ops,
 	.ptp_ops = &mv88e6352_ptp_ops,
@@ -3800,9 +3836,11 @@ static const struct mv88e6xxx_ops mv88e6352_ops = {
 	.rmu_disable = mv88e6352_g1_rmu_disable,
 	.vtu_getnext = mv88e6352_g1_vtu_getnext,
 	.vtu_loadpurge = mv88e6352_g1_vtu_loadpurge,
+	.serdes_get_lane = mv88e6352_serdes_get_lane,
 	.serdes_power = mv88e6352_serdes_power,
-	.serdes_irq_setup = mv88e6352_serdes_irq_setup,
-	.serdes_irq_free = mv88e6352_serdes_irq_free,
+	.serdes_irq_mapping = mv88e6352_serdes_irq_mapping,
+	.serdes_irq_enable = mv88e6352_serdes_irq_enable,
+	.serdes_irq_status = mv88e6352_serdes_irq_status,
 	.gpio_ops = &mv88e6352_gpio_ops,
 	.avb_ops = &mv88e6352_avb_ops,
 	.ptp_ops = &mv88e6352_ptp_ops,
@@ -3854,8 +3892,10 @@ static const struct mv88e6xxx_ops mv88e6390_ops = {
 	.vtu_getnext = mv88e6390_g1_vtu_getnext,
 	.vtu_loadpurge = mv88e6390_g1_vtu_loadpurge,
 	.serdes_power = mv88e6390_serdes_power,
-	.serdes_irq_setup = mv88e6390_serdes_irq_setup,
-	.serdes_irq_free = mv88e6390_serdes_irq_free,
+	.serdes_get_lane = mv88e6390_serdes_get_lane,
+	.serdes_irq_mapping = mv88e6390_serdes_irq_mapping,
+	.serdes_irq_enable = mv88e6390_serdes_irq_enable,
+	.serdes_irq_status = mv88e6390_serdes_irq_status,
 	.gpio_ops = &mv88e6352_gpio_ops,
 	.avb_ops = &mv88e6390_avb_ops,
 	.ptp_ops = &mv88e6352_ptp_ops,
@@ -3903,9 +3943,11 @@ static const struct mv88e6xxx_ops mv88e6390x_ops = {
 	.rmu_disable = mv88e6390_g1_rmu_disable,
 	.vtu_getnext = mv88e6390_g1_vtu_getnext,
 	.vtu_loadpurge = mv88e6390_g1_vtu_loadpurge,
-	.serdes_power = mv88e6390x_serdes_power,
-	.serdes_irq_setup = mv88e6390x_serdes_irq_setup,
-	.serdes_irq_free = mv88e6390x_serdes_irq_free,
+	.serdes_power = mv88e6390_serdes_power,
+	.serdes_get_lane = mv88e6390x_serdes_get_lane,
+	.serdes_irq_mapping = mv88e6390_serdes_irq_mapping,
+	.serdes_irq_enable = mv88e6390_serdes_irq_enable,
+	.serdes_irq_status = mv88e6390_serdes_irq_status,
 	.gpio_ops = &mv88e6352_gpio_ops,
 	.avb_ops = &mv88e6390_avb_ops,
 	.ptp_ops = &mv88e6352_ptp_ops,

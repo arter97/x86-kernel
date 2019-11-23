@@ -689,7 +689,7 @@ enum qed_link_mode_bits {
 	QED_LM_40000baseLR4_Full_BIT = BIT(9),
 	QED_LM_50000baseKR2_Full_BIT = BIT(10),
 	QED_LM_100000baseKR4_Full_BIT = BIT(11),
-	QED_LM_2500baseX_Full_BIT = BIT(12),
+	QED_LM_TP_BIT = BIT(12),
 	QED_LM_Backplane_BIT = BIT(13),
 	QED_LM_1000baseKX_Full_BIT = BIT(14),
 	QED_LM_10000baseKX4_Full_BIT = BIT(15),
@@ -804,6 +804,7 @@ enum qed_nvm_flash_cmd {
 	QED_NVM_FLASH_CMD_FILE_DATA = 0x2,
 	QED_NVM_FLASH_CMD_FILE_START = 0x3,
 	QED_NVM_FLASH_CMD_NVM_CHANGE = 0x4,
+	QED_NVM_FLASH_CMD_NVM_CFG_ID = 0x5,
 	QED_NVM_FLASH_CMD_NVM_MAX,
 };
 

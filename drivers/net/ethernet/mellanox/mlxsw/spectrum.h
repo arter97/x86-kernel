@@ -623,7 +623,8 @@ struct mlxsw_sp_acl_rule_info {
 	unsigned int priority;
 	struct mlxsw_afk_element_values values;
 	struct mlxsw_afa_block *act_block;
-	u8 action_created:1;
+	u8 action_created:1,
+	   egress_bind_blocker:1;
 	unsigned int counter_index;
 };
 
@@ -642,6 +643,7 @@ struct mlxsw_sp_acl_block {
 	struct mlxsw_sp *mlxsw_sp;
 	unsigned int rule_count;
 	unsigned int disable_count;
+	unsigned int egress_blocker_rule_count;
 	struct net *net;
 };
 
@@ -657,7 +659,8 @@ void mlxsw_sp_acl_block_destroy(struct mlxsw_sp_acl_block *block);
 int mlxsw_sp_acl_block_bind(struct mlxsw_sp *mlxsw_sp,
 			    struct mlxsw_sp_acl_block *block,
 			    struct mlxsw_sp_port *mlxsw_sp_port,
-			    bool ingress);
+			    bool ingress,
+			    struct netlink_ext_ack *extack);
 int mlxsw_sp_acl_block_unbind(struct mlxsw_sp *mlxsw_sp,
 			      struct mlxsw_sp_acl_block *block,
 			      struct mlxsw_sp_port *mlxsw_sp_port,
@@ -954,5 +957,18 @@ void mlxsw_sp_nve_fini(struct mlxsw_sp *mlxsw_sp);
 /* spectrum_nve_vxlan.c */
 int mlxsw_sp_nve_inc_parsing_depth_get(struct mlxsw_sp *mlxsw_sp);
 void mlxsw_sp_nve_inc_parsing_depth_put(struct mlxsw_sp *mlxsw_sp);
+
+/* spectrum_trap.c */
+int mlxsw_sp_devlink_traps_init(struct mlxsw_sp *mlxsw_sp);
+void mlxsw_sp_devlink_traps_fini(struct mlxsw_sp *mlxsw_sp);
+int mlxsw_sp_trap_init(struct mlxsw_core *mlxsw_core,
+		       const struct devlink_trap *trap, void *trap_ctx);
+void mlxsw_sp_trap_fini(struct mlxsw_core *mlxsw_core,
+			const struct devlink_trap *trap, void *trap_ctx);
+int mlxsw_sp_trap_action_set(struct mlxsw_core *mlxsw_core,
+			     const struct devlink_trap *trap,
+			     enum devlink_trap_action action);
+int mlxsw_sp_trap_group_init(struct mlxsw_core *mlxsw_core,
+			     const struct devlink_trap_group *group);
 
 #endif

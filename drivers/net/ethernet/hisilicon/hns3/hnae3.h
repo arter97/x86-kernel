@@ -60,10 +60,10 @@
 		BIT(HNAE3_DEV_SUPPORT_ROCE_B))
 
 #define hnae3_dev_roce_supported(hdev) \
-	hnae3_get_bit(hdev->ae_dev->flag, HNAE3_DEV_SUPPORT_ROCE_B)
+	hnae3_get_bit((hdev)->ae_dev->flag, HNAE3_DEV_SUPPORT_ROCE_B)
 
 #define hnae3_dev_dcb_supported(hdev) \
-	hnae3_get_bit(hdev->ae_dev->flag, HNAE3_DEV_SUPPORT_DCB_B)
+	hnae3_get_bit((hdev)->ae_dev->flag, HNAE3_DEV_SUPPORT_DCB_B)
 
 #define hnae3_dev_fd_supported(hdev) \
 	hnae3_get_bit((hdev)->ae_dev->flag, HNAE3_DEV_SUPPORT_FD_B)
@@ -87,13 +87,18 @@ struct hnae3_queue {
 	void __iomem *io_base;
 	struct hnae3_ae_algo *ae_algo;
 	struct hnae3_handle *handle;
-	int tqp_index;	/* index in a handle */
-	u32 buf_size;	/* size for hnae_desc->addr, preset by AE */
-	u16 tx_desc_num;/* total number of tx desc */
-	u16 rx_desc_num;/* total number of rx desc */
+	int tqp_index;		/* index in a handle */
+	u32 buf_size;		/* size for hnae_desc->addr, preset by AE */
+	u16 tx_desc_num;	/* total number of tx desc */
+	u16 rx_desc_num;	/* total number of rx desc */
 };
 
-/*hnae3 loop mode*/
+struct hns3_mac_stats {
+	u64 tx_pause_cnt;
+	u64 rx_pause_cnt;
+};
+
+/* hnae3 loop mode */
 enum hnae3_loop {
 	HNAE3_LOOP_APP,
 	HNAE3_LOOP_SERIAL_SERDES,
@@ -180,6 +185,15 @@ struct hnae3_vector_info {
 #define HNAE3_RING_GL_IDX_M GENMASK(1, 0)
 #define HNAE3_RING_GL_RX 0
 #define HNAE3_RING_GL_TX 1
+
+#define HNAE3_FW_VERSION_BYTE3_SHIFT	24
+#define HNAE3_FW_VERSION_BYTE3_MASK	GENMASK(31, 24)
+#define HNAE3_FW_VERSION_BYTE2_SHIFT	16
+#define HNAE3_FW_VERSION_BYTE2_MASK	GENMASK(23, 16)
+#define HNAE3_FW_VERSION_BYTE1_SHIFT	8
+#define HNAE3_FW_VERSION_BYTE1_MASK	GENMASK(15, 8)
+#define HNAE3_FW_VERSION_BYTE0_SHIFT	0
+#define HNAE3_FW_VERSION_BYTE0_MASK	GENMASK(7, 0)
 
 struct hnae3_ring_chain_node {
 	struct hnae3_ring_chain_node *next;
@@ -291,6 +305,8 @@ struct hnae3_ae_dev {
  *   Remove multicast address from mac table
  * update_stats()
  *   Update Old network device statistics
+ * get_mac_stats()
+ *   get mac pause statistics including tx_cnt and rx_cnt
  * get_ethtool_stats()
  *   Get ethtool network device statistics
  * get_strings()
@@ -419,8 +435,8 @@ struct hnae3_ae_ops {
 	void (*update_stats)(struct hnae3_handle *handle,
 			     struct net_device_stats *net_stats);
 	void (*get_stats)(struct hnae3_handle *handle, u64 *data);
-	void (*get_mac_pause_stats)(struct hnae3_handle *handle, u64 *tx_cnt,
-				    u64 *rx_cnt);
+	void (*get_mac_stats)(struct hnae3_handle *handle,
+			      struct hns3_mac_stats *mac_stats);
 	void (*get_strings)(struct hnae3_handle *handle,
 			    u32 stringset, u8 *data);
 	int (*get_sset_count)(struct hnae3_handle *handle, int stringset);
@@ -607,7 +623,7 @@ struct hnae3_handle {
 	struct pci_dev *pdev;
 	void *priv;
 	struct hnae3_ae_algo *ae_algo;  /* the class who provides this handle */
-	u64 flags; /* Indicate the capabilities for this handle*/
+	u64 flags; /* Indicate the capabilities for this handle */
 
 	union {
 		struct net_device *netdev; /* first member */

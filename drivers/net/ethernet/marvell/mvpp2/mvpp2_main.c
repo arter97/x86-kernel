@@ -2651,31 +2651,21 @@ handled:
 	return IRQ_HANDLED;
 }
 
-static void mvpp2_timer_set(struct mvpp2_port_pcpu *port_pcpu)
+static enum hrtimer_restart mvpp2_hr_timer_cb(struct hrtimer *timer)
 {
-	ktime_t interval;
-
-	if (!port_pcpu->timer_scheduled) {
-		port_pcpu->timer_scheduled = true;
-		interval = MVPP2_TXDONE_HRTIMER_PERIOD_NS;
-		hrtimer_start(&port_pcpu->tx_done_timer, interval,
-			      HRTIMER_MODE_REL_PINNED);
-	}
-}
-
-static void mvpp2_tx_proc_cb(unsigned long data)
-{
-	struct net_device *dev = (struct net_device *)data;
-	struct mvpp2_port *port = netdev_priv(dev);
+	struct net_device *dev;
+	struct mvpp2_port *port;
 	struct mvpp2_port_pcpu *port_pcpu;
 	unsigned int tx_todo, cause;
 
-	port_pcpu = per_cpu_ptr(port->pcpu,
-				mvpp2_cpu_to_thread(port->priv, smp_processor_id()));
+	port_pcpu = container_of(timer, struct mvpp2_port_pcpu, tx_done_timer);
+	dev = port_pcpu->dev;
 
 	if (!netif_running(dev))
-		return;
+		return HRTIMER_NORESTART;
+
 	port_pcpu->timer_scheduled = false;
+	port = netdev_priv(dev);
 
 	/* Process all the Tx queues */
 	cause = (1 << port->ntxqs) - 1;
@@ -2683,18 +2673,13 @@ static void mvpp2_tx_proc_cb(unsigned long data)
 				mvpp2_cpu_to_thread(port->priv, smp_processor_id()));
 
 	/* Set the timer in case not all the packets were processed */
-	if (tx_todo)
-		mvpp2_timer_set(port_pcpu);
-}
+	if (tx_todo && !port_pcpu->timer_scheduled) {
+		port_pcpu->timer_scheduled = true;
+		hrtimer_forward_now(&port_pcpu->tx_done_timer,
+				    MVPP2_TXDONE_HRTIMER_PERIOD_NS);
 
-static enum hrtimer_restart mvpp2_hr_timer_cb(struct hrtimer *timer)
-{
-	struct mvpp2_port_pcpu *port_pcpu = container_of(timer,
-							 struct mvpp2_port_pcpu,
-							 tx_done_timer);
-
-	tasklet_schedule(&port_pcpu->tx_done_tasklet);
-
+		return HRTIMER_RESTART;
+	}
 	return HRTIMER_NORESTART;
 }
 
@@ -2923,14 +2908,15 @@ static int mvpp2_tx_frag_process(struct mvpp2_port *port, struct sk_buff *skb,
 
 	for (i = 0; i < skb_shinfo(skb)->nr_frags; i++) {
 		skb_frag_t *frag = &skb_shinfo(skb)->frags[i];
-		void *addr = page_address(frag->page.p) + frag->page_offset;
+		void *addr = skb_frag_address(frag);
 
 		tx_desc = mvpp2_txq_next_desc_get(aggr_txq);
 		mvpp2_txdesc_txq_set(port, tx_desc, txq->id);
-		mvpp2_txdesc_size_set(port, tx_desc, frag->size);
+		mvpp2_txdesc_size_set(port, tx_desc, skb_frag_size(frag));
 
 		buf_dma_addr = dma_map_single(port->dev->dev.parent, addr,
-					      frag->size, DMA_TO_DEVICE);
+					      skb_frag_size(frag),
+					      DMA_TO_DEVICE);
 		if (dma_mapping_error(port->dev->dev.parent, buf_dma_addr)) {
 			mvpp2_txq_desc_put(txq);
 			goto cleanup;
@@ -3181,7 +3167,12 @@ out:
 	    txq_pcpu->count > 0) {
 		struct mvpp2_port_pcpu *port_pcpu = per_cpu_ptr(port->pcpu, thread);
 
-		mvpp2_timer_set(port_pcpu);
+		if (!port_pcpu->timer_scheduled) {
+			port_pcpu->timer_scheduled = true;
+			hrtimer_start(&port_pcpu->tx_done_timer,
+				      MVPP2_TXDONE_HRTIMER_PERIOD_NS,
+				      HRTIMER_MODE_REL_PINNED_SOFT);
+		}
 	}
 
 	if (test_bit(thread, &port->priv->lock_map))
@@ -3618,7 +3609,6 @@ static int mvpp2_stop(struct net_device *dev)
 
 			hrtimer_cancel(&port_pcpu->tx_done_timer);
 			port_pcpu->timer_scheduled = false;
-			tasklet_kill(&port_pcpu->tx_done_tasklet);
 		}
 	}
 	mvpp2_cleanup_rxqs(port);
@@ -5010,7 +5000,6 @@ static int mvpp2_port_probe(struct platform_device *pdev,
 	struct device_node *port_node = to_of_node(port_fwnode);
 	netdev_features_t features;
 	struct net_device *dev;
-	struct resource *res;
 	struct phylink *phylink;
 	char *mac_from = "";
 	unsigned int ntxqs, nrxqs, thread;
@@ -5114,8 +5103,7 @@ static int mvpp2_port_probe(struct platform_device *pdev,
 	port->comphy = comphy;
 
 	if (priv->hw_version == MVPP21) {
-		res = platform_get_resource(pdev, IORESOURCE_MEM, 2 + id);
-		port->base = devm_ioremap_resource(&pdev->dev, res);
+		port->base = devm_platform_ioremap_resource(pdev, 2 + id);
 		if (IS_ERR(port->base)) {
 			err = PTR_ERR(port->base);
 			goto err_free_irq;
@@ -5184,13 +5172,10 @@ static int mvpp2_port_probe(struct platform_device *pdev,
 			port_pcpu = per_cpu_ptr(port->pcpu, thread);
 
 			hrtimer_init(&port_pcpu->tx_done_timer, CLOCK_MONOTONIC,
-				     HRTIMER_MODE_REL_PINNED);
+				     HRTIMER_MODE_REL_PINNED_SOFT);
 			port_pcpu->tx_done_timer.function = mvpp2_hr_timer_cb;
 			port_pcpu->timer_scheduled = false;
-
-			tasklet_init(&port_pcpu->tx_done_tasklet,
-				     mvpp2_tx_proc_cb,
-				     (unsigned long)dev);
+			port_pcpu->dev = dev;
 		}
 	}
 
@@ -5544,14 +5529,12 @@ static int mvpp2_probe(struct platform_device *pdev)
 	if (priv->hw_version == MVPP21)
 		queue_mode = MVPP2_QDIST_SINGLE_MODE;
 
-	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
-	base = devm_ioremap_resource(&pdev->dev, res);
+	base = devm_platform_ioremap_resource(pdev, 0);
 	if (IS_ERR(base))
 		return PTR_ERR(base);
 
 	if (priv->hw_version == MVPP21) {
-		res = platform_get_resource(pdev, IORESOURCE_MEM, 1);
-		priv->lms_base = devm_ioremap_resource(&pdev->dev, res);
+		priv->lms_base = devm_platform_ioremap_resource(pdev, 1);
 		if (IS_ERR(priv->lms_base))
 			return PTR_ERR(priv->lms_base);
 	} else {

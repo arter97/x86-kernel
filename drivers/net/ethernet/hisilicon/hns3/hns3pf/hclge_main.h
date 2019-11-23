@@ -302,6 +302,13 @@ enum hclge_fc_mode {
 	HCLGE_FC_DEFAULT
 };
 
+enum hclge_link_fail_code {
+	HCLGE_LF_NORMAL,
+	HCLGE_LF_REF_CLOCK_LOST,
+	HCLGE_LF_XSFP_TX_DISABLE,
+	HCLGE_LF_XSFP_ABSENT,
+};
+
 #define HCLGE_PG_NUM		4
 #define HCLGE_SCH_MODE_SP	0
 #define HCLGE_SCH_MODE_DWRR	1
@@ -807,9 +814,8 @@ struct hclge_dev {
 	u16 adminq_work_limit; /* Num of admin receive queue desc to process */
 	unsigned long service_timer_period;
 	unsigned long service_timer_previous;
-	struct timer_list service_timer;
 	struct timer_list reset_timer;
-	struct work_struct service_task;
+	struct delayed_work service_task;
 	struct work_struct rst_service_task;
 	struct work_struct mbx_service_task;
 
@@ -865,6 +871,10 @@ struct hclge_dev {
 
 	DECLARE_KFIFO(mac_tnl_log, struct hclge_mac_tnl_stats,
 		      HCLGE_MAC_TNL_LOG_SIZE);
+
+	/* affinity mask and notify for misc interrupt */
+	cpumask_t affinity_mask;
+	struct irq_affinity_notify affinity_notify;
 };
 
 /* VPort level vlan tag configuration for TX direction */
@@ -991,7 +1001,6 @@ int hclge_buffer_alloc(struct hclge_dev *hdev);
 int hclge_rss_init_hw(struct hclge_dev *hdev);
 void hclge_rss_indir_init_cfg(struct hclge_dev *hdev);
 
-int hclge_inform_reset_assert_to_vf(struct hclge_vport *vport);
 void hclge_mbx_handler(struct hclge_dev *hdev);
 int hclge_reset_tqp(struct hnae3_handle *handle, u16 queue_id);
 void hclge_reset_vf_queue(struct hclge_vport *vport, u16 queue_id);
@@ -1019,4 +1028,7 @@ int hclge_update_port_base_vlan_cfg(struct hclge_vport *vport, u16 state,
 int hclge_push_vf_port_base_vlan_info(struct hclge_vport *vport, u8 vfid,
 				      u16 state, u16 vlan_tag, u16 qos,
 				      u16 vlan_proto);
+void hclge_task_schedule(struct hclge_dev *hdev, unsigned long delay_time);
+int hclge_query_bd_num_cmd_send(struct hclge_dev *hdev,
+				struct hclge_desc *desc);
 #endif

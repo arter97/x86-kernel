@@ -365,7 +365,7 @@ fec_enet_txq_submit_frag_skb(struct fec_enet_priv_tx_q *txq,
 		status = fec16_to_cpu(bdp->cbd_sc);
 		status &= ~BD_ENET_TX_STATS;
 		status |= (BD_ENET_TX_TC | BD_ENET_TX_READY);
-		frag_len = skb_shinfo(skb)->frags[frag].size;
+		frag_len = skb_frag_size(&skb_shinfo(skb)->frags[frag]);
 
 		/* Handle the last BD specially */
 		if (frag == nr_frags - 1) {
@@ -387,7 +387,7 @@ fec_enet_txq_submit_frag_skb(struct fec_enet_priv_tx_q *txq,
 			ebdp->cbd_esc = cpu_to_fec32(estatus);
 		}
 
-		bufaddr = page_address(this_frag->page.p) + this_frag->page_offset;
+		bufaddr = skb_frag_address(this_frag);
 
 		index = fec_enet_get_bd_index(bdp, &txq->bd);
 		if (((unsigned long) bufaddr) & fep->tx_align ||
@@ -3338,7 +3338,6 @@ fec_probe(struct platform_device *pdev)
 	struct fec_platform_data *pdata;
 	struct net_device *ndev;
 	int i, irq, ret = 0;
-	struct resource *r;
 	const struct of_device_id *of_id;
 	static int dev_id;
 	struct device_node *np = pdev->dev.of_node, *phy_node;
@@ -3378,8 +3377,7 @@ fec_probe(struct platform_device *pdev)
 	/* Select default pin state */
 	pinctrl_pm_select_default_state(&pdev->dev);
 
-	r = platform_get_resource(pdev, IORESOURCE_MEM, 0);
-	fep->hwp = devm_ioremap_resource(&pdev->dev, r);
+	fep->hwp = devm_platform_ioremap_resource(pdev, 0);
 	if (IS_ERR(fep->hwp)) {
 		ret = PTR_ERR(fep->hwp);
 		goto failed_ioremap;

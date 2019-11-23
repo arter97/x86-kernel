@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-2.0
 VERSION = 5
 PATCHLEVEL = 3
-SUBLEVEL = 9
+SUBLEVEL = 12
 EXTRAVERSION = -zen
 NAME = The Beauty and the Bug
 

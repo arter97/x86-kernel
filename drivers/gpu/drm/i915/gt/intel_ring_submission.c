@@ -1366,13 +1366,19 @@ static int load_pd_dir(struct i915_request *rq, const struct i915_ppgtt *ppgtt)
 	const struct intel_engine_cs * const engine = rq->engine;
 	u32 *cs;
 
-	cs = intel_ring_begin(rq, 6);
+	cs = intel_ring_begin(rq, 10);
 	if (IS_ERR(cs))
 		return PTR_ERR(cs);
 
 	*cs++ = MI_LOAD_REGISTER_IMM(1);
 	*cs++ = i915_mmio_reg_offset(RING_PP_DIR_DCLV(engine->mmio_base));
 	*cs++ = PP_DIR_DCLV_2G;
+
+	*cs++ = MI_STORE_REGISTER_MEM | MI_SRM_LRM_GLOBAL_GTT;
+	*cs++ = i915_mmio_reg_offset(RING_PP_DIR_DCLV(engine->mmio_base));
+	*cs++ = intel_gt_scratch_offset(rq->engine->gt,
+					INTEL_GT_SCRATCH_FIELD_DEFAULT);
+	*cs++ = MI_NOOP;
 
 	*cs++ = MI_LOAD_REGISTER_IMM(1);
 	*cs++ = i915_mmio_reg_offset(RING_PP_DIR_BASE(engine->mmio_base));

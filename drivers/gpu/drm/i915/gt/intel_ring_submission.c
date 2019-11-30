@@ -1577,38 +1577,17 @@ static int switch_context(struct i915_request *rq)
 {
 	struct intel_context *ce = rq->hw_context;
 	struct i915_address_space *vm = vm_alias(ce);
+	u32 hw_flags = 0;
 	int ret;
 
 	GEM_BUG_ON(HAS_EXECLISTS(rq->i915));
 
 	if (vm) {
+		struct intel_engine_cs *engine = rq->engine;
+
 		ret = load_pd_dir(rq, i915_vm_to_ppgtt(vm));
 		if (ret)
 			return ret;
-	}
-
-	if (ce->state) {
-		u32 flags;
-
-		GEM_BUG_ON(rq->engine->id != RCS0);
-
-		/* For resource streamer on HSW+ and power context elsewhere */
-		BUILD_BUG_ON(HSW_MI_RS_SAVE_STATE_EN != MI_SAVE_EXT_STATE_EN);
-		BUILD_BUG_ON(HSW_MI_RS_RESTORE_STATE_EN != MI_RESTORE_EXT_STATE_EN);
-
-		flags = MI_SAVE_EXT_STATE_EN | MI_MM_SPACE_GTT;
-		if (!i915_gem_context_is_kernel(rq->gem_context))
-			flags |= MI_RESTORE_EXT_STATE_EN;
-		else
-			flags |= MI_RESTORE_INHIBIT;
-
-		ret = mi_set_context(rq, flags);
-		if (ret)
-			return ret;
-	}
-
-	if (vm) {
-		struct intel_engine_cs *engine = rq->engine;
 
 		ret = engine->emit_flush(rq, EMIT_INVALIDATE);
 		if (ret)
@@ -1631,6 +1610,17 @@ static int switch_context(struct i915_request *rq)
 			return ret;
 
 		ret = engine->emit_flush(rq, EMIT_FLUSH);
+		if (ret)
+			return ret;
+	}
+
+	if (ce->state) {
+		GEM_BUG_ON(rq->engine->id != RCS0);
+
+		if (!rq->engine->default_state)
+			hw_flags = MI_RESTORE_INHIBIT;
+
+		ret = mi_set_context(rq, hw_flags);
 		if (ret)
 			return ret;
 	}

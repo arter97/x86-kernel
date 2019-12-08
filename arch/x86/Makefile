@@ -126,7 +126,13 @@ else
                 $(call cc-option,-march=core2,$(call cc-option,-mtune=generic))
 	cflags-$(CONFIG_MATOM) += $(call cc-option,-march=atom) \
 		$(call cc-option,-mtune=atom,$(call cc-option,-mtune=generic))
-        cflags-$(CONFIG_GENERIC_CPU) += $(call cc-option,-mtune=generic)
+
+	ifeq ($(CONFIG_OPTIMIZE_SPECIFICALLY),y)
+		include arch/x86/Makefile.spec
+	else
+		cflags-$(CONFIG_GENERIC_CPU) += $(call cc-option,-mtune=generic)
+	endif
+
         KBUILD_CFLAGS += $(cflags-y)
 
         KBUILD_CFLAGS += -mno-red-zone

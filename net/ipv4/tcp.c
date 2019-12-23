@@ -2959,7 +2959,8 @@ static int do_tcp_setsockopt(struct sock *sk, int level,
 		if (optlen == TCP_FASTOPEN_KEY_BUF_LENGTH)
 			backup_key = key + TCP_FASTOPEN_KEY_LENGTH;
 
-		return tcp_fastopen_reset_cipher(net, sk, key, backup_key);
+		return tcp_fastopen_reset_cipher(net, sk, key, backup_key,
+						 TCP_FASTOPEN_KEY_LENGTH);
 	}
 #ifdef CONFIG_MPTCP
 	case MPTCP_SCHEDULER: {

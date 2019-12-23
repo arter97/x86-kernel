@@ -328,6 +328,12 @@ static int hdac_hda_codec_probe(struct snd_soc_component *component)
 		dev_err(&hdev->dev, "failed to create hda codec %d\n", ret);
 		goto error_no_pm;
 	}
+	/*
+	 * Overwrite type to HDA_DEV_ASOC since it is a ASoC driver
+	 * hda_codec.c will check this flag to determine if unregister
+	 * device is needed.
+	 */
+	hdev->type = HDA_DEV_ASOC;
 
 	/*
 	 * snd_hda_codec_device_new decrements the usage count so call get pm
@@ -404,8 +410,8 @@ static void hdac_hda_codec_remove(struct snd_soc_component *component)
 		return;
 	}
 
-	snd_hdac_ext_bus_link_put(hdev->bus, hlink);
 	pm_runtime_disable(&hdev->dev);
+	snd_hdac_ext_bus_link_put(hdev->bus, hlink);
 }
 
 static const struct snd_soc_dapm_route hdac_hda_dapm_routes[] = {
@@ -489,6 +495,10 @@ static int hdac_hda_dev_probe(struct hdac_device *hdev)
 
 static int hdac_hda_dev_remove(struct hdac_device *hdev)
 {
+	struct hdac_hda_priv *hda_pvt;
+
+	hda_pvt = dev_get_drvdata(&hdev->dev);
+	cancel_delayed_work_sync(&hda_pvt->codec.jackpoll_work);
 	return 0;
 }
 

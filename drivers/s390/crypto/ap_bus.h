@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0+ */
 /*
- * Copyright IBM Corp. 2006, 2012
+ * Copyright IBM Corp. 2006, 2019
  * Author(s): Cornelia Huck <cornelia.huck@de.ibm.com>
  *	      Martin Schwidefsky <schwidefsky@de.ibm.com>
  *	      Ralph Wuerthner <rwuerthn@de.ibm.com>
@@ -63,6 +63,7 @@ static inline int ap_test_bit(unsigned int *ptr, unsigned int nr)
 #define AP_DEVICE_TYPE_CEX4	10
 #define AP_DEVICE_TYPE_CEX5	11
 #define AP_DEVICE_TYPE_CEX6	12
+#define AP_DEVICE_TYPE_CEX7	13
 
 /*
  * Known function facilities
@@ -250,6 +251,9 @@ void *ap_airq_ptr(void);
 void ap_wait(enum ap_wait wait);
 void ap_request_timeout(struct timer_list *t);
 void ap_bus_force_rescan(void);
+
+int ap_test_config_usage_domain(unsigned int domain);
+int ap_test_config_ctrl_domain(unsigned int domain);
 
 void ap_queue_init_reply(struct ap_queue *aq, struct ap_message *ap_msg);
 struct ap_queue *ap_queue_create(ap_qid_t qid, int device_type);

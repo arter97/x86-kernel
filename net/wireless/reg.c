@@ -427,14 +427,10 @@ static const struct ieee80211_regdomain *
 reg_copy_regd(const struct ieee80211_regdomain *src_regd)
 {
 	struct ieee80211_regdomain *regd;
-	int size_of_regd;
 	unsigned int i;
 
-	size_of_regd =
-		sizeof(struct ieee80211_regdomain) +
-		src_regd->n_reg_rules * sizeof(struct ieee80211_reg_rule);
-
-	regd = kzalloc(size_of_regd, GFP_KERNEL);
+	regd = kzalloc(struct_size(regd, reg_rules, src_regd->n_reg_rules),
+		       GFP_KERNEL);
 	if (!regd)
 		return ERR_PTR(-ENOMEM);
 
@@ -948,12 +944,10 @@ static int regdb_query_country(const struct fwdb_header *db,
 	unsigned int ptr = be16_to_cpu(country->coll_ptr) << 2;
 	struct fwdb_collection *coll = (void *)((u8 *)db + ptr);
 	struct ieee80211_regdomain *regdom;
-	unsigned int size_of_regd, i;
+	unsigned int i;
 
-	size_of_regd = sizeof(struct ieee80211_regdomain) +
-		coll->n_rules * sizeof(struct ieee80211_reg_rule);
-
-	regdom = kzalloc(size_of_regd, GFP_KERNEL);
+	regdom = kzalloc(struct_size(regdom, reg_rules, coll->n_rules),
+			 GFP_KERNEL);
 	if (!regdom)
 		return -ENOMEM;
 
@@ -1489,7 +1483,7 @@ static struct ieee80211_regdomain *
 regdom_intersect(const struct ieee80211_regdomain *rd1,
 		 const struct ieee80211_regdomain *rd2)
 {
-	int r, size_of_regd;
+	int r;
 	unsigned int x, y;
 	unsigned int num_rules = 0;
 	const struct ieee80211_reg_rule *rule1, *rule2;
@@ -1520,10 +1514,7 @@ regdom_intersect(const struct ieee80211_regdomain *rd1,
 	if (!num_rules)
 		return NULL;
 
-	size_of_regd = sizeof(struct ieee80211_regdomain) +
-		       num_rules * sizeof(struct ieee80211_reg_rule);
-
-	rd = kzalloc(size_of_regd, GFP_KERNEL);
+	rd = kzalloc(struct_size(rd, reg_rules, num_rules), GFP_KERNEL);
 	if (!rd)
 		return NULL;
 
@@ -2117,7 +2108,7 @@ static void reg_call_notifier(struct wiphy *wiphy,
 
 static bool reg_wdev_chan_valid(struct wiphy *wiphy, struct wireless_dev *wdev)
 {
-	struct cfg80211_chan_def chandef;
+	struct cfg80211_chan_def chandef = {};
 	struct cfg80211_registered_device *rdev = wiphy_to_rdev(wiphy);
 	enum nl80211_iftype iftype;
 
@@ -2797,7 +2788,7 @@ static void reg_process_pending_hints(void)
 
 	/* When last_request->processed becomes true this will be rescheduled */
 	if (lr && !lr->processed) {
-		reg_process_hint(lr);
+		pr_debug("Pending regulatory request, waiting for it to be processed...\n");
 		return;
 	}
 
@@ -3815,8 +3806,9 @@ void wiphy_regulatory_deregister(struct wiphy *wiphy)
 }
 
 /*
- * See http://www.fcc.gov/document/5-ghz-unlicensed-spectrum-unii, for
- * UNII band definitions
+ * See FCC notices for UNII band definitions
+ *  5GHz: https://www.fcc.gov/document/5-ghz-unlicensed-spectrum-unii
+ *  6GHz: https://www.fcc.gov/document/fcc-proposes-more-spectrum-unlicensed-use-0
  */
 int cfg80211_get_unii(int freq)
 {
@@ -3839,6 +3831,22 @@ int cfg80211_get_unii(int freq)
 	/* UNII-3 */
 	if (freq > 5725 && freq <= 5825)
 		return 4;
+
+	/* UNII-5 */
+	if (freq > 5925 && freq <= 6425)
+		return 5;
+
+	/* UNII-6 */
+	if (freq > 6425 && freq <= 6525)
+		return 6;
+
+	/* UNII-7 */
+	if (freq > 6525 && freq <= 6875)
+		return 7;
+
+	/* UNII-8 */
+	if (freq > 6875 && freq <= 7125)
+		return 8;
 
 	return -EINVAL;
 }
@@ -3875,6 +3883,7 @@ bool regulatory_pre_cac_allowed(struct wiphy *wiphy)
 
 	return pre_cac_allowed;
 }
+EXPORT_SYMBOL(regulatory_pre_cac_allowed);
 
 void regulatory_propagate_dfs_state(struct wiphy *wiphy,
 				    struct cfg80211_chan_def *chandef,

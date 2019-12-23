@@ -1,17 +1,6 @@
+// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2009, Microsoft Corporation.
- *
- * This program is free software; you can redistribute it and/or modify it
- * under the terms and conditions of the GNU General Public License,
- * version 2, as published by the Free Software Foundation.
- *
- * This program is distributed in the hope it will be useful, but WITHOUT
- * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
- * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
- * more details.
- *
- * You should have received a copy of the GNU General Public License along with
- * this program; if not, see <http://www.gnu.org/licenses/>.
  *
  * Authors:
  *   Haiyang Zhang <haiyangz@microsoft.com>
@@ -328,7 +317,7 @@ static inline int netvsc_get_tx_queue(struct net_device *ndev,
  * If a valid queue has already been assigned, then use that.
  * Otherwise compute tx queue based on hash and the send table.
  *
- * This is basically similar to default (__netdev_pick_tx) with the added step
+ * This is basically similar to default (netdev_pick_tx) with the added step
  * of using the host send_table when no other queue has been assigned.
  *
  * TODO support XPS - but get_xps_queue not exported
@@ -351,8 +340,7 @@ static u16 netvsc_pick_tx(struct net_device *ndev, struct sk_buff *skb)
 }
 
 static u16 netvsc_select_queue(struct net_device *ndev, struct sk_buff *skb,
-			       struct net_device *sb_dev,
-			       select_queue_fallback_t fallback)
+			       struct net_device *sb_dev)
 {
 	struct net_device_context *ndc = netdev_priv(ndev);
 	struct net_device *vf_netdev;
@@ -364,10 +352,9 @@ static u16 netvsc_select_queue(struct net_device *ndev, struct sk_buff *skb,
 		const struct net_device_ops *vf_ops = vf_netdev->netdev_ops;
 
 		if (vf_ops->ndo_select_queue)
-			txq = vf_ops->ndo_select_queue(vf_netdev, skb,
-						       sb_dev, fallback);
+			txq = vf_ops->ndo_select_queue(vf_netdev, skb, sb_dev);
 		else
-			txq = fallback(vf_netdev, skb, NULL);
+			txq = netdev_pick_tx(vf_netdev, skb, NULL);
 
 		/* Record the queue selected by VF so that it can be
 		 * used for common case where VF has more queues than
@@ -448,7 +435,7 @@ static u32 init_page_array(void *hdr, u32 len, struct sk_buff *skb,
 		skb_frag_t *frag = skb_shinfo(skb)->frags + i;
 
 		slots_used += fill_pg_buf(skb_frag_page(frag),
-					frag->page_offset,
+					skb_frag_off(frag),
 					skb_frag_size(frag), &pb[slots_used]);
 	}
 	return slots_used;
@@ -462,7 +449,7 @@ static int count_skb_frag_slots(struct sk_buff *skb)
 	for (i = 0; i < frags; i++) {
 		skb_frag_t *frag = skb_shinfo(skb)->frags + i;
 		unsigned long size = skb_frag_size(frag);
-		unsigned long offset = frag->page_offset;
+		unsigned long offset = skb_frag_off(frag);
 
 		/* Skip unused frames from start of page */
 		offset &= ~PAGE_MASK;
@@ -849,7 +836,6 @@ int netvsc_recv_callback(struct net_device *net,
 
 	if (unlikely(!skb)) {
 		++net_device_ctx->eth_stats.rx_no_memory;
-		rcu_read_unlock();
 		return NVSP_STAT_FAIL;
 	}
 
@@ -996,7 +982,7 @@ static int netvsc_attach(struct net_device *ndev,
 	if (netif_running(ndev)) {
 		ret = rndis_filter_open(nvdev);
 		if (ret)
-			return ret;
+			goto err;
 
 		rdev = nvdev->extension;
 		if (!rdev->link_state)
@@ -1004,6 +990,13 @@ static int netvsc_attach(struct net_device *ndev,
 	}
 
 	return 0;
+
+err:
+	netif_device_detach(ndev);
+
+	rndis_filter_device_remove(hdev, nvdev);
+
+	return ret;
 }
 
 static int netvsc_set_channels(struct net_device *net,
@@ -1253,12 +1246,15 @@ static void netvsc_get_stats64(struct net_device *net,
 			       struct rtnl_link_stats64 *t)
 {
 	struct net_device_context *ndev_ctx = netdev_priv(net);
-	struct netvsc_device *nvdev = rcu_dereference_rtnl(ndev_ctx->nvdev);
+	struct netvsc_device *nvdev;
 	struct netvsc_vf_pcpu_stats vf_tot;
 	int i;
 
+	rcu_read_lock();
+
+	nvdev = rcu_dereference(ndev_ctx->nvdev);
 	if (!nvdev)
-		return;
+		goto out;
 
 	netdev_stats_to_stats64(t, &net->stats);
 
@@ -1297,6 +1293,8 @@ static void netvsc_get_stats64(struct net_device *net,
 		t->rx_packets	+= packets;
 		t->multicast	+= multicast;
 	}
+out:
+	rcu_read_unlock();
 }
 
 static int netvsc_set_mac_addr(struct net_device *ndev, void *p)
@@ -1794,13 +1792,15 @@ static int netvsc_set_features(struct net_device *ndev,
 	netdev_features_t change = features ^ ndev->features;
 	struct net_device_context *ndevctx = netdev_priv(ndev);
 	struct netvsc_device *nvdev = rtnl_dereference(ndevctx->nvdev);
+	struct net_device *vf_netdev = rtnl_dereference(ndevctx->vf_netdev);
 	struct ndis_offload_params offloads;
+	int ret = 0;
 
 	if (!nvdev || nvdev->destroy)
 		return -ENODEV;
 
 	if (!(change & NETIF_F_LRO))
-		return 0;
+		goto syncvf;
 
 	memset(&offloads, 0, sizeof(struct ndis_offload_params));
 
@@ -1812,7 +1812,21 @@ static int netvsc_set_features(struct net_device *ndev,
 		offloads.rsc_ip_v6 = NDIS_OFFLOAD_PARAMETERS_RSC_DISABLED;
 	}
 
-	return rndis_filter_set_offload_params(ndev, nvdev, &offloads);
+	ret = rndis_filter_set_offload_params(ndev, nvdev, &offloads);
+
+	if (ret) {
+		features ^= NETIF_F_LRO;
+		ndev->features = features;
+	}
+
+syncvf:
+	if (!vf_netdev)
+		return ret;
+
+	vf_netdev->wanted_features = features;
+	netdev_update_features(vf_netdev);
+
+	return ret;
 }
 
 static u32 netvsc_get_msglevel(struct net_device *ndev)
@@ -2002,6 +2016,12 @@ static rx_handler_result_t netvsc_vf_handle_frame(struct sk_buff **pskb)
 	struct netvsc_vf_pcpu_stats *pcpu_stats
 		 = this_cpu_ptr(ndev_ctx->vf_stats);
 
+	skb = skb_share_check(skb, GFP_ATOMIC);
+	if (unlikely(!skb))
+		return RX_HANDLER_CONSUMED;
+
+	*pskb = skb;
+
 	skb->dev = ndev;
 
 	u64_stats_update_begin(&pcpu_stats->syncp);
@@ -2184,6 +2204,10 @@ static int netvsc_register_vf(struct net_device *vf_netdev)
 
 	dev_hold(vf_netdev);
 	rcu_assign_pointer(net_device_ctx->vf_netdev, vf_netdev);
+
+	vf_netdev->wanted_features = ndev->features;
+	netdev_update_features(vf_netdev);
+
 	return NOTIFY_OK;
 }
 
@@ -2316,11 +2340,9 @@ static int netvsc_probe(struct hv_device *dev,
 
 	/* hw_features computed in rndis_netdev_set_hwcaps() */
 	net->features = net->hw_features |
-		NETIF_F_HIGHDMA | NETIF_F_SG |
-		NETIF_F_HW_VLAN_CTAG_TX | NETIF_F_HW_VLAN_CTAG_RX;
+		NETIF_F_HIGHDMA | NETIF_F_HW_VLAN_CTAG_TX |
+		NETIF_F_HW_VLAN_CTAG_RX;
 	net->vlan_features = net->features;
-
-	netdev_lockdep_set_classes(net);
 
 	/* MTU range: 68 - 1500 or 65521 */
 	net->min_mtu = NETVSC_MTU_MIN;
@@ -2414,7 +2436,7 @@ static struct  hv_driver netvsc_drv = {
 	.probe = netvsc_probe,
 	.remove = netvsc_remove,
 	.driver = {
-		.probe_type = PROBE_PREFER_ASYNCHRONOUS,
+		.probe_type = PROBE_FORCE_SYNCHRONOUS,
 	},
 };
 

@@ -1815,9 +1815,9 @@ bool tcp_fastopen_defer_connect(struct sock *sk, int *err);
 
 /* Fastopen key context */
 struct tcp_fastopen_context {
-	__u8		key[TCP_FASTOPEN_KEY_MAX][TCP_FASTOPEN_KEY_LENGTH];
-	int		num;
-	struct rcu_head	rcu;
+	struct crypto_cipher	*tfm[TCP_FASTOPEN_KEY_MAX];
+	__u8			key[TCP_FASTOPEN_KEY_BUF_LENGTH];
+	struct rcu_head		rcu;
 };
 
 extern unsigned int sysctl_tcp_fastopen_blackhole_timeout;
@@ -1852,7 +1852,9 @@ bool tcp_fastopen_cookie_match(const struct tcp_fastopen_cookie *foc,
 static inline
 int tcp_fastopen_context_len(const struct tcp_fastopen_context *ctx)
 {
-	return ctx->num;
+	if (ctx->tfm[1])
+		return 2;
+	return 1;
 }
 
 /* Latencies incurred by various limits for a sender. They are

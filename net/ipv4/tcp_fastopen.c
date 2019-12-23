@@ -7,7 +7,6 @@
 #include <linux/tcp.h>
 #include <linux/rcupdate.h>
 #include <linux/rculist.h>
-#include <linux/siphash.h>
 #include <net/inetpeer.h>
 #include <net/tcp.h>
 #include <net/mptcp.h>
@@ -39,8 +38,14 @@ static void tcp_fastopen_ctx_free(struct rcu_head *head)
 {
 	struct tcp_fastopen_context *ctx =
 	    container_of(head, struct tcp_fastopen_context, rcu);
+	int i;
 
-	kzfree(ctx);
+	/* We own ctx, thus no need to hold the Fastopen-lock */
+	for (i = 0; i < TCP_FASTOPEN_KEY_MAX; i++) {
+		if (ctx->tfm[i])
+			crypto_free_cipher(ctx->tfm[i]);
+	}
+	kfree(ctx);
 }
 
 void tcp_fastopen_destroy_cipher(struct sock *sk)
@@ -68,6 +73,41 @@ void tcp_fastopen_ctx_destroy(struct net *net)
 		call_rcu(&ctxt->rcu, tcp_fastopen_ctx_free);
 }
 
+static struct tcp_fastopen_context *tcp_fastopen_alloc_ctx(void *primary_key,
+							   void *backup_key,
+							   unsigned int len)
+{
+	struct tcp_fastopen_context *new_ctx;
+	void *key = primary_key;
+	int err, i;
+
+	new_ctx = kmalloc(sizeof(*new_ctx), GFP_KERNEL);
+	if (!new_ctx)
+		return ERR_PTR(-ENOMEM);
+	for (i = 0; i < TCP_FASTOPEN_KEY_MAX; i++)
+		new_ctx->tfm[i] = NULL;
+	for (i = 0; i < (backup_key ? 2 : 1); i++) {
+		new_ctx->tfm[i] = crypto_alloc_cipher("aes", 0, 0);
+		if (IS_ERR(new_ctx->tfm[i])) {
+			err = PTR_ERR(new_ctx->tfm[i]);
+			new_ctx->tfm[i] = NULL;
+			pr_err("TCP: TFO aes cipher alloc error: %d\n", err);
+			goto out;
+		}
+		err = crypto_cipher_setkey(new_ctx->tfm[i], key, len);
+		if (err) {
+			pr_err("TCP: TFO cipher key error: %d\n", err);
+			goto out;
+		}
+		memcpy(&new_ctx->key[i * TCP_FASTOPEN_KEY_LENGTH], key, len);
+		key = backup_key;
+	}
+	return new_ctx;
+out:
+	tcp_fastopen_ctx_free(&new_ctx->rcu);
+	return ERR_PTR(err);
+}
+
 int tcp_fastopen_reset_cipher(struct net *net, struct sock *sk,
 			      void *primary_key, void *backup_key,
 			      unsigned int len)
@@ -76,20 +116,11 @@ int tcp_fastopen_reset_cipher(struct net *net, struct sock *sk,
 	struct fastopen_queue *q;
 	int err = 0;
 
-	ctx = kmalloc(sizeof(*ctx), GFP_KERNEL);
-	if (!ctx) {
-		err = -ENOMEM;
+	ctx = tcp_fastopen_alloc_ctx(primary_key, backup_key, len);
+	if (IS_ERR(ctx)) {
+		err = PTR_ERR(ctx);
 		goto out;
 	}
-
-	memcpy(ctx->key[0], primary_key, len);
-	if (backup_key) {
-		memcpy(ctx->key[1], backup_key, len);
-		ctx->num = 2;
-	} else {
-		ctx->num = 1;
-	}
-
 	spin_lock(&net->ipv4.tcp_fastopen_ctx_lock);
 	if (sk) {
 		q = &inet_csk(sk)->icsk_accept_queue.fastopenq;
@@ -111,30 +142,31 @@ out:
 
 static bool __tcp_fastopen_cookie_gen_cipher(struct request_sock *req,
 					     struct sk_buff *syn,
-					     const u8 *key,
+					     struct crypto_cipher *tfm,
 					     struct tcp_fastopen_cookie *foc)
 {
-	BUILD_BUG_ON(TCP_FASTOPEN_KEY_LENGTH != sizeof(siphash_key_t));
-	BUILD_BUG_ON(TCP_FASTOPEN_COOKIE_SIZE != sizeof(u64));
-
 	if (req->rsk_ops->family == AF_INET) {
 		const struct iphdr *iph = ip_hdr(syn);
+		__be32 path[4] = { iph->saddr, iph->daddr, 0, 0 };
 
-		foc->val[0] = siphash(&iph->saddr,
-				      sizeof(iph->saddr) +
-				      sizeof(iph->daddr),
-				      (const siphash_key_t *)key);
+		crypto_cipher_encrypt_one(tfm, foc->val, (void *)path);
 		foc->len = TCP_FASTOPEN_COOKIE_SIZE;
 		return true;
 	}
+
 #if IS_ENABLED(CONFIG_IPV6)
 	if (req->rsk_ops->family == AF_INET6) {
 		const struct ipv6hdr *ip6h = ipv6_hdr(syn);
+		struct tcp_fastopen_cookie tmp;
+		struct in6_addr *buf;
+		int i;
 
-		foc->val[0] = siphash(&ip6h->saddr,
-				      sizeof(ip6h->saddr) +
-				      sizeof(ip6h->daddr),
-				      (const siphash_key_t *)key);
+		crypto_cipher_encrypt_one(tfm, tmp.val,
+					  (void *)&ip6h->saddr);
+		buf = &tmp.addr;
+		for (i = 0; i < 4; i++)
+			buf->s6_addr32[i] ^= ip6h->daddr.s6_addr32[i];
+		crypto_cipher_encrypt_one(tfm, foc->val, (void *)buf);
 		foc->len = TCP_FASTOPEN_COOKIE_SIZE;
 		return true;
 	}
@@ -142,8 +174,11 @@ static bool __tcp_fastopen_cookie_gen_cipher(struct request_sock *req,
 	return false;
 }
 
-/* Generate the fastopen cookie by applying SipHash to both the source and
- * destination addresses.
+/* Generate the fastopen cookie by doing aes128 encryption on both
+ * the source and destination addresses. Pad 0s for IPv4 or IPv4-mapped-IPv6
+ * addresses. For the longer IPv6 addresses use CBC-MAC.
+ *
+ * XXX (TFO) - refactor when TCP_FASTOPEN_COOKIE_SIZE != AES_BLOCK_SIZE.
  */
 static void tcp_fastopen_cookie_gen(struct sock *sk,
 				    struct request_sock *req,
@@ -155,7 +190,7 @@ static void tcp_fastopen_cookie_gen(struct sock *sk,
 	rcu_read_lock();
 	ctx = tcp_fastopen_get_ctx(sk);
 	if (ctx)
-		__tcp_fastopen_cookie_gen_cipher(req, syn, ctx->key[0], foc);
+		__tcp_fastopen_cookie_gen_cipher(req, syn, ctx->tfm[0], foc);
 	rcu_read_unlock();
 }
 
@@ -219,7 +254,7 @@ static int tcp_fastopen_cookie_gen_check(struct sock *sk,
 	if (!ctx)
 		goto out;
 	for (i = 0; i < tcp_fastopen_context_len(ctx); i++) {
-		__tcp_fastopen_cookie_gen_cipher(req, syn, ctx->key[i], foc);
+		__tcp_fastopen_cookie_gen_cipher(req, syn, ctx->tfm[i], foc);
 		if (tcp_fastopen_cookie_match(foc, orig)) {
 			ret = i + 1;
 			goto out;

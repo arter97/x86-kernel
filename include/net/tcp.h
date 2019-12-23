@@ -424,7 +424,24 @@ int __must_check tcp_queue_rcv(struct sock *sk, struct sk_buff *skb,
 			       bool *fragstolen);
 void tcp_ofo_queue(struct sock *sk);
 void tcp_data_queue_ofo(struct sock *sk, struct sk_buff *skb);
-int linear_payload_sz(bool first_skb);
+
+/* Do not bother using a page frag for very small frames.
+ * But use this heuristic only for the first skb in write queue.
+ *
+ * Having no payload in skb->head allows better SACK shifting
+ * in tcp_shift_skb_data(), reducing sack/rack overhead, because
+ * write queue has less skbs.
+ * Each skb can hold up to MAX_SKB_FRAGS * 32Kbytes, or ~0.5 MB.
+ * This also speeds up tso_fragment(), since it wont fallback
+ * to tcp_fragment().
+ */
+static inline int linear_payload_sz(bool first_skb)
+{
+	if (first_skb)
+		return SKB_WITH_OVERHEAD(2048 - MAX_TCP_HEADER);
+	return 0;
+}
+
 /**** END - Exports needed for MPTCP ****/
 
 void tcp_tasklet_init(void);

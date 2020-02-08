@@ -336,12 +336,14 @@ xfs_blkdev_put(
 		blkdev_put(bdev, FMODE_READ|FMODE_WRITE|FMODE_EXCL);
 }
 
+#ifndef CONFIG_XFS_UNSAFE
 void
 xfs_blkdev_issue_flush(
 	xfs_buftarg_t		*buftarg)
 {
 	blkdev_issue_flush(buftarg->bt_bdev, GFP_NOFS);
 }
+#endif
 
 STATIC void
 xfs_close_devices(

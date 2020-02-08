@@ -72,7 +72,11 @@ struct block_device;
 
 extern void xfs_quiesce_attr(struct xfs_mount *mp);
 extern void xfs_flush_inodes(struct xfs_mount *mp);
+#ifdef CONFIG_XFS_UNSAFE
+static inline void xfs_blkdev_issue_flush(struct xfs_buftarg *p) {}
+#else
 extern void xfs_blkdev_issue_flush(struct xfs_buftarg *);
+#endif
 extern xfs_agnumber_t xfs_set_inode_alloc(struct xfs_mount *,
 					   xfs_agnumber_t agcount);
 

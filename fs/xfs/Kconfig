@@ -141,3 +141,12 @@ config XFS_ASSERT_FATAL
 	  result in warnings.
 
 	  This behavior can be modified at runtime via sysfs.
+
+config XFS_UNSAFE
+	bool "Use XFS unsafely"
+	depends on XFS_FS
+	help
+	  Disable flushes to improve performance.
+
+	  Say N here unless you are absolutely sure the filesystem is always
+	  safely unmounted and flushed.

@@ -17,13 +17,22 @@ xfs_param_t xfs_params = {
 	.symlink_mode	= {	0,		0,		1	},
 	.panic_mask	= {	0,		0,		256	},
 	.error_level	= {	0,		3,		11	},
+#ifdef CONFIG_XFS_UNSAFE
+	.syncd_timer	= {	1*100,		180*100,	7200*100},
+#else
 	.syncd_timer	= {	1*100,		30*100,		7200*100},
+#endif
 	.stats_clear	= {	0,		0,		1	},
 	.inherit_sync	= {	0,		1,		1	},
 	.inherit_nodump	= {	0,		1,		1	},
 	.inherit_noatim = {	0,		1,		1	},
+#ifdef CONFIG_XFS_UNSAFE
+	.xfs_buf_timer	= {	100/2,		60*100,		30*100	},
+	.xfs_buf_age	= {	1*100,		120*100,	7200*100},
+#else
 	.xfs_buf_timer	= {	100/2,		1*100,		30*100	},
 	.xfs_buf_age	= {	1*100,		15*100,		7200*100},
+#endif
 	.inherit_nosym	= {	0,		0,		1	},
 	.rotorstep	= {	1,		1,		255	},
 	.inherit_nodfrg	= {	0,		1,		1	},

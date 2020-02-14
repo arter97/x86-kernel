@@ -2660,13 +2660,19 @@ void tcp_reset_vars(struct sock *sk)
 	tp->snd_ssthresh = TCP_INFINITE_SSTHRESH;
 	tp->snd_cwnd = TCP_INIT_CWND;
 	tp->snd_cwnd_cnt = 0;
+	tp->delivered = 0;
 	tp->delivered_ce = 0;
 	tp->is_sack_reneg = 0;
 	tcp_clear_retrans(tp);
+	tp->total_retrans = 0;
+	tp->segs_in = 0;
+	tp->segs_out = 0;
 	tp->bytes_sent = 0;
 	tp->bytes_received = 0;
 	tp->bytes_retrans = 0;
 	tp->bytes_acked = 0;
+	tp->data_segs_in = 0;
+	tp->data_segs_out = 0;
 	/* There's a bubble in the pipe until at least the first ACK. */
 	tp->app_limited = ~0U;
 }

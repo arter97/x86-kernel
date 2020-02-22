@@ -1047,8 +1047,8 @@ static void tcp_v6_send_ack(const struct sock *sk, struct sk_buff *skb, u32 seq,
 			    struct tcp_md5sig_key *key, u8 tclass,
 			    __be32 label, u32 priority, int mptcp)
 {
-	tcp_v6_send_response(sk, skb, seq, ack, data_ack, win, tsval, tsecr, oif, key, 0,
-			     tclass, label, priority, mptcp);
+	tcp_v6_send_response(sk, skb, seq, ack, data_ack, win, tsval, tsecr, oif,
+			     key, 0, tclass, label, priority, mptcp);
 }
 
 static void tcp_v6_timewait_ack(struct sock *sk, struct sk_buff *skb)
@@ -1685,11 +1685,9 @@ process:
 			goto discard_and_relse;
 		skb_to_free = NULL;
 	}
-
 	bh_unlock_sock(meta_sk);
 	if (skb_to_free)
 		__kfree_skb(skb_to_free);
-
 put_and_return:
 	if (refcounted)
 		sock_put(sk);

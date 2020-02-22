@@ -1224,11 +1224,11 @@ static struct genl_family mptcp_genl_family = {
 	.name		= MPTCP_GENL_NAME,
 	.version	= MPTCP_GENL_VER,
 	.maxattr	= MPTCP_ATTR_MAX,
+	.policy		= mptcp_nl_genl_policy,
 	.netnsok	= true,
 	.module		= THIS_MODULE,
 	.ops		= mptcp_genl_ops,
 	.n_ops		= ARRAY_SIZE(mptcp_genl_ops),
-	.policy		= mptcp_nl_genl_policy,
 	.mcgrps		= mptcp_mcgrps,
 	.n_mcgrps	= ARRAY_SIZE(mptcp_mcgrps),
 };

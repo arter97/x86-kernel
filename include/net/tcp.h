@@ -43,6 +43,7 @@
 #include <linux/seq_file.h>
 #include <linux/memcontrol.h>
 #include <linux/bpf-cgroup.h>
+#include <linux/siphash.h>
 
 extern struct inet_hashinfo tcp_hashinfo;
 
@@ -423,24 +424,7 @@ int __must_check tcp_queue_rcv(struct sock *sk, struct sk_buff *skb,
 			       bool *fragstolen);
 void tcp_ofo_queue(struct sock *sk);
 void tcp_data_queue_ofo(struct sock *sk, struct sk_buff *skb);
-
-/* Do not bother using a page frag for very small frames.
- * But use this heuristic only for the first skb in write queue.
- *
- * Having no payload in skb->head allows better SACK shifting
- * in tcp_shift_skb_data(), reducing sack/rack overhead, because
- * write queue has less skbs.
- * Each skb can hold up to MAX_SKB_FRAGS * 32Kbytes, or ~0.5 MB.
- * This also speeds up tso_fragment(), since it wont fallback
- * to tcp_fragment().
- */
-static inline int linear_payload_sz(bool first_skb)
-{
-	if (first_skb)
-		return SKB_WITH_OVERHEAD(2048 - MAX_TCP_HEADER);
-	return 0;
-}
-
+int linear_payload_sz(bool first_skb);
 /**** END - Exports needed for MPTCP ****/
 
 void tcp_tasklet_init(void);
@@ -1810,8 +1794,7 @@ void tcp_free_fastopen_req(struct tcp_sock *tp);
 void tcp_fastopen_destroy_cipher(struct sock *sk);
 void tcp_fastopen_ctx_destroy(struct net *net);
 int tcp_fastopen_reset_cipher(struct net *net, struct sock *sk,
-			      void *primary_key, void *backup_key,
-			      unsigned int len);
+			      void *primary_key, void *backup_key);
 void tcp_fastopen_add_skb(struct sock *sk, struct sk_buff *skb);
 struct sock *tcp_try_fastopen(struct sock *sk, struct sk_buff *skb,
 			      struct request_sock *req,
@@ -1821,16 +1804,16 @@ void tcp_fastopen_init_key_once(struct net *net);
 bool tcp_fastopen_cookie_check(struct sock *sk, u16 *mss,
 			     struct tcp_fastopen_cookie *cookie);
 bool tcp_fastopen_defer_connect(struct sock *sk, int *err);
-#define TCP_FASTOPEN_KEY_LENGTH 16
+#define TCP_FASTOPEN_KEY_LENGTH sizeof(siphash_key_t)
 #define TCP_FASTOPEN_KEY_MAX 2
 #define TCP_FASTOPEN_KEY_BUF_LENGTH \
 	(TCP_FASTOPEN_KEY_LENGTH * TCP_FASTOPEN_KEY_MAX)
 
 /* Fastopen key context */
 struct tcp_fastopen_context {
-	struct crypto_cipher	*tfm[TCP_FASTOPEN_KEY_MAX];
-	__u8			key[TCP_FASTOPEN_KEY_BUF_LENGTH];
-	struct rcu_head		rcu;
+	siphash_key_t	key[TCP_FASTOPEN_KEY_MAX];
+	int		num;
+	struct rcu_head	rcu;
 };
 
 extern unsigned int sysctl_tcp_fastopen_blackhole_timeout;
@@ -1865,9 +1848,7 @@ bool tcp_fastopen_cookie_match(const struct tcp_fastopen_cookie *foc,
 static inline
 int tcp_fastopen_context_len(const struct tcp_fastopen_context *ctx)
 {
-	if (ctx->tfm[1])
-		return 2;
-	return 1;
+	return ctx->num;
 }
 
 /* Latencies incurred by various limits for a sender. They are

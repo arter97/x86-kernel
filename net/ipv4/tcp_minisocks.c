@@ -296,7 +296,6 @@ void tcp_time_wait(struct sock *sk, int state, int timeo)
 		tcptw->tw_ts_recent_stamp = tp->rx_opt.ts_recent_stamp;
 		tcptw->tw_ts_offset	= tp->tsoffset;
 		tcptw->tw_last_oow_ack_time = 0;
-		tcptw->tw_tx_delay	= tp->tcp_tx_delay;
 
 		if (mptcp(tp)) {
 			if (mptcp_init_tw_sock(sk, tcptw)) {
@@ -307,6 +306,7 @@ void tcp_time_wait(struct sock *sk, int state, int timeo)
 			tcptw->mptcp_tw = NULL;
 		}
 
+		tcptw->tw_tx_delay	= tp->tcp_tx_delay;
 #if IS_ENABLED(CONFIG_IPV6)
 		if (tw->tw_family == PF_INET6) {
 			struct ipv6_pinfo *np = inet6_sk(sk);
@@ -569,13 +569,13 @@ struct sock *tcp_create_openreq_child(const struct sock *sk,
 		newtp->rx_opt.ts_recent_stamp = 0;
 		newtp->tcp_header_len = sizeof(struct tcphdr);
 	}
+	if (ireq->saw_mpc)
+		newtp->tcp_header_len += MPTCP_SUB_LEN_DSM_ALIGN;
 	if (req->num_timeout) {
 		newtp->undo_marker = treq->snt_isn;
 		newtp->retrans_stamp = div_u64(treq->snt_synack,
 					       USEC_PER_SEC / TCP_TS_HZ);
 	}
-	if (ireq->saw_mpc)
-		newtp->tcp_header_len += MPTCP_SUB_LEN_DSM_ALIGN;
 	newtp->tsoffset = treq->ts_off;
 #ifdef CONFIG_TCP_MD5SIG
 	newtp->md5sig_info = NULL;	/*XXX*/
@@ -588,6 +588,7 @@ struct sock *tcp_create_openreq_child(const struct sock *sk,
 	tcp_ecn_openreq_child(newtp, req);
 	newtp->fastopen_req = NULL;
 	RCU_INIT_POINTER(newtp->fastopen_rsk, NULL);
+	newtp->inside_tk_table = 0;
 
 	__TCP_INC_STATS(sock_net(sk), TCP_MIB_PASSIVEOPENS);
 

@@ -1341,7 +1341,6 @@ restart:
 
 		if (copy <= 0 || !tcp_skb_can_collapse_to(skb)) {
 			bool first_skb;
-			int size;
 
 new_segment:
 			if (!sk_stream_memory_free(sk))
@@ -1353,11 +1352,7 @@ new_segment:
 					goto restart;
 			}
 			first_skb = tcp_rtx_and_write_queues_empty(sk);
-			if (mptcp(tp))
-				size = mptcp_select_size(sk, first_skb, zc);
-			else
-				size = 0;
-			skb = sk_stream_alloc_skb(sk, size, sk->sk_allocation,
+			skb = sk_stream_alloc_skb(sk, 0, sk->sk_allocation,
 						  first_skb);
 			if (!skb)
 				goto wait_for_memory;
@@ -2668,9 +2663,9 @@ void tcp_reset_vars(struct sock *sk)
 	tp->segs_in = 0;
 	tp->segs_out = 0;
 	tp->bytes_sent = 0;
+	tp->bytes_acked = 0;
 	tp->bytes_received = 0;
 	tp->bytes_retrans = 0;
-	tp->bytes_acked = 0;
 	tp->data_segs_in = 0;
 	tp->data_segs_out = 0;
 	/* There's a bubble in the pipe until at least the first ACK. */
@@ -2963,8 +2958,7 @@ static int do_tcp_setsockopt(struct sock *sk, int level,
 		if (optlen == TCP_FASTOPEN_KEY_BUF_LENGTH)
 			backup_key = key + TCP_FASTOPEN_KEY_LENGTH;
 
-		return tcp_fastopen_reset_cipher(net, sk, key, backup_key,
-						 TCP_FASTOPEN_KEY_LENGTH);
+		return tcp_fastopen_reset_cipher(net, sk, key, backup_key);
 	}
 #ifdef CONFIG_MPTCP
 	case MPTCP_SCHEDULER: {

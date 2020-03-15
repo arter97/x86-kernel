@@ -460,4 +460,6 @@ config BLK_DEV_RSXX
 
 source "drivers/block/rnbd/Kconfig"
 
+source "drivers/block/vbswap/Kconfig"
+
 endif # BLK_DEV

@@ -1548,24 +1548,18 @@ static void free_bprm(struct linux_binprm *bprm)
 	if (bprm->interp != bprm->filename)
 		kfree(bprm->interp);
 	kfree(bprm->fdpath);
-	kfree(bprm);
 }
 
-static struct linux_binprm *alloc_bprm(int fd, struct filename *filename, int flags)
+static int fill_bprm(struct linux_binprm *bprm, int fd, struct filename *filename, int flags)
 {
-	struct linux_binprm *bprm;
 	struct file *file;
 	int retval = -ENOMEM;
 
 	file = do_open_execat(fd, filename, flags);
 	if (IS_ERR(file))
-		return ERR_CAST(file);
+		return PTR_ERR(file);
 
-	bprm = kzalloc(sizeof(*bprm), GFP_KERNEL);
-	if (!bprm) {
-		do_close_execat(file);
-		return ERR_PTR(-ENOMEM);
-	}
+	memset(bprm, 0, sizeof(struct linux_binprm));
 
 	bprm->file = file;
 
@@ -1597,12 +1591,13 @@ static struct linux_binprm *alloc_bprm(int fd, struct filename *filename, int fl
 	bprm->interp = bprm->filename;
 
 	retval = bprm_mm_init(bprm);
-	if (!retval)
-		return bprm;
+	if (retval)
+		goto out_free;
+	return 0;
 
 out_free:
 	free_bprm(bprm);
-	return ERR_PTR(retval);
+	return retval;
 }
 
 int bprm_change_interp(const char *interp, struct linux_binprm *bprm)
@@ -1924,7 +1919,7 @@ static int do_execveat_common(int fd, struct filename *filename,
 			      struct user_arg_ptr envp,
 			      int flags)
 {
-	struct linux_binprm *bprm;
+	struct linux_binprm bprm;
 	int retval;
 
 	if (IS_ERR(filename))
@@ -1946,39 +1941,37 @@ static int do_execveat_common(int fd, struct filename *filename,
 	 * further execve() calls fail. */
 	current->flags &= ~PF_NPROC_EXCEEDED;
 
-	bprm = alloc_bprm(fd, filename, flags);
-	if (IS_ERR(bprm)) {
-		retval = PTR_ERR(bprm);
+	retval = fill_bprm(&bprm, fd, filename, flags);
+	if (retval)
 		goto out_ret;
-	}
 
 	retval = count(argv, MAX_ARG_STRINGS);
 	if (retval == 0)
 		pr_warn_once("process '%s' launched '%s' with NULL argv: empty string added\n",
-			     current->comm, bprm->filename);
+			     current->comm, bprm.filename);
 	if (retval < 0)
 		goto out_free;
-	bprm->argc = retval;
+	bprm.argc = retval;
 
 	retval = count(envp, MAX_ARG_STRINGS);
 	if (retval < 0)
 		goto out_free;
-	bprm->envc = retval;
+	bprm.envc = retval;
 
-	retval = bprm_stack_limits(bprm);
+	retval = bprm_stack_limits(&bprm);
 	if (retval < 0)
 		goto out_free;
 
-	retval = copy_string_kernel(bprm->filename, bprm);
+	retval = copy_string_kernel(bprm.filename, &bprm);
 	if (retval < 0)
 		goto out_free;
-	bprm->exec = bprm->p;
+	bprm.exec = bprm.p;
 
-	retval = copy_strings(bprm->envc, envp, bprm);
+	retval = copy_strings(bprm.envc, envp, &bprm);
 	if (retval < 0)
 		goto out_free;
 
-	retval = copy_strings(bprm->argc, argv, bprm);
+	retval = copy_strings(bprm.argc, argv, &bprm);
 	if (retval < 0)
 		goto out_free;
 
@@ -1988,16 +1981,16 @@ static int do_execveat_common(int fd, struct filename *filename,
 	 * from argv[1] won't end up walking envp. See also
 	 * bprm_stack_limits().
 	 */
-	if (bprm->argc == 0) {
-		retval = copy_string_kernel("", bprm);
+	if (bprm.argc == 0) {
+		retval = copy_string_kernel("", &bprm);
 		if (retval < 0)
 			goto out_free;
-		bprm->argc = 1;
+		bprm.argc = 1;
 	}
 
-	retval = bprm_execve(bprm);
+	retval = bprm_execve(&bprm);
 out_free:
-	free_bprm(bprm);
+	free_bprm(&bprm);
 
 out_ret:
 	putname(filename);
@@ -2008,7 +2001,7 @@ int kernel_execve(const char *kernel_filename,
 		  const char *const *argv, const char *const *envp)
 {
 	struct filename *filename;
-	struct linux_binprm *bprm;
+	struct linux_binprm bprm;
 	int fd = AT_FDCWD;
 	int retval;
 
@@ -2020,44 +2013,42 @@ int kernel_execve(const char *kernel_filename,
 	if (IS_ERR(filename))
 		return PTR_ERR(filename);
 
-	bprm = alloc_bprm(fd, filename, 0);
-	if (IS_ERR(bprm)) {
-		retval = PTR_ERR(bprm);
+	retval = fill_bprm(&bprm, fd, filename, 0);
+	if (retval)
 		goto out_ret;
-	}
 
 	retval = count_strings_kernel(argv);
 	if (WARN_ON_ONCE(retval == 0))
 		retval = -EINVAL;
 	if (retval < 0)
 		goto out_free;
-	bprm->argc = retval;
+	bprm.argc = retval;
 
 	retval = count_strings_kernel(envp);
 	if (retval < 0)
 		goto out_free;
-	bprm->envc = retval;
+	bprm.envc = retval;
 
-	retval = bprm_stack_limits(bprm);
+	retval = bprm_stack_limits(&bprm);
 	if (retval < 0)
 		goto out_free;
 
-	retval = copy_string_kernel(bprm->filename, bprm);
+	retval = copy_string_kernel(bprm.filename, &bprm);
 	if (retval < 0)
 		goto out_free;
-	bprm->exec = bprm->p;
+	bprm.exec = bprm.p;
 
-	retval = copy_strings_kernel(bprm->envc, envp, bprm);
-	if (retval < 0)
-		goto out_free;
-
-	retval = copy_strings_kernel(bprm->argc, argv, bprm);
+	retval = copy_strings_kernel(bprm.envc, envp, &bprm);
 	if (retval < 0)
 		goto out_free;
 
-	retval = bprm_execve(bprm);
+	retval = copy_strings_kernel(bprm.argc, argv, &bprm);
+	if (retval < 0)
+		goto out_free;
+
+	retval = bprm_execve(&bprm);
 out_free:
-	free_bprm(bprm);
+	free_bprm(&bprm);
 out_ret:
 	putname(filename);
 	return retval;

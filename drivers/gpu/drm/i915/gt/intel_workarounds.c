@@ -567,9 +567,6 @@ static void icl_ctx_workarounds_init(struct intel_engine_cs *engine,
 static void tgl_ctx_workarounds_init(struct intel_engine_cs *engine,
 				     struct i915_wa_list *wal)
 {
-	/* Wa_1409142259 */
-	WA_SET_BIT_MASKED(GEN11_COMMON_SLICE_CHICKEN3,
-			  GEN12_DISABLE_CPS_AWARE_COLOR_PIPE);
 }
 
 static void
@@ -893,11 +890,6 @@ icl_gt_workarounds_init(struct drm_i915_private *i915, struct i915_wa_list *wal)
 	wa_write_or(wal,
 		    GAMT_CHKN_BIT_REG,
 		    GAMT_CHKN_DISABLE_L3_COH_PIPE);
-
-	/* Wa_1607087056:icl */
-	wa_write_or(wal,
-		    SLICE_UNIT_LEVEL_CLKGATE,
-		    L3_CLKGATE_DIS | L3_CR2X_CLKGATE_DIS);
 }
 
 static void
@@ -1205,26 +1197,6 @@ static void icl_whitelist_build(struct intel_engine_cs *engine)
 
 static void tgl_whitelist_build(struct intel_engine_cs *engine)
 {
-	struct i915_wa_list *w = &engine->whitelist;
-
-	switch (engine->class) {
-	case RENDER_CLASS:
-		/*
-		 * WaAllowPMDepthAndInvocationCountAccessFromUMD:tgl
-		 *
-		 * This covers 4 registers which are next to one another :
-		 *   - PS_INVOCATION_COUNT
-		 *   - PS_INVOCATION_COUNT_UDW
-		 *   - PS_DEPTH_COUNT
-		 *   - PS_DEPTH_COUNT_UDW
-		 */
-		whitelist_reg_ext(w, PS_INVOCATION_COUNT,
-				  RING_FORCE_TO_NONPRIV_ACCESS_RD |
-				  RING_FORCE_TO_NONPRIV_RANGE_4);
-		break;
-	default:
-		break;
-	}
 }
 
 void intel_engine_init_whitelist(struct intel_engine_cs *engine)
@@ -1480,7 +1452,7 @@ static bool mcr_range(struct drm_i915_private *i915, u32 offset)
 	 * which only controls CPU initiated MMIO. Routing does not
 	 * work for CS access so we cannot verify them on this path.
 	 */
-	if (INTEL_GEN(i915) >= 8 && (offset >= 0xb000 && offset <= 0xb4ff))
+	if (INTEL_GEN(i915) >= 8 && (offset >= 0xb100 && offset <= 0xb3ff))
 		return true;
 
 	return false;

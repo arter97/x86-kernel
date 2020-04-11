@@ -236,6 +236,8 @@ static void i915_gem_context_free(struct i915_gem_context *ctx)
 	free_engines(rcu_access_pointer(ctx->engines));
 	mutex_destroy(&ctx->engines_mutex);
 
+	kfree(ctx->jump_whitelist);
+
 	if (ctx->timeline)
 		intel_timeline_put(ctx->timeline);
 
@@ -366,7 +368,7 @@ static struct intel_engine_cs *active_engine(struct intel_context *ce)
 	if (!ce->timeline)
 		return NULL;
 
-	rcu_read_lock();
+	mutex_lock(&ce->timeline->mutex);
 	list_for_each_entry_reverse(rq, &ce->timeline->requests, link) {
 		if (i915_request_completed(rq))
 			break;
@@ -376,7 +378,7 @@ static struct intel_engine_cs *active_engine(struct intel_context *ce)
 		if (engine)
 			break;
 	}
-	rcu_read_unlock();
+	mutex_unlock(&ce->timeline->mutex);
 
 	return engine;
 }
@@ -526,6 +528,9 @@ __create_context(struct drm_i915_private *i915)
 
 	for (i = 0; i < ARRAY_SIZE(ctx->hang_timestamp); i++)
 		ctx->hang_timestamp[i] = jiffies - CONTEXT_FAST_HANG_JIFFIES;
+
+	ctx->jump_whitelist = NULL;
+	ctx->jump_whitelist_cmds = 0;
 
 	spin_lock(&i915->gem.contexts.lock);
 	list_add_tail(&ctx->link, &i915->gem.contexts.list);
@@ -722,6 +727,7 @@ int i915_gem_init_contexts(struct drm_i915_private *i915)
 void i915_gem_driver_release__contexts(struct drm_i915_private *i915)
 {
 	destroy_kernel_context(&i915->kernel_context);
+	flush_work(&i915->gem.contexts.free_work);
 }
 
 static int context_idr_cleanup(int id, void *p, void *data)
@@ -1136,7 +1142,7 @@ static int set_ppgtt(struct drm_i915_file_private *file_priv,
 
 	if (i915_gem_context_is_closed(ctx)) {
 		err = -ENOENT;
-		goto out;
+		goto unlock;
 	}
 
 	if (vm == rcu_access_pointer(ctx->vm))

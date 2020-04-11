@@ -142,6 +142,7 @@
 #include "intel_engine_pm.h"
 #include "intel_gt.h"
 #include "intel_gt_pm.h"
+#include "intel_gt_requests.h"
 #include "intel_lrc_reg.h"
 #include "intel_mocs.h"
 #include "intel_reset.h"
@@ -990,63 +991,6 @@ static void intel_engine_context_out(struct intel_engine_cs *engine)
 	write_sequnlock_irqrestore(&engine->stats.lock, flags);
 }
 
-static inline struct intel_engine_cs *
-__execlists_schedule_in(struct i915_request *rq)
-{
-	struct intel_engine_cs * const engine = rq->engine;
-	struct intel_context * const ce = rq->hw_context;
-
-	intel_context_get(ce);
-
-	if (ce->tag) {
-		/* Use a fixed tag for OA and friends */
-		ce->lrc_desc |= (u64)ce->tag << 32;
-	} else {
-		/* We don't need a strict matching tag, just different values */
-		ce->lrc_desc &= ~GENMASK_ULL(47, 37);
-		ce->lrc_desc |=
-			(u64)(engine->context_tag++ % NUM_CONTEXT_TAG) <<
-			GEN11_SW_CTX_ID_SHIFT;
-		BUILD_BUG_ON(NUM_CONTEXT_TAG > GEN12_MAX_CONTEXT_HW_ID);
-	}
-
-	intel_gt_pm_get(engine->gt);
-	execlists_context_status_change(rq, INTEL_CONTEXT_SCHEDULE_IN);
-	intel_engine_context_in(engine);
-
-	return engine;
-}
-
-static inline struct i915_request *
-execlists_schedule_in(struct i915_request *rq, int idx)
-{
-	struct intel_context * const ce = rq->hw_context;
-	struct intel_engine_cs *old;
-
-	GEM_BUG_ON(!intel_engine_pm_is_awake(rq->engine));
-	trace_i915_request_in(rq, idx);
-
-	old = READ_ONCE(ce->inflight);
-	do {
-		if (!old) {
-			WRITE_ONCE(ce->inflight, __execlists_schedule_in(rq));
-			break;
-		}
-	} while (!try_cmpxchg(&ce->inflight, &old, ptr_inc(old)));
-
-	GEM_BUG_ON(intel_context_inflight(ce) != rq->engine);
-	return i915_request_get(rq);
-}
-
-static void kick_siblings(struct i915_request *rq, struct intel_context *ce)
-{
-	struct virtual_engine *ve = container_of(ce, typeof(*ve), context);
-	struct i915_request *next = READ_ONCE(ve->request);
-
-	if (next && next->execution_mask & ~rq->execution_mask)
-		tasklet_schedule(&ve->base.execlists.tasklet);
-}
-
 static void restore_default_state(struct intel_context *ce,
 				  struct intel_engine_cs *engine)
 {
@@ -1100,18 +1044,89 @@ static void reset_active(struct i915_request *rq,
 	ce->lrc_desc |= CTX_DESC_FORCE_RESTORE;
 }
 
+static inline struct intel_engine_cs *
+__execlists_schedule_in(struct i915_request *rq)
+{
+	struct intel_engine_cs * const engine = rq->engine;
+	struct intel_context * const ce = rq->hw_context;
+
+	intel_context_get(ce);
+
+	if (unlikely(i915_gem_context_is_banned(ce->gem_context)))
+		reset_active(rq, engine);
+
+	if (ce->tag) {
+		/* Use a fixed tag for OA and friends */
+		ce->lrc_desc |= (u64)ce->tag << 32;
+	} else {
+		/* We don't need a strict matching tag, just different values */
+		ce->lrc_desc &= ~GENMASK_ULL(47, 37);
+		ce->lrc_desc |=
+			(u64)(engine->context_tag++ % NUM_CONTEXT_TAG) <<
+			GEN11_SW_CTX_ID_SHIFT;
+		BUILD_BUG_ON(NUM_CONTEXT_TAG > GEN12_MAX_CONTEXT_HW_ID);
+	}
+
+	intel_gt_pm_get(engine->gt);
+	execlists_context_status_change(rq, INTEL_CONTEXT_SCHEDULE_IN);
+	intel_engine_context_in(engine);
+
+	return engine;
+}
+
+static inline struct i915_request *
+execlists_schedule_in(struct i915_request *rq, int idx)
+{
+	struct intel_context * const ce = rq->hw_context;
+	struct intel_engine_cs *old;
+
+	GEM_BUG_ON(!intel_engine_pm_is_awake(rq->engine));
+	trace_i915_request_in(rq, idx);
+
+	old = READ_ONCE(ce->inflight);
+	do {
+		if (!old) {
+			WRITE_ONCE(ce->inflight, __execlists_schedule_in(rq));
+			break;
+		}
+	} while (!try_cmpxchg(&ce->inflight, &old, ptr_inc(old)));
+
+	GEM_BUG_ON(intel_context_inflight(ce) != rq->engine);
+	return i915_request_get(rq);
+}
+
+static void kick_siblings(struct i915_request *rq, struct intel_context *ce)
+{
+	struct virtual_engine *ve = container_of(ce, typeof(*ve), context);
+	struct i915_request *next = READ_ONCE(ve->request);
+
+	if (next && next->execution_mask & ~rq->execution_mask)
+		tasklet_schedule(&ve->base.execlists.tasklet);
+}
+
 static inline void
 __execlists_schedule_out(struct i915_request *rq,
 			 struct intel_engine_cs * const engine)
 {
 	struct intel_context * const ce = rq->hw_context;
 
+	/*
+	 * NB process_csb() is not under the engine->active.lock and hence
+	 * schedule_out can race with schedule_in meaning that we should
+	 * refrain from doing non-trivial work here.
+	 */
+
+	/*
+	 * If we have just completed this context, the engine may now be
+	 * idle and we want to re-enter powersaving.
+	 */
+	if (list_is_last(&rq->link, &ce->timeline->requests) &&
+	    i915_request_completed(rq))
+		intel_engine_add_retire(engine, ce->timeline);
+
 	intel_engine_context_out(engine);
 	execlists_context_status_change(rq, INTEL_CONTEXT_SCHEDULE_OUT);
-	intel_gt_pm_put(engine->gt);
-
-	if (unlikely(i915_gem_context_is_banned(ce->gem_context)))
-		reset_active(rq, engine);
+	intel_gt_pm_put_async(engine->gt);
 
 	/*
 	 * If this is part of a virtual engine, its next request may
@@ -1931,16 +1946,17 @@ skip_submit:
 static void
 cancel_port_requests(struct intel_engine_execlists * const execlists)
 {
-	struct i915_request * const *port, *rq;
+	struct i915_request * const *port;
 
-	for (port = execlists->pending; (rq = *port); port++)
-		execlists_schedule_out(rq);
+	for (port = execlists->pending; *port; port++)
+		execlists_schedule_out(*port);
 	memset(execlists->pending, 0, sizeof(execlists->pending));
 
-	for (port = execlists->active; (rq = *port); port++)
-		execlists_schedule_out(rq);
-	execlists->active =
-		memset(execlists->inflight, 0, sizeof(execlists->inflight));
+	/* Mark the end of active before we overwrite *active */
+	for (port = xchg(&execlists->active, execlists->pending); *port; port++)
+		execlists_schedule_out(*port);
+	WRITE_ONCE(execlists->active,
+		   memset(execlists->inflight, 0, sizeof(execlists->inflight)));
 }
 
 static inline void
@@ -2093,23 +2109,27 @@ static void process_csb(struct intel_engine_cs *engine)
 		else
 			promote = gen8_csb_parse(execlists, buf + 2 * head);
 		if (promote) {
+			struct i915_request * const *old = execlists->active;
+
+			/* Point active to the new ELSP; prevent overwriting */
+			WRITE_ONCE(execlists->active, execlists->pending);
+			set_timeslice(engine);
+
 			if (!inject_preempt_hang(execlists))
 				ring_set_paused(engine, 0);
 
 			/* cancel old inflight, prepare for switch */
-			trace_ports(execlists, "preempted", execlists->active);
-			while (*execlists->active)
-				execlists_schedule_out(*execlists->active++);
+			trace_ports(execlists, "preempted", old);
+			while (*old)
+				execlists_schedule_out(*old++);
 
 			/* switch pending to inflight */
 			GEM_BUG_ON(!assert_pending_valid(execlists, "promote"));
-			execlists->active =
-				memcpy(execlists->inflight,
-				       execlists->pending,
-				       execlists_num_ports(execlists) *
-				       sizeof(*execlists->pending));
-
-			set_timeslice(engine);
+			WRITE_ONCE(execlists->active,
+				   memcpy(execlists->inflight,
+					  execlists->pending,
+					  execlists_num_ports(execlists) *
+					  sizeof(*execlists->pending)));
 
 			WRITE_ONCE(execlists->pending[0], NULL);
 		} else {

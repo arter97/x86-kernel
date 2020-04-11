@@ -1870,7 +1870,7 @@ alloc_oa_config_buffer(struct i915_perf_stream *stream,
 	config_length += num_lri_dwords(oa_config->mux_regs_len);
 	config_length += num_lri_dwords(oa_config->b_counter_regs_len);
 	config_length += num_lri_dwords(oa_config->flex_regs_len);
-	config_length++; /* MI_BATCH_BUFFER_END */
+	config_length += 3; /* MI_BATCH_BUFFER_START */
 	config_length = ALIGN(sizeof(u32) * config_length, I915_GTT_PAGE_SIZE);
 
 	obj = i915_gem_object_create_shmem(stream->perf->i915, config_length);
@@ -1895,7 +1895,12 @@ alloc_oa_config_buffer(struct i915_perf_stream *stream,
 			     oa_config->flex_regs,
 			     oa_config->flex_regs_len);
 
-	*cs++ = MI_BATCH_BUFFER_END;
+	/* Jump into the active wait. */
+	*cs++ = (INTEL_GEN(stream->perf->i915) < 8 ?
+		 MI_BATCH_BUFFER_START :
+		 MI_BATCH_BUFFER_START_GEN8);
+	*cs++ = i915_ggtt_offset(stream->noa_wait);
+	*cs++ = 0;
 
 	i915_gem_object_flush_map(obj);
 	i915_gem_object_unpin_map(obj);
@@ -3307,15 +3312,6 @@ i915_perf_open_ioctl_locked(struct i915_perf *perf,
 		}
 	}
 
-	if (props->hold_preemption) {
-		if (!props->single_context) {
-			DRM_DEBUG("preemption disable with no context\n");
-			ret = -EINVAL;
-			goto err;
-		}
-		privileged_op = true;
-	}
-
 	/*
 	 * On Haswell the OA unit supports clock gating off for a specific
 	 * context and in this mode there's no visibility of metrics for the
@@ -3335,11 +3331,20 @@ i915_perf_open_ioctl_locked(struct i915_perf *perf,
 	 * doesn't request global stream access (i.e. query based sampling
 	 * using MI_RECORD_PERF_COUNT.
 	 */
-	if (IS_HASWELL(perf->i915) && specific_ctx && !props->hold_preemption)
+	if (IS_HASWELL(perf->i915) && specific_ctx)
 		privileged_op = false;
 	else if (IS_GEN(perf->i915, 12) && specific_ctx &&
 		 (props->sample_flags & SAMPLE_OA_REPORT) == 0)
 		privileged_op = false;
+
+	if (props->hold_preemption) {
+		if (!props->single_context) {
+			DRM_DEBUG("preemption disable with no context\n");
+			ret = -EINVAL;
+			goto err;
+		}
+		privileged_op = true;
+	}
 
 	/* Similar to perf's kernel.perf_paranoid_cpu sysctl option
 	 * we check a dev.i915.perf_stream_paranoid sysctl option

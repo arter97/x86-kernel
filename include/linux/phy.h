@@ -219,6 +219,9 @@ struct mii_bus {
 	int (*write)(struct mii_bus *bus, int addr, int regnum, u16 val);
 	int (*reset)(struct mii_bus *bus);
 
+	unsigned int is_managed:1;	/* is device-managed */
+	unsigned int is_managed_registered:1;
+
 	/*
 	 * A lock to ensure that only one thing can read/write
 	 * the MDIO bus at a time
@@ -264,6 +267,20 @@ static inline struct mii_bus *mdiobus_alloc(void)
 
 int __mdiobus_register(struct mii_bus *bus, struct module *owner);
 #define mdiobus_register(bus) __mdiobus_register(bus, THIS_MODULE)
+static inline int devm_mdiobus_register(struct mii_bus *bus)
+{
+	int ret;
+
+	if (!bus->is_managed)
+		return -EPERM;
+
+	ret = mdiobus_register(bus);
+	if (!ret)
+		bus->is_managed_registered = 1;
+
+	return ret;
+}
+
 void mdiobus_unregister(struct mii_bus *bus);
 void mdiobus_free(struct mii_bus *bus);
 struct mii_bus *devm_mdiobus_alloc_size(struct device *dev, int sizeof_priv);

@@ -65,7 +65,13 @@ struct intel_context {
 #define CONTEXT_NOPREEMPT		6
 
 	u32 *lrc_reg_state;
-	u64 lrc_desc;
+	union {
+		struct {
+			u32 lrca;
+			u32 ccid;
+		};
+		u64 desc;
+	} lrc;
 	u32 tag; /* cookie passed to HW to track this context on submission */
 
 	unsigned int active_count; /* protected by timeline->mutex */

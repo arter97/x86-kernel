@@ -157,6 +157,11 @@ struct intel_engine_execlists {
 	struct i915_priolist default_priolist;
 
 	/**
+	 * @ccid: identifier for contexts submitted to this engine
+	 */
+	u32 ccid;
+
+	/**
 	 * @no_priolist: priority lists disabled
 	 */
 	bool no_priolist;

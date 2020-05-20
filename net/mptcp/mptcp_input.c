@@ -176,6 +176,10 @@ static void mptcp_clean_rtx_queue(struct sock *meta_sk, u32 prior_snd_una)
 }
 
 /* Inspired by tcp_rcv_state_process */
+/* Returns 0 if processing the packet can continue
+ *	   -1 if connection was closed with an active reset
+ *	   1 if connection was closed and processing should stop.
+ */
 static int mptcp_rcv_state_process(struct sock *meta_sk, struct sock *sk,
 				   const struct sk_buff *skb, u32 data_seq,
 				   u16 data_len)
@@ -216,7 +220,7 @@ static int mptcp_rcv_state_process(struct sock *meta_sk, struct sock *sk,
 			mptcp_send_active_reset(meta_sk, GFP_ATOMIC);
 			tcp_done(meta_sk);
 			__NET_INC_STATS(sock_net(meta_sk), LINUX_MIB_TCPABORTONDATA);
-			return 1;
+			return -1;
 		}
 
 		tmo = tcp_fin_time(meta_sk);
@@ -259,7 +263,7 @@ static int mptcp_rcv_state_process(struct sock *meta_sk, struct sock *sk,
 				__NET_INC_STATS(sock_net(meta_sk), LINUX_MIB_TCPABORTONDATA);
 				mptcp_send_active_reset(meta_sk, GFP_ATOMIC);
 				tcp_reset(meta_sk);
-				return 1;
+				return -1;
 			}
 		}
 		break;
@@ -344,6 +348,17 @@ static int mptcp_verif_dss_csum(struct sock *sk)
 						sizeof(data_seq), csum_tcp);
 
 			dss_csum_added = 1; /* Just do it once */
+		} else if (mptcp_is_data_mpcapable(tmp) && !dss_csum_added) {
+			u32 offset = skb_transport_offset(tmp) + TCP_SKB_CB(tmp)->dss_off;
+			__be64 data_seq = htonll(tp->mptcp->map_data_seq);
+			__be32 rel_seq = htonl(tp->mptcp->map_subseq - tp->mptcp->rcv_isn);
+
+			csum_tcp = csum_partial(&data_seq, sizeof(data_seq), csum_tcp);
+			csum_tcp = csum_partial(&rel_seq, sizeof(rel_seq), csum_tcp);
+
+			csum_tcp = skb_checksum(tmp, offset, 4, csum_tcp);
+
+			dss_csum_added = 1;
 		}
 		last = tmp;
 		iter++;
@@ -554,11 +569,12 @@ static int mptcp_prevalidate_skb(struct sock *sk, struct sk_buff *skb)
 	 * this segment, this path has to fallback to infinite or be torn down.
 	 */
 	if (!tp->mptcp->fully_established && !mptcp_is_data_seq(skb) &&
+	    !mptcp_is_data_mpcapable(skb) &&
 	    !tp->mptcp->mapping_present && !mpcb->infinite_mapping_rcv) {
-		pr_debug("%s %#x will fallback - pi %d from %pS, seq %u\n",
+		pr_debug("%s %#x will fallback - pi %d from %pS, seq %u mptcp-flags %#x\n",
 			 __func__, mpcb->mptcp_loc_token,
 			 tp->mptcp->path_index, __builtin_return_address(0),
-			 TCP_SKB_CB(skb)->seq);
+			 TCP_SKB_CB(skb)->seq, TCP_SKB_CB(skb)->mptcp_flags);
 
 		if (!is_master_tp(tp)) {
 			MPTCP_INC_STATS(sock_net(sk), MPTCP_MIB_FBDATASUB);
@@ -666,24 +682,35 @@ static int mptcp_detect_mapping(struct sock *sk, struct sk_buff *skb)
 		return 0;
 	}
 
-	/* No mapping here? Exit - it is either already set or still on its way */
-	if (!mptcp_is_data_seq(skb)) {
-		/* Too many packets without a mapping - this subflow is broken */
+	if (!tp->mptcp->mapping_present && mptcp_is_data_mpcapable(skb)) {
+		__u32 *ptr = (__u32 *)(skb_transport_header(skb) + TCP_SKB_CB(skb)->dss_off);
+
+		sub_seq = 1 + tp->mptcp->rcv_isn;
+		data_seq = meta_tp->rcv_nxt;
+		data_len = get_unaligned_be16(ptr);
+	} else if (!mptcp_is_data_seq(skb)) {
+		/* No mapping here?
+		 * Exit - it is either already set or still on its way
+		 */
 		if (!tp->mptcp->mapping_present &&
 		    tp->rcv_nxt - tp->copied_seq > 65536) {
+			/* Too many packets without a mapping,
+			 * this subflow is broken
+			 */
 			MPTCP_INC_STATS(sock_net(sk), MPTCP_MIB_NODSSWINDOW);
 			mptcp_send_reset(sk);
 			return 1;
 		}
 
 		return 0;
+	} else {
+		/* Well, then the DSS-mapping is there. So, read it! */
+		ptr = mptcp_skb_set_data_seq(skb, &data_seq, mpcb);
+		ptr++;
+		sub_seq = get_unaligned_be32(ptr) + tp->mptcp->rcv_isn;
+		ptr++;
+		data_len = get_unaligned_be16(ptr);
 	}
-
-	ptr = mptcp_skb_set_data_seq(skb, &data_seq, mpcb);
-	ptr++;
-	sub_seq = get_unaligned_be32(ptr) + tp->mptcp->rcv_isn;
-	ptr++;
-	data_len = get_unaligned_be16(ptr);
 
 	/* If it's an empty skb with DATA_FIN, sub_seq must get fixed.
 	 * The draft sets it to 0, but we really would like to have the
@@ -1397,7 +1424,7 @@ static void mptcp_snd_una_update(struct tcp_sock *meta_tp, u32 data_ack)
 }
 
 /* Handle the DATA_ACK */
-static void mptcp_data_ack(struct sock *sk, const struct sk_buff *skb)
+static bool mptcp_process_data_ack(struct sock *sk, const struct sk_buff *skb)
 {
 	struct sock *meta_sk = mptcp_meta_sk(sk);
 	struct tcp_sock *meta_tp = tcp_sk(meta_sk), *tp = tcp_sk(sk);
@@ -1425,7 +1452,7 @@ static void mptcp_data_ack(struct sock *sk, const struct sk_buff *skb)
 	 * set by mptcp_clean_rtx_infinite.
 	 */
 	if (!(tcb->mptcp_flags & MPTCPHDR_ACK) && !tp->mpcb->infinite_mapping_snd)
-		return;
+		return false;
 
 	if (unlikely(!tp->mptcp->fully_established) &&
 	    tp->mptcp->snt_isn + 1 != TCP_SKB_CB(skb)->ack_seq)
@@ -1439,7 +1466,7 @@ static void mptcp_data_ack(struct sock *sk, const struct sk_buff *skb)
 	 * processing.
 	 */
 	if (meta_sk->sk_state == TCP_CLOSE)
-		return;
+		return false;
 
 	/* Get the data_seq */
 	if (mptcp_is_data_seq(skb)) {
@@ -1462,6 +1489,9 @@ static void mptcp_data_ack(struct sock *sk, const struct sk_buff *skb)
 	 */
 	if (after(data_ack, meta_tp->snd_nxt))
 		goto exit;
+
+	/* First valid DATA_ACK, we can stop sending the special MP_CAPABLE */
+	tp->mpcb->send_mptcpv1_mpcapable = 0;
 
 	/*** Now, update the window  - inspired by tcp_ack_update_window ***/
 	nwin = ntohs(tcp_hdr(skb)->window);
@@ -1520,14 +1550,19 @@ static void mptcp_data_ack(struct sock *sk, const struct sk_buff *skb)
 			meta_sk->sk_write_space(meta_sk);
 	}
 
-	if (meta_sk->sk_state != TCP_ESTABLISHED &&
-	    mptcp_rcv_state_process(meta_sk, sk, skb, data_seq, data_len))
-		return;
+	if (meta_sk->sk_state != TCP_ESTABLISHED) {
+		int ret = mptcp_rcv_state_process(meta_sk, sk, skb, data_seq, data_len);
+
+		if (ret < 0)
+			return true;
+		else if (ret > 0)
+			return false;
+	}
 
 exit:
 	mptcp_push_pending_frames(meta_sk);
 
-	return;
+	return false;
 
 no_queue:
 	if (tcp_send_head(meta_sk))
@@ -1535,7 +1570,7 @@ no_queue:
 
 	mptcp_push_pending_frames(meta_sk);
 
-	return;
+	return false;
 }
 
 void mptcp_clean_rtx_infinite(const struct sk_buff *skb, struct sock *sk)
@@ -1554,7 +1589,7 @@ void mptcp_clean_rtx_infinite(const struct sk_buff *skb, struct sock *sk)
 	tp->mptcp->rx_opt.data_ack = meta_tp->snd_nxt - tp->snd_nxt +
 				     tp->snd_una;
 
-	mptcp_data_ack(sk, skb);
+	mptcp_process_data_ack(sk, skb);
 }
 
 /**** static functions used by mptcp_parse_options */
@@ -1604,6 +1639,7 @@ void mptcp_parse_options(const uint8_t *ptr, int opsize,
 			 struct tcp_sock *tp)
 {
 	const struct mptcp_option *mp_opt = (struct mptcp_option *)ptr;
+	const struct tcphdr *th = tcp_hdr(skb);
 
 	/* If the socket is mp-capable we would have a mopt. */
 	if (!mopt)
@@ -1614,9 +1650,21 @@ void mptcp_parse_options(const uint8_t *ptr, int opsize,
 	{
 		const struct mp_capable *mpcapable = (struct mp_capable *)ptr;
 
-		if (opsize != MPTCP_SUB_LEN_CAPABLE_SYN &&
-		    opsize != MPTCP_SUB_LEN_CAPABLE_ACK) {
-			mptcp_debug("%s: mp_capable: bad option size %d\n",
+		if (mpcapable->ver == MPTCP_VERSION_0 &&
+		    ((th->syn && opsize != MPTCP_SUB_LEN_CAPABLE_SYN) ||
+		     (!th->syn && th->ack && opsize != MPTCP_SUB_LEN_CAPABLE_ACK))) {
+			mptcp_debug("%s: mp_capable v0: bad option size %d\n",
+				    __func__, opsize);
+			break;
+		}
+
+		if (mpcapable->ver == MPTCP_VERSION_1 &&
+		    ((th->syn && !th->ack && opsize != MPTCPV1_SUB_LEN_CAPABLE_SYN) ||
+		     (th->syn && th->ack && opsize != MPTCPV1_SUB_LEN_CAPABLE_SYNACK) ||
+		     (!th->syn && th->ack && opsize != MPTCPV1_SUB_LEN_CAPABLE_ACK &&
+		      opsize != MPTCPV1_SUB_LEN_CAPABLE_DATA &&
+		      opsize != MPTCPV1_SUB_LEN_CAPABLE_DATA_CSUM))) {
+			mptcp_debug("%s: mp_capable v1: bad option size %d\n",
 				    __func__, opsize);
 			break;
 		}
@@ -1640,10 +1688,38 @@ void mptcp_parse_options(const uint8_t *ptr, int opsize,
 		mopt->saw_mpc = 1;
 		mopt->dss_csum = sysctl_mptcp_checksum || mpcapable->a;
 
-		if (opsize >= MPTCP_SUB_LEN_CAPABLE_SYN)
-			mopt->mptcp_sender_key = mpcapable->sender_key;
-		if (opsize == MPTCP_SUB_LEN_CAPABLE_ACK)
-			mopt->mptcp_receiver_key = mpcapable->receiver_key;
+		if (mpcapable->ver == MPTCP_VERSION_0) {
+			if (opsize == MPTCP_SUB_LEN_CAPABLE_SYN)
+				mopt->mptcp_sender_key = mpcapable->sender_key;
+
+			if (opsize == MPTCP_SUB_LEN_CAPABLE_ACK) {
+				mopt->mptcp_sender_key = mpcapable->sender_key;
+				mopt->mptcp_receiver_key = mpcapable->receiver_key;
+			}
+		} else if (mpcapable->ver == MPTCP_VERSION_1) {
+			if (opsize == MPTCPV1_SUB_LEN_CAPABLE_SYNACK)
+				mopt->mptcp_sender_key = mpcapable->sender_key;
+
+			if (opsize == MPTCPV1_SUB_LEN_CAPABLE_ACK) {
+				mopt->mptcp_sender_key = mpcapable->sender_key;
+				mopt->mptcp_receiver_key = mpcapable->receiver_key;
+			}
+
+			if (opsize == MPTCPV1_SUB_LEN_CAPABLE_DATA ||
+			    opsize == MPTCPV1_SUB_LEN_CAPABLE_DATA_CSUM) {
+				mopt->mptcp_sender_key = mpcapable->sender_key;
+				mopt->mptcp_receiver_key = mpcapable->receiver_key;
+
+				TCP_SKB_CB(skb)->mptcp_flags |= MPTCPHDR_MPC_DATA;
+
+				ptr += sizeof(struct mp_capable);
+				TCP_SKB_CB(skb)->dss_off = (ptr - skb_transport_header(skb));
+
+				/* Is a check-sum present? */
+				if (opsize == MPTCPV1_SUB_LEN_CAPABLE_DATA_CSUM)
+					TCP_SKB_CB(skb)->mptcp_flags |= MPTCPHDR_DSS_CSUM;
+			}
+		}
 
 		mopt->mptcp_ver = mpcapable->ver;
 		break;
@@ -1917,12 +1993,11 @@ static void mptcp_handle_add_addr(const unsigned char *ptr, struct sock *sk)
 		} else if (mpadd->len == MPTCP_SUB_LEN_ADD_ADDR4_VER1 + 2) {
 			msg_parts = 3;
 		}
-		mptcp_hmac_sha1((u8 *)&mpcb->mptcp_rem_key,
-				(u8 *)no_key,
-				(u32 *)hash_mac_check, msg_parts,
-				1, (u8 *)&mpadd->addr_id,
-				4, (u8 *)&mpadd->u.v4.addr.s_addr,
-				2, (u8 *)&mpadd->u.v4.port);
+		mptcp_hmac(mpcb->mptcp_ver, (u8 *)&mpcb->mptcp_rem_key,
+			   (u8 *)no_key, (u32 *)hash_mac_check, msg_parts,
+			   1, (u8 *)&mpadd->addr_id,
+			   4, (u8 *)&mpadd->u.v4.addr.s_addr,
+			   2, (u8 *)&mpadd->u.v4.port);
 		if (memcmp(hash_mac_check, recv_hmac, 8) != 0)
 			/* ADD_ADDR2 discarded */
 			return;
@@ -1952,12 +2027,11 @@ skip_hmac_v4:
 		} else if (mpadd->len == MPTCP_SUB_LEN_ADD_ADDR6_VER1 + 2) {
 			msg_parts = 3;
 		}
-		mptcp_hmac_sha1((u8 *)&mpcb->mptcp_rem_key,
-				(u8 *)no_key,
-				(u32 *)hash_mac_check, msg_parts,
-				1, (u8 *)&mpadd->addr_id,
-				16, (u8 *)&mpadd->u.v6.addr.s6_addr,
-				2, (u8 *)&mpadd->u.v6.port);
+		mptcp_hmac(mpcb->mptcp_ver, (u8 *)&mpcb->mptcp_rem_key,
+			   (u8 *)no_key, (u32 *)hash_mac_check, msg_parts,
+			   1, (u8 *)&mpadd->addr_id,
+			   16, (u8 *)&mpadd->u.v6.addr.s6_addr,
+			   2, (u8 *)&mpadd->u.v6.port);
 		if (memcmp(hash_mac_check, recv_hmac, 8) != 0)
 			/* ADD_ADDR2 discarded */
 			return;
@@ -2115,6 +2189,10 @@ bool mptcp_handle_options(struct sock *sk, const struct tcphdr *th,
 	if (sk->sk_state == TCP_RST_WAIT && !th->rst)
 		return true;
 
+	if (mopt->saw_mpc && !tp->mpcb->rem_key_set)
+		mptcp_initialize_recv_vars(mptcp_meta_tp(tp), tp->mpcb,
+					   mopt->mptcp_sender_key);
+
 	if (unlikely(mopt->mp_fail))
 		mptcp_mp_fail_rcvd(sk, th);
 
@@ -2122,7 +2200,8 @@ bool mptcp_handle_options(struct sock *sk, const struct tcphdr *th,
 	 * If a checksum is not present when its use has been negotiated, the
 	 * receiver MUST close the subflow with a RST as it is considered broken.
 	 */
-	if (mptcp_is_data_seq(skb) && tp->mpcb->dss_csum &&
+	if ((mptcp_is_data_seq(skb) || mptcp_is_data_mpcapable(skb)) &&
+	    tp->mpcb->dss_csum &&
 	    !(TCP_SKB_CB(skb)->mptcp_flags & MPTCPHDR_DSS_CSUM)) {
 		mptcp_send_reset(sk);
 		return true;
@@ -2171,7 +2250,8 @@ bool mptcp_handle_options(struct sock *sk, const struct tcphdr *th,
 		mopt->saw_low_prio = 0;
 	}
 
-	mptcp_data_ack(sk, skb);
+	if (mptcp_process_data_ack(sk, skb))
+		return true;
 
 	mptcp_path_array_check(mptcp_meta_sk(sk));
 	/* Socket may have been mp_killed by a REMOVE_ADDR */
@@ -2297,11 +2377,10 @@ int mptcp_rcv_synsent_state_process(struct sock *sk, struct sock **skptr,
 		u8 hash_mac_check[20];
 		struct mptcp_cb *mpcb = tp->mpcb;
 
-		mptcp_hmac_sha1((u8 *)&mpcb->mptcp_rem_key,
-				(u8 *)&mpcb->mptcp_loc_key,
-				(u32 *)hash_mac_check, 2,
-				4, (u8 *)&tp->mptcp->rx_opt.mptcp_recv_nonce,
-				4, (u8 *)&tp->mptcp->mptcp_loc_nonce);
+		mptcp_hmac(mpcb->mptcp_ver, (u8 *)&mpcb->mptcp_rem_key,
+			   (u8 *)&mpcb->mptcp_loc_key, (u32 *)hash_mac_check, 2,
+			   4, (u8 *)&tp->mptcp->rx_opt.mptcp_recv_nonce,
+			   4, (u8 *)&tp->mptcp->mptcp_loc_nonce);
 		if (memcmp(hash_mac_check,
 			   (char *)&tp->mptcp->rx_opt.mptcp_recv_tmac, 8)) {
 			MPTCP_INC_STATS(sock_net(sk), MPTCP_MIB_JOINSYNACKMAC);
@@ -2315,11 +2394,11 @@ int mptcp_rcv_synsent_state_process(struct sock *sk, struct sock **skptr,
 		tp->mptcp->pre_established = 1;
 		tp->mptcp->rcv_low_prio = tp->mptcp->rx_opt.low_prio;
 
-		mptcp_hmac_sha1((u8 *)&mpcb->mptcp_loc_key,
-				(u8 *)&mpcb->mptcp_rem_key,
-				(u32 *)&tp->mptcp->sender_mac[0], 2,
-				4, (u8 *)&tp->mptcp->mptcp_loc_nonce,
-				4, (u8 *)&tp->mptcp->rx_opt.mptcp_recv_nonce);
+		mptcp_hmac(mpcb->mptcp_ver, (u8 *)&mpcb->mptcp_loc_key,
+			   (u8 *)&mpcb->mptcp_rem_key,
+			   (u32 *)&tp->mptcp->sender_mac[0], 2,
+			   4, (u8 *)&tp->mptcp->mptcp_loc_nonce,
+			   4, (u8 *)&tp->mptcp->rx_opt.mptcp_recv_nonce);
 
 		MPTCP_INC_STATS(sock_net(sk), MPTCP_MIB_JOINSYNACKRX);
 	} else if (mopt->saw_mpc) {
@@ -2329,8 +2408,13 @@ int mptcp_rcv_synsent_state_process(struct sock *sk, struct sock **skptr,
 		if (mopt->mptcp_ver > tcp_sk(sk)->mptcp_ver)
 			/* TODO Consider adding new MPTCP_INC_STATS entry */
 			goto fallback;
+		if (tcp_sk(sk)->mptcp_ver == MPTCP_VERSION_1 &&
+		    mopt->mptcp_ver < MPTCP_VERSION_1)
+			/* TODO Consider adding new MPTCP_INC_STATS entry */
+			/* TODO - record this in the cache - use v0 next time */
+			goto fallback;
 
-		if (mptcp_create_master_sk(sk, mopt->mptcp_sender_key,
+		if (mptcp_create_master_sk(sk, mopt->mptcp_sender_key, 1,
 					   mopt->mptcp_ver,
 					   ntohs(tcp_hdr(skb)->window)))
 			return 2;
@@ -2357,6 +2441,9 @@ int mptcp_rcv_synsent_state_process(struct sock *sk, struct sock **skptr,
 		tp->mpcb->dss_csum = mopt->dss_csum;
 		if (tp->mpcb->dss_csum)
 			MPTCP_INC_STATS(sock_net(sk), MPTCP_MIB_CSUMENABLED);
+
+		if (tp->mpcb->mptcp_ver >= MPTCP_VERSION_1)
+			tp->mpcb->send_mptcpv1_mpcapable = 1;
 
 		tp->mptcp->include_mpc = 1;
 

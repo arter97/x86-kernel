@@ -828,8 +828,8 @@ static void tcp_tsq_handler(struct sock *sk)
 		if (mptcp(tp))
 			tcp_tsq_write(meta_sk);
 	} else {
-		if (!test_and_set_bit(TCP_TSQ_DEFERRED, &meta_sk->sk_tsq_flags))
-			sock_hold(meta_sk);
+		if (!test_and_set_bit(TCP_TSQ_DEFERRED, &sk->sk_tsq_flags))
+			sock_hold(sk);
 
 		if ((mptcp(tp)) && (sk->sk_state != TCP_CLOSE))
 			mptcp_tsq_flags(sk);
@@ -1679,7 +1679,7 @@ static void tcp_cwnd_application_limited(struct sock *sk)
 	tp->snd_cwnd_stamp = tcp_jiffies32;
 }
 
-void tcp_cwnd_validate(struct sock *sk, bool is_cwnd_limited)
+static void tcp_cwnd_validate(struct sock *sk, bool is_cwnd_limited)
 {
 	const struct tcp_congestion_ops *ca_ops = inet_csk(sk)->icsk_ca_ops;
 	struct tcp_sock *tp = tcp_sk(sk);
@@ -2527,8 +2527,7 @@ repair:
 		if (push_one != 2)
 			tcp_schedule_loss_probe(sk, false);
 		is_cwnd_limited |= (tcp_packets_in_flight(tp) >= tp->snd_cwnd);
-		if (tp->ops->cwnd_validate)
-			tp->ops->cwnd_validate(sk, is_cwnd_limited);
+		tcp_cwnd_validate(sk, is_cwnd_limited);
 		return false;
 	}
 	return !tp->packets_out && !tcp_write_queue_empty(sk);

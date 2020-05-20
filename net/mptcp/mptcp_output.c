@@ -479,30 +479,78 @@ static void mptcp_save_dss_data_seq(const struct tcp_sock *tp, struct sk_buff *s
 	ptr += mptcp_write_dss_mapping(tp, skb, ptr);
 }
 
+/* Write the MP_CAPABLE with data-option */
+static int mptcp_write_mpcapable_data(const struct tcp_sock *tp,
+				      struct sk_buff *skb,
+				      __be32 *ptr)
+{
+	struct mp_capable *mpc = (struct mp_capable *)ptr;
+	u8 length;
+
+	if (tp->mpcb->dss_csum)
+		length = MPTCPV1_SUB_LEN_CAPABLE_DATA_CSUM;
+	else
+		length = MPTCPV1_SUB_LEN_CAPABLE_DATA;
+
+	mpc->kind = TCPOPT_MPTCP;
+	mpc->len = length;
+	mpc->sub = MPTCP_SUB_CAPABLE;
+	mpc->ver = MPTCP_VERSION_1;
+	mpc->a = tp->mpcb->dss_csum;
+	mpc->b = 0;
+	mpc->rsv = 0;
+	mpc->h = 1;
+
+	ptr++;
+	memcpy(ptr, TCP_SKB_CB(skb)->dss, mptcp_dss_len);
+
+	mpc->sender_key = tp->mpcb->mptcp_loc_key;
+	mpc->receiver_key = tp->mpcb->mptcp_rem_key;
+
+	/* dss is in a union with inet_skb_parm and
+	 * the IP layer expects zeroed IPCB fields.
+	 */
+	memset(TCP_SKB_CB(skb)->dss, 0, mptcp_dss_len);
+
+	return MPTCPV1_SUB_LEN_CAPABLE_DATA_ALIGN / sizeof(*ptr);
+}
+
 /* Write the saved DSS mapping to the header */
 static int mptcp_write_dss_data_seq(const struct tcp_sock *tp, struct sk_buff *skb,
 				    __be32 *ptr)
 {
+	int length;
 	__be32 *start = ptr;
 
-	memcpy(ptr, TCP_SKB_CB(skb)->dss, mptcp_dss_len);
+	if (tp->mpcb->rem_key_set) {
+		memcpy(ptr, TCP_SKB_CB(skb)->dss, mptcp_dss_len);
 
-	/* update the data_ack */
-	start[1] = htonl(mptcp_meta_tp(tp)->rcv_nxt);
+		/* update the data_ack */
+		start[1] = htonl(mptcp_meta_tp(tp)->rcv_nxt);
+
+		length = mptcp_dss_len / sizeof(*ptr);
+	} else {
+		memcpy(ptr, TCP_SKB_CB(skb)->dss, MPTCP_SUB_LEN_DSS_ALIGN);
+
+		ptr++;
+		memcpy(ptr, TCP_SKB_CB(skb)->dss + 2, MPTCP_SUB_LEN_SEQ_ALIGN);
+
+		length = (MPTCP_SUB_LEN_DSS_ALIGN + MPTCP_SUB_LEN_SEQ_ALIGN) / sizeof(*ptr);
+	}
 
 	/* dss is in a union with inet_skb_parm and
 	 * the IP layer expects zeroed IPCB fields.
 	 */
 	memset(TCP_SKB_CB(skb)->dss, 0 , mptcp_dss_len);
 
-	return mptcp_dss_len/sizeof(*ptr);
+	return length;
 }
 
 static bool mptcp_skb_entail(struct sock *sk, struct sk_buff *skb, int reinject)
 {
 	struct tcp_sock *tp = tcp_sk(sk);
 	const struct sock *meta_sk = mptcp_meta_sk(sk);
-	const struct mptcp_cb *mpcb = tp->mpcb;
+	struct mptcp_cb *mpcb = tp->mpcb;
 	struct tcp_skb_cb *tcb;
 	struct sk_buff *subskb = NULL;
 
@@ -543,6 +591,11 @@ static bool mptcp_skb_entail(struct sock *sk, struct sk_buff *skb, int reinject)
 		mptcp_combine_dfin(subskb, meta_sk, sk);
 
 	mptcp_save_dss_data_seq(tp, subskb);
+
+	if (mpcb->send_mptcpv1_mpcapable) {
+		TCP_SKB_CB(subskb)->mptcp_flags |= MPTCPHDR_MPC_DATA;
+		mpcb->send_mptcpv1_mpcapable = 0;
+	}
 
 	tcb->seq = tp->write_seq;
 
@@ -851,10 +904,7 @@ bool mptcp_write_xmit(struct sock *meta_sk, unsigned int mss_now, int nonagle,
 
 		if (!mptcp_skb_entail(subsk, skb, reinject))
 			break;
-		/* Nagle is handled at the MPTCP-layer, so
-		 * always push on the subflow
-		 */
-		__tcp_push_pending_frames(subsk, mss_now, TCP_NAGLE_PUSH);
+
 		if (reinject <= 0)
 			tcp_update_skb_after_send(meta_sk, skb, meta_tp->tcp_wstamp_ns);
 		meta_tp->lsndtime = tcp_jiffies32;
@@ -886,14 +936,12 @@ bool mptcp_write_xmit(struct sock *meta_sk, unsigned int mss_now, int nonagle,
 		if (!(path_mask & mptcp_pi_to_flag(subtp->mptcp->path_index)))
 			continue;
 
-		/* We have pushed data on this subflow. We ignore the call to
-		 * cwnd_validate in tcp_write_xmit as is_cwnd_limited will never
-		 * be true (we never push more than what the cwnd can accept).
-		 * We need to ensure that we call tcp_cwnd_validate with
-		 * is_cwnd_limited set to true if we have filled the cwnd.
+		mss_now = tcp_current_mss(subsk);
+
+		/* Nagle is handled at the MPTCP-layer, so
+		 * always push on the subflow
 		 */
-		tcp_cwnd_validate(subsk, tcp_packets_in_flight(subtp) >=
-				  subtp->snd_cwnd);
+		__tcp_push_pending_frames(subsk, mss_now, TCP_NAGLE_PUSH);
 	}
 
 	return !meta_tp->packets_out && tcp_send_head(meta_sk);
@@ -988,8 +1036,13 @@ void mptcp_syn_options(const struct sock *sk, struct tcp_out_options *opts,
 	opts->options |= OPTION_MPTCP;
 	if (is_master_tp(tp)) {
 		opts->mptcp_options |= OPTION_MP_CAPABLE | OPTION_TYPE_SYN;
-		opts->mptcp_ver = tcp_sk(sk)->mptcp_ver;
-		*remaining -= MPTCP_SUB_LEN_CAPABLE_SYN_ALIGN;
+		opts->mptcp_ver = tp->mptcp_ver;
+
+		if (tp->mptcp_ver >= MPTCP_VERSION_1)
+			*remaining -= MPTCPV1_SUB_LEN_CAPABLE_SYN_ALIGN;
+		else
+			*remaining -= MPTCP_SUB_LEN_CAPABLE_SYN_ALIGN;
+
 		opts->mp_capable.sender_key = tp->mptcp_loc_key;
 		opts->dss_csum = !!sysctl_mptcp_checksum;
 	} else {
@@ -1017,7 +1070,11 @@ void mptcp_synack_options(struct request_sock *req,
 		opts->mptcp_ver = mtreq->mptcp_ver;
 		opts->mp_capable.sender_key = mtreq->mptcp_loc_key;
 		opts->dss_csum = !!sysctl_mptcp_checksum || mtreq->dss_csum;
-		*remaining -= MPTCP_SUB_LEN_CAPABLE_SYN_ALIGN;
+		if (mtreq->mptcp_ver >= MPTCP_VERSION_1) {
+			*remaining -= MPTCPV1_SUB_LEN_CAPABLE_SYNACK_ALIGN;
+		} else {
+			*remaining -= MPTCP_SUB_LEN_CAPABLE_SYN_ALIGN;
+		}
 	} else {
 		opts->mptcp_options |= OPTION_MP_JOIN | OPTION_TYPE_SYNACK;
 		opts->mp_join_syns.sender_truncated_mac =
@@ -1080,7 +1137,12 @@ void mptcp_established_options(struct sock *sk, struct sk_buff *skb,
 		opts->options |= OPTION_MPTCP;
 		opts->mptcp_options |= OPTION_MP_CAPABLE |
 				       OPTION_TYPE_ACK;
-		*size += MPTCP_SUB_LEN_CAPABLE_ACK_ALIGN;
+
+		if (mpcb->mptcp_ver >= MPTCP_VERSION_1)
+			*size += MPTCPV1_SUB_LEN_CAPABLE_ACK_ALIGN;
+		else
+			*size += MPTCP_SUB_LEN_CAPABLE_ACK_ALIGN;
+
 		opts->mptcp_ver = mpcb->mptcp_ver;
 		opts->mp_capable.sender_key = mpcb->mptcp_loc_key;
 		opts->mp_capable.receiver_key = mpcb->mptcp_rem_key;
@@ -1111,14 +1173,20 @@ void mptcp_established_options(struct sock *sk, struct sk_buff *skb,
 		/* If !skb, we come from tcp_current_mss and thus we always
 		 * assume that the DSS-option will be set for the data-packet.
 		 */
-		if (skb && !mptcp_is_data_seq(skb)) {
+		if (skb && !mptcp_is_data_seq(skb) && mpcb->rem_key_set) {
 			*size += MPTCP_SUB_LEN_ACK_ALIGN;
+		} else if ((skb && mptcp_is_data_mpcapable(skb)) ||
+			   (!skb && tp->mpcb->send_mptcpv1_mpcapable)) {
+			*size += MPTCPV1_SUB_LEN_CAPABLE_DATA_ALIGN;
 		} else {
 			/* Doesn't matter, if csum included or not. It will be
 			 * either 10 or 12, and thus aligned = 12
 			 */
-			*size += MPTCP_SUB_LEN_ACK_ALIGN +
-				 MPTCP_SUB_LEN_SEQ_ALIGN;
+			if (mpcb->rem_key_set)
+				*size += MPTCP_SUB_LEN_ACK_ALIGN +
+					 MPTCP_SUB_LEN_SEQ_ALIGN;
+			else
+				*size += MPTCP_SUB_LEN_SEQ_ALIGN;
 		}
 
 		*size += MPTCP_SUB_LEN_DSS_ALIGN;
@@ -1171,18 +1239,36 @@ void mptcp_options_write(__be32 *ptr, struct tcp_sock *tp,
 
 		mpc->kind = TCPOPT_MPTCP;
 
-		if ((OPTION_TYPE_SYN & opts->mptcp_options) ||
-		    (OPTION_TYPE_SYNACK & opts->mptcp_options)) {
-			mpc->sender_key = opts->mp_capable.sender_key;
-			mpc->len = MPTCP_SUB_LEN_CAPABLE_SYN;
+		if (OPTION_TYPE_SYN & opts->mptcp_options) {
 			mpc->ver = opts->mptcp_ver;
-			ptr += MPTCP_SUB_LEN_CAPABLE_SYN_ALIGN >> 2;
-		} else if (OPTION_TYPE_ACK & opts->mptcp_options) {
+
+			if (mpc->ver >= MPTCP_VERSION_1) {
+				mpc->len = MPTCPV1_SUB_LEN_CAPABLE_SYN;
+				ptr += MPTCPV1_SUB_LEN_CAPABLE_SYN_ALIGN >> 2;
+			} else {
+				mpc->sender_key = opts->mp_capable.sender_key;
+				mpc->len = MPTCP_SUB_LEN_CAPABLE_SYN;
+				ptr += MPTCP_SUB_LEN_CAPABLE_SYN_ALIGN >> 2;
+			}
+		} else if (OPTION_TYPE_SYNACK & opts->mptcp_options) {
+			mpc->ver = opts->mptcp_ver;
+
+			if (mpc->ver >= MPTCP_VERSION_1) {
+				mpc->len = MPTCPV1_SUB_LEN_CAPABLE_SYNACK;
+				ptr += MPTCPV1_SUB_LEN_CAPABLE_SYNACK_ALIGN >> 2;
+			} else {
+				mpc->len = MPTCP_SUB_LEN_CAPABLE_SYN;
+				ptr += MPTCP_SUB_LEN_CAPABLE_SYN_ALIGN >> 2;
+			}
+
 			mpc->sender_key = opts->mp_capable.sender_key;
-			mpc->receiver_key = opts->mp_capable.receiver_key;
+		} else if (OPTION_TYPE_ACK & opts->mptcp_options) {
 			mpc->len = MPTCP_SUB_LEN_CAPABLE_ACK;
 			mpc->ver = opts->mptcp_ver;
 			ptr += MPTCP_SUB_LEN_CAPABLE_ACK_ALIGN >> 2;
+
+			mpc->sender_key = opts->mp_capable.sender_key;
+			mpc->receiver_key = opts->mp_capable.receiver_key;
 		}
 
 		mpc->sub = MPTCP_SUB_CAPABLE;
@@ -1312,8 +1398,10 @@ void mptcp_options_write(__be32 *ptr, struct tcp_sock *tp,
 	}
 
 	if (OPTION_DATA_ACK & opts->mptcp_options) {
-		if (!mptcp_is_data_seq(skb))
+		if (!mptcp_is_data_seq(skb) && tp->mpcb->rem_key_set)
 			ptr += mptcp_write_dss_data_ack(tp, skb, ptr);
+		else if (mptcp_is_data_mpcapable(skb))
+			ptr += mptcp_write_mpcapable_data(tp, skb, ptr);
 		else
 			ptr += mptcp_write_dss_data_seq(tp, skb, ptr);
 	}

@@ -343,7 +343,6 @@ extern const struct tcp_request_sock_ops tcp_request_sock_ipv6_ops;
 struct mptcp_options_received;
 
 void tcp_cleanup_rbuf(struct sock *sk, int copied);
-void tcp_cwnd_validate(struct sock *sk, bool is_cwnd_limited);
 int tcp_close_state(struct sock *sk);
 void tcp_minshall_update(struct tcp_sock *tp, unsigned int mss_now,
 			 const struct sk_buff *skb);
@@ -583,6 +582,7 @@ void inet_sk_rx_dst_set(struct sock *sk, const struct sk_buff *skb);
 /* From syncookies.c */
 struct sock *tcp_get_cookie_sock(struct sock *sk, struct sk_buff *skb,
 				 struct request_sock *req,
+				 const struct mptcp_options_received *mopt,
 				 struct dst_entry *dst, u32 tsoff);
 int __cookie_v4_check(const struct iphdr *iph, const struct tcphdr *th,
 		      u32 cookie);
@@ -2137,7 +2137,6 @@ struct tcp_sock_ops {
 	void (*retransmit_timer)(struct sock *sk);
 	void (*time_wait)(struct sock *sk, int state, int timeo);
 	void (*cleanup_rbuf)(struct sock *sk, int copied);
-	void (*cwnd_validate)(struct sock *sk, bool is_cwnd_limited);
 	int (*set_cong_ctrl)(struct sock *sk, const char *name, bool load,
 			     bool reinit, bool cap_net_admin);
 };

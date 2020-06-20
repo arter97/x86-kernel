@@ -3989,10 +3989,9 @@ no_reset:
 
 static void rtl_reset_work(struct rtl8169_private *tp)
 {
-	struct net_device *dev = tp->dev;
 	int i;
 
-	netif_stop_queue(dev);
+	netif_stop_queue(tp->dev);
 
 	rtl8169_cleanup(tp, false);
 
@@ -4001,7 +4000,6 @@ static void rtl_reset_work(struct rtl8169_private *tp)
 
 	napi_enable(&tp->napi);
 	rtl_hw_start(tp);
-	netif_wake_queue(dev);
 }
 
 static void rtl8169_tx_timeout(struct net_device *dev)
@@ -4608,8 +4606,10 @@ static void rtl_task(struct work_struct *work)
 	    !test_bit(RTL_FLAG_TASK_ENABLED, tp->wk.flags))
 		goto out_unlock;
 
-	if (test_and_clear_bit(RTL_FLAG_TASK_RESET_PENDING, tp->wk.flags))
+	if (test_and_clear_bit(RTL_FLAG_TASK_RESET_PENDING, tp->wk.flags)) {
 		rtl_reset_work(tp);
+		netif_wake_queue(tp->dev);
+	}
 out_unlock:
 	rtl_unlock_work(tp);
 }
@@ -4854,11 +4854,10 @@ rtl8169_get_stats64(struct net_device *dev, struct rtnl_link_stats64 *stats)
 
 static void rtl8169_net_suspend(struct rtl8169_private *tp)
 {
-	if (!netif_running(tp->dev))
-		return;
-
 	netif_device_detach(tp->dev);
-	rtl8169_down(tp);
+
+	if (netif_running(tp->dev))
+		rtl8169_down(tp);
 }
 
 #ifdef CONFIG_PM
@@ -4874,8 +4873,6 @@ static int __maybe_unused rtl8169_suspend(struct device *device)
 
 static void __rtl8169_resume(struct rtl8169_private *tp)
 {
-	netif_device_attach(tp->dev);
-
 	rtl_pll_power_up(tp);
 	rtl8169_init_phy(tp);
 
@@ -4897,6 +4894,8 @@ static int __maybe_unused rtl8169_resume(struct device *device)
 	if (netif_running(tp->dev))
 		__rtl8169_resume(tp);
 
+	netif_device_attach(tp->dev);
+
 	return 0;
 }
 
@@ -4904,8 +4903,10 @@ static int rtl8169_runtime_suspend(struct device *device)
 {
 	struct rtl8169_private *tp = dev_get_drvdata(device);
 
-	if (!tp->TxDescArray)
+	if (!tp->TxDescArray) {
+		netif_device_detach(tp->dev);
 		return 0;
+	}
 
 	rtl_lock_work(tp);
 	__rtl8169_set_wol(tp, WAKE_PHY);
@@ -4928,6 +4929,8 @@ static int rtl8169_runtime_resume(struct device *device)
 
 	if (tp->TxDescArray)
 		__rtl8169_resume(tp);
+
+	netif_device_attach(tp->dev);
 
 	return 0;
 }

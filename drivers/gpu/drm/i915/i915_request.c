@@ -407,22 +407,25 @@ bool __i915_request_submit(struct i915_request *request)
 	engine->serial++;
 	result = true;
 
-xfer:	/* We may be recursing from the signal callback of another i915 fence */
-	spin_lock_nested(&request->lock, SINGLE_DEPTH_NESTING);
-
+xfer:
 	if (!test_and_set_bit(I915_FENCE_FLAG_ACTIVE, &request->fence.flags)) {
 		list_move_tail(&request->sched.link, &engine->active.requests);
 		clear_bit(I915_FENCE_FLAG_PQUEUE, &request->fence.flags);
 	}
 
-	if (test_bit(DMA_FENCE_FLAG_ENABLE_SIGNAL_BIT, &request->fence.flags) &&
-	    !test_bit(DMA_FENCE_FLAG_SIGNALED_BIT, &request->fence.flags) &&
-	    !i915_request_enable_breadcrumb(request))
-		intel_engine_signal_breadcrumbs(engine);
+	/* We may be recursing from the signal callback of another i915 fence */
+	if (!i915_request_signaled(request)) {
+		spin_lock_nested(&request->lock, SINGLE_DEPTH_NESTING);
 
-	__notify_execute_cb(request);
+		__notify_execute_cb(request);
+		if (test_bit(DMA_FENCE_FLAG_ENABLE_SIGNAL_BIT,
+			     &request->fence.flags) &&
+		    !i915_request_enable_breadcrumb(request))
+			intel_engine_signal_breadcrumbs(engine);
 
-	spin_unlock(&request->lock);
+		spin_unlock(&request->lock);
+		GEM_BUG_ON(!list_empty(&request->execute_cb));
+	}
 
 	return result;
 }

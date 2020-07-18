@@ -679,12 +679,20 @@ struct mp_prio {
 	__u8	addr_id;
 } __attribute__((__packed__));
 
+struct mptcp_hashtable {
+	struct hlist_nulls_head *hashtable;
+	unsigned int mask;
+};
+
 static inline int mptcp_sub_len_dss(const struct mp_dss *m, const int csum)
 {
 	return 4 + m->A * (4 + m->a * 4) + m->M * (10 + m->m * 4 + csum * 2);
 }
 
-#define MPTCP_SYSCTL	1
+#define MPTCP_ENABLE		0x01
+#define MPTCP_SOCKOPT		0x02
+#define MPTCP_CLIENT_DISABLE	0x04
+#define MPTCP_SERVER_DISABLE	0x08
 
 extern int sysctl_mptcp_enabled;
 extern int sysctl_mptcp_version;
@@ -720,6 +728,7 @@ static inline struct sock *mptcp_to_sock(const struct mptcp_tcp_sock *mptcp)
 	mptcp_for_each_bit_set(~b, i)
 
 #define MPTCP_INC_STATS(net, field)	SNMP_INC_STATS((net)->mptcp.mptcp_statistics, field)
+#define MPTCP_DEC_STATS(net, field)	SNMP_DEC_STATS((net)->mptcp.mptcp_statistics, field)
 #define MPTCP_INC_STATS_BH(net, field)	__SNMP_INC_STATS((net)->mptcp.mptcp_statistics, field)
 
 enum
@@ -765,6 +774,8 @@ enum
 	MPTCP_MIB_ADDADDRTX,		/* Sent an ADD_ADDR */
 	MPTCP_MIB_REMADDRRX,		/* Received a REMOVE_ADDR */
 	MPTCP_MIB_REMADDRTX,		/* Sent a REMOVE_ADDR */
+	MPTCP_MIB_JOINALTERNATEPORT,	/* Established a subflow on a different destination port-number */
+	MPTCP_MIB_CURRESTAB,		/* Current established MPTCP connections */
 	__MPTCP_MIB_MAX
 };
 
@@ -785,9 +796,7 @@ extern siphash_key_t mptcp_secret;
  */
 extern u32 mptcp_seed;
 
-#define MPTCP_HASH_SIZE                1024
-
-extern struct hlist_nulls_head tk_hashtable[MPTCP_HASH_SIZE];
+extern struct mptcp_hashtable mptcp_tk_htable;
 
 /* Request-sockets can be hashed in the tk_htb for collision-detection or in
  * the regular htb for join-connections. We need to define different NULLS
@@ -946,7 +955,25 @@ extern struct mptcp_sched_ops mptcp_sched_default;
 /* Initializes function-pointers and MPTCP-flags */
 static inline void mptcp_init_tcp_sock(struct sock *sk)
 {
-	if (!mptcp_init_failed && sysctl_mptcp_enabled == MPTCP_SYSCTL)
+	if (!mptcp_init_failed && sysctl_mptcp_enabled == MPTCP_ENABLE)
+		mptcp_enable_sock(sk);
+}
+
+static inline void mptcp_init_listen(struct sock *sk)
+{
+	if (!mptcp_init_failed &&
+	    sk->sk_type == SOCK_STREAM && sk->sk_protocol == IPPROTO_TCP &&
+	    sysctl_mptcp_enabled & MPTCP_ENABLE &&
+	    !(sysctl_mptcp_enabled & MPTCP_SERVER_DISABLE))
+		mptcp_enable_sock(sk);
+}
+
+static inline void mptcp_init_connect(struct sock *sk)
+{
+	if (!mptcp_init_failed &&
+	    sk->sk_type == SOCK_STREAM && sk->sk_protocol == IPPROTO_TCP &&
+	    sysctl_mptcp_enabled & MPTCP_ENABLE &&
+	    !(sysctl_mptcp_enabled & MPTCP_CLIENT_DISABLE))
 		mptcp_enable_sock(sk);
 }
 
@@ -1522,6 +1549,8 @@ static inline void mptcp_hash_remove_bh(struct tcp_sock *meta_tp) {}
 static inline void mptcp_remove_shortcuts(const struct mptcp_cb *mpcb,
 					  const struct sk_buff *skb) {}
 static inline void mptcp_init_tcp_sock(struct sock *sk) {}
+static inline void mptcp_init_listen(struct sock *sk) {}
+static inline void mptcp_init_connect(struct sock *sk) {}
 static inline void mptcp_disable_static_key(void) {}
 static inline void mptcp_cookies_reqsk_init(struct request_sock *req,
 					    struct mptcp_options_received *mopt,

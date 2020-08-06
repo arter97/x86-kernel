@@ -28,6 +28,7 @@
 #include <asm/desc.h>
 #include <asm/pgtable.h>
 #include <asm/cpu.h>
+#include <asm/io_apic.h>
 
 #include <xen/interface/xen.h>
 #include <xen/interface/vcpu.h>

@@ -22,6 +22,8 @@
 #include <asm/hw_irq.h>
 #include <asm/pgtable.h>
 #include <asm/desc.h>
+#include <asm/io_apic.h>
+#include <asm/acpi.h>
 #include <asm/apic.h>
 #include <asm/setup.h>
 #include <asm/i8259.h>

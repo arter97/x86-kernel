@@ -79,6 +79,7 @@
 
 #include <asm/mtrr.h>
 #include <asm/apic.h>
+#include <asm/numa.h>
 #include <asm/realmode.h>
 #include <asm/e820/api.h>
 #include <asm/mpspec.h>

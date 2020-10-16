@@ -323,8 +323,6 @@ struct siprand_state {
 };
 
 static DEFINE_PER_CPU(struct siprand_state, net_rand_state) __latent_entropy;
-DEFINE_PER_CPU(unsigned long, net_rand_noise);
-EXPORT_PER_CPU_SYMBOL(net_rand_noise);
 
 /*
  * This is the core CPRNG function.  As "pseudorandom", this is not used
@@ -348,12 +346,9 @@ EXPORT_PER_CPU_SYMBOL(net_rand_noise);
 static inline u32 siprand_u32(struct siprand_state *s)
 {
 	unsigned long v0 = s->v0, v1 = s->v1, v2 = s->v2, v3 = s->v3;
-	unsigned long n = this_cpu_read(net_rand_noise);
 
-	v3 ^= n;
 	PRND_SIPROUND(v0, v1, v2, v3);
 	PRND_SIPROUND(v0, v1, v2, v3);
-	v0 ^= n;
 	s->v0 = v0;  s->v1 = v1;  s->v2 = v2;  s->v3 = v3;
 	return v1 + v3;
 }

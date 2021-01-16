@@ -2335,12 +2335,12 @@ static bool can_steal_fallback(unsigned int order, int start_mt)
 	return false;
 }
 
-static inline void boost_watermark(struct zone *zone)
+static inline bool boost_watermark(struct zone *zone)
 {
 	unsigned long max_boost;
 
 	if (!watermark_boost_factor)
-		return;
+		return false;
 	/*
 	 * Don't bother in zones that are unlikely to produce results.
 	 * On small machines, including kdump capture kernels running
@@ -2348,7 +2348,7 @@ static inline void boost_watermark(struct zone *zone)
 	 * memory situation immediately.
 	 */
 	if ((pageblock_nr_pages * 4) > zone_managed_pages(zone))
-		return;
+		return false;
 
 	max_boost = mult_frac(zone->_watermark[WMARK_HIGH],
 			watermark_boost_factor, 10000);
@@ -2362,12 +2362,14 @@ static inline void boost_watermark(struct zone *zone)
 	 * boosted watermark resulting in a hang.
 	 */
 	if (!max_boost)
-		return;
+		return false;
 
 	max_boost = max(pageblock_nr_pages, max_boost);
 
 	zone->watermark_boost = min(zone->watermark_boost + pageblock_nr_pages,
 		max_boost);
+
+	return true;
 }
 
 /*
@@ -2407,8 +2409,7 @@ static void steal_suitable_fallback(struct zone *zone, struct page *page,
 	 * may be balanced overall and kswapd will not wake naturally.
 	 */
 	if (alloc_flags & ALLOC_KSWAPD) {
-		boost_watermark(zone);
-		if (zone->watermark_boost)
+		if (boost_watermark(zone) && zone->watermark_boost)
 			set_bit(ZONE_BOOSTED_WATERMARK, &zone->flags);
 	}
 

@@ -351,6 +351,7 @@ struct ixgbe_ring {
 		struct ixgbe_tx_queue_stats tx_stats;
 		struct ixgbe_rx_queue_stats rx_stats;
 	};
+	u16 rx_offset;
 	struct xdp_rxq_info xdp_rxq;
 	struct xdp_umem *xsk_umem;
 	struct zero_copy_allocator zca; /* ZC allocator anchor */

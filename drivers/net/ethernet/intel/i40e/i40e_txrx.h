@@ -393,6 +393,7 @@ struct i40e_ring {
 					 */
 
 	struct i40e_channel *ch;
+	u16 rx_offset;
 	struct xdp_rxq_info xdp_rxq;
 	struct xdp_umem *xsk_umem;
 	struct zero_copy_allocator zca; /* ZC allocator anchor */

@@ -64,6 +64,20 @@ void ksys_sync_helper(void)
 }
 EXPORT_SYMBOL_GPL(ksys_sync_helper);
 
+static void ksys_sync_helper_work_fn(struct work_struct *unused)
+{
+	ksys_sync_helper();
+}
+
+static DECLARE_WORK(ksys_sync_helper_work, ksys_sync_helper_work_fn);
+
+void ksys_bg_sync_helper(const char *caller)
+{
+	pr_info("%s: filesystems sync start\n", caller);
+	queue_work(system_highpri_wq, &ksys_sync_helper_work);
+}
+EXPORT_SYMBOL_GPL(ksys_bg_sync_helper);
+
 /* Routines for PM-transition notifications */
 
 static BLOCKING_NOTIFIER_HEAD(pm_chain_head);

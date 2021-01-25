@@ -1200,6 +1200,7 @@ const struct file_operations pipefifo_fops = {
 	.unlocked_ioctl	= pipe_ioctl,
 	.release	= pipe_release,
 	.fasync		= pipe_fasync,
+	.splice_write	= iter_file_splice_write,
 };
 
 /*

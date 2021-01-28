@@ -2755,6 +2755,7 @@ int tcp_disconnect(struct sock *sk, int flags)
 	icsk->icsk_backoff = 0;
 	tp->snd_cwnd = 2;
 	icsk->icsk_probes_out = 0;
+	icsk->icsk_probes_tstamp = 0;
 	tp->window_clamp = 0;
 
 	tcp_reset_vars(sk);

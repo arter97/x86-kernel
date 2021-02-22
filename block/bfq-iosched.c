@@ -124,6 +124,8 @@
 #include <linux/sbitmap.h>
 #include <linux/delay.h>
 
+#include <trace/events/block.h>
+
 #include "blk.h"
 #include "blk-mq.h"
 #include "blk-mq-tag.h"
@@ -6002,7 +6004,7 @@ static void bfq_insert_request(struct blk_mq_hw_ctx *hctx, struct request *rq,
 		return;
 	}
 
-	blk_mq_sched_request_inserted(rq);
+	trace_block_rq_insert(rq);
 
 	/*
 	 * Reqs with at_head or passthrough flags set are to be put

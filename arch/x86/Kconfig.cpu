@@ -319,8 +319,8 @@ choice
 	  Specify CPU for CONFIG_OPTIMIZE_SPECIFICALLY.
 	  Invalid, unsupported CPU will break the build.
 
-	config OPTIMIZE_FOR_2990WX
-		bool "AMD Ryzen Threadripper 2990WX (Colfax)"
+	config OPTIMIZE_FOR_3990X
+		bool "AMD Ryzen Threadripper 3990X (Castle Peak)"
 
 	config OPTIMIZE_FOR_8550U
 		bool "Intel Core i7-8550U (Kabylake-R)"

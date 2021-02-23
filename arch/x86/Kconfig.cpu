@@ -332,8 +332,8 @@ choice
 	config OPTIMIZE_FOR_8550U
 		bool "Intel Core i7-8550U (Kabylake-R)"
 
-	config OPTIMIZE_FOR_G5400
-		bool "Intel Pentium Gold G5400 (Coffeelake)"
+	config OPTIMIZE_FOR_9900
+		bool "Intel Core i9-9900 (Coffeelake)"
 
 	config OPTIMIZE_FOR_R5_2600
 		bool "AMD Ryzen 5 2600 (Pinnacle Ridge)"

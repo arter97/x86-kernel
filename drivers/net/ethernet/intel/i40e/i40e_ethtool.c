@@ -232,8 +232,6 @@ static void __i40e_add_stat_strings(u8 **p, const struct i40e_stats stats[],
 	I40E_STAT(struct i40e_vsi, _name, _stat)
 #define I40E_VEB_STAT(_name, _stat) \
 	I40E_STAT(struct i40e_veb, _name, _stat)
-#define I40E_VEB_TC_STAT(_name, _stat) \
-	I40E_STAT(struct i40e_cp_veb_tc_stats, _name, _stat)
 #define I40E_PFC_STAT(_name, _stat) \
 	I40E_STAT(struct i40e_pfc_stats, _name, _stat)
 #define I40E_QUEUE_STAT(_name, _stat) \
@@ -268,18 +266,11 @@ static const struct i40e_stats i40e_gstrings_veb_stats[] = {
 	I40E_VEB_STAT("veb.rx_unknown_protocol", stats.rx_unknown_protocol),
 };
 
-struct i40e_cp_veb_tc_stats {
-	u64 tc_rx_packets;
-	u64 tc_rx_bytes;
-	u64 tc_tx_packets;
-	u64 tc_tx_bytes;
-};
-
 static const struct i40e_stats i40e_gstrings_veb_tc_stats[] = {
-	I40E_VEB_TC_STAT("veb.tc_%u_tx_packets", tc_tx_packets),
-	I40E_VEB_TC_STAT("veb.tc_%u_tx_bytes", tc_tx_bytes),
-	I40E_VEB_TC_STAT("veb.tc_%u_rx_packets", tc_rx_packets),
-	I40E_VEB_TC_STAT("veb.tc_%u_rx_bytes", tc_rx_bytes),
+	I40E_VEB_STAT("veb.tc_%u_tx_packets", tc_stats.tc_tx_packets),
+	I40E_VEB_STAT("veb.tc_%u_tx_bytes", tc_stats.tc_tx_bytes),
+	I40E_VEB_STAT("veb.tc_%u_rx_packets", tc_stats.tc_rx_packets),
+	I40E_VEB_STAT("veb.tc_%u_rx_bytes", tc_stats.tc_rx_bytes),
 };
 
 static const struct i40e_stats i40e_gstrings_misc_stats[] = {
@@ -731,14 +722,7 @@ static void i40e_get_settings_link_up_fec(u8 req_fec_info,
 	ethtool_link_ksettings_add_link_mode(ks, supported, FEC_RS);
 	ethtool_link_ksettings_add_link_mode(ks, supported, FEC_BASER);
 
-	if ((I40E_AQ_SET_FEC_REQUEST_RS & req_fec_info) &&
-	    (I40E_AQ_SET_FEC_REQUEST_KR & req_fec_info)) {
-		ethtool_link_ksettings_add_link_mode(ks, advertising,
-						     FEC_NONE);
-		ethtool_link_ksettings_add_link_mode(ks, advertising,
-						     FEC_BASER);
-		ethtool_link_ksettings_add_link_mode(ks, advertising, FEC_RS);
-	} else if (I40E_AQ_SET_FEC_REQUEST_RS & req_fec_info) {
+	if (I40E_AQ_SET_FEC_REQUEST_RS & req_fec_info) {
 		ethtool_link_ksettings_add_link_mode(ks, advertising, FEC_RS);
 	} else if (I40E_AQ_SET_FEC_REQUEST_KR & req_fec_info) {
 		ethtool_link_ksettings_add_link_mode(ks, advertising,
@@ -746,6 +730,12 @@ static void i40e_get_settings_link_up_fec(u8 req_fec_info,
 	} else {
 		ethtool_link_ksettings_add_link_mode(ks, advertising,
 						     FEC_NONE);
+		if (I40E_AQ_SET_FEC_AUTO & req_fec_info) {
+			ethtool_link_ksettings_add_link_mode(ks, advertising,
+							     FEC_RS);
+			ethtool_link_ksettings_add_link_mode(ks, advertising,
+							     FEC_BASER);
+		}
 	}
 }
 
@@ -1107,7 +1097,6 @@ static int i40e_get_link_ksettings(struct net_device *netdev,
 
 	/* Set flow control settings */
 	ethtool_link_ksettings_add_link_mode(ks, supported, Pause);
-	ethtool_link_ksettings_add_link_mode(ks, supported, Asym_Pause);
 
 	switch (hw->fc.requested_mode) {
 	case I40E_FC_FULL:
@@ -1448,7 +1437,6 @@ static int i40e_get_fec_param(struct net_device *netdev,
 	struct i40e_hw *hw = &pf->hw;
 	i40e_status status = 0;
 	int err = 0;
-	u8 fec_cfg;
 
 	/* Get the current phy config */
 	memset(&abilities, 0, sizeof(abilities));
@@ -1460,16 +1448,18 @@ static int i40e_get_fec_param(struct net_device *netdev,
 	}
 
 	fecparam->fec = 0;
-	fec_cfg = abilities.fec_cfg_curr_mod_ext_info;
-	if (fec_cfg & I40E_AQ_SET_FEC_AUTO)
+	if (abilities.fec_cfg_curr_mod_ext_info & I40E_AQ_SET_FEC_AUTO)
 		fecparam->fec |= ETHTOOL_FEC_AUTO;
-	else if (fec_cfg & (I40E_AQ_SET_FEC_REQUEST_RS |
-		 I40E_AQ_SET_FEC_ABILITY_RS))
+	if ((abilities.fec_cfg_curr_mod_ext_info &
+	     I40E_AQ_SET_FEC_REQUEST_RS) ||
+	    (abilities.fec_cfg_curr_mod_ext_info &
+	     I40E_AQ_SET_FEC_ABILITY_RS))
 		fecparam->fec |= ETHTOOL_FEC_RS;
-	else if (fec_cfg & (I40E_AQ_SET_FEC_REQUEST_KR |
-		 I40E_AQ_SET_FEC_ABILITY_KR))
+	if ((abilities.fec_cfg_curr_mod_ext_info &
+	     I40E_AQ_SET_FEC_REQUEST_KR) ||
+	    (abilities.fec_cfg_curr_mod_ext_info & I40E_AQ_SET_FEC_ABILITY_KR))
 		fecparam->fec |= ETHTOOL_FEC_BASER;
-	if (fec_cfg == 0)
+	if (abilities.fec_cfg_curr_mod_ext_info == 0)
 		fecparam->fec |= ETHTOOL_FEC_OFF;
 
 	if (hw->phy.link_info.fec_info & I40E_AQ_CONFIG_FEC_KR_ENA)
@@ -2223,29 +2213,6 @@ static int i40e_get_sset_count(struct net_device *netdev, int sset)
 }
 
 /**
- * i40e_get_veb_tc_stats - copy VEB TC statistics to formatted structure
- * @tc: the TC statistics in VEB structure (veb->tc_stats)
- * @i: the index of traffic class in (veb->tc_stats) structure to copy
- *
- * Copy VEB TC statistics from structure of arrays (veb->tc_stats) to
- * one dimensional structure i40e_cp_veb_tc_stats.
- * Produce formatted i40e_cp_veb_tc_stats structure of the VEB TC
- * statistics for the given TC.
- **/
-static struct i40e_cp_veb_tc_stats
-i40e_get_veb_tc_stats(struct i40e_veb_tc_stats *tc, unsigned int i)
-{
-	struct i40e_cp_veb_tc_stats veb_tc = {
-		.tc_rx_packets = tc->tc_rx_packets[i],
-		.tc_rx_bytes = tc->tc_rx_bytes[i],
-		.tc_tx_packets = tc->tc_tx_packets[i],
-		.tc_tx_bytes = tc->tc_tx_bytes[i],
-	};
-
-	return veb_tc;
-}
-
-/**
  * i40e_get_pfc_stats - copy HW PFC statistics to formatted structure
  * @pf: the PF device structure
  * @i: the priority value to copy
@@ -2329,16 +2296,8 @@ static void i40e_get_ethtool_stats(struct net_device *netdev,
 			       i40e_gstrings_veb_stats);
 
 	for (i = 0; i < I40E_MAX_TRAFFIC_CLASS; i++)
-		if (veb_stats) {
-			struct i40e_cp_veb_tc_stats veb_tc =
-				i40e_get_veb_tc_stats(&veb->tc_stats, i);
-
-			i40e_add_ethtool_stats(&data, &veb_tc,
-					       i40e_gstrings_veb_tc_stats);
-		} else {
-			i40e_add_ethtool_stats(&data, NULL,
-					       i40e_gstrings_veb_tc_stats);
-		}
+		i40e_add_ethtool_stats(&data, veb_stats ? veb : NULL,
+				       i40e_gstrings_veb_tc_stats);
 
 	i40e_add_ethtool_stats(&data, pf, i40e_gstrings_stats);
 
@@ -4915,7 +4874,7 @@ static int i40e_set_priv_flags(struct net_device *dev, u32 flags)
 	enum i40e_admin_queue_err adq_err;
 	struct i40e_vsi *vsi = np->vsi;
 	struct i40e_pf *pf = vsi->back;
-	u32 reset_needed = 0;
+	bool is_reset_needed;
 	i40e_status status;
 	u32 i, j;
 
@@ -4960,11 +4919,9 @@ static int i40e_set_priv_flags(struct net_device *dev, u32 flags)
 flags_complete:
 	changed_flags = orig_flags ^ new_flags;
 
-	if (changed_flags & I40E_FLAG_DISABLE_FW_LLDP)
-		reset_needed = I40E_PF_RESET_AND_REBUILD_FLAG;
-	if (changed_flags & (I40E_FLAG_VEB_STATS_ENABLED |
-	    I40E_FLAG_LEGACY_RX | I40E_FLAG_SOURCE_PRUNING_DISABLED))
-		reset_needed = BIT(__I40E_PF_RESET_REQUESTED);
+	is_reset_needed = !!(changed_flags & (I40E_FLAG_VEB_STATS_ENABLED |
+		I40E_FLAG_LEGACY_RX | I40E_FLAG_SOURCE_PRUNING_DISABLED |
+		I40E_FLAG_DISABLE_FW_LLDP));
 
 	/* Before we finalize any flag changes, we need to perform some
 	 * checks to ensure that the changes are supported and safe.
@@ -5081,7 +5038,7 @@ flags_complete:
 				case I40E_AQ_RC_EEXIST:
 					dev_warn(&pf->pdev->dev,
 						 "FW LLDP agent is already running\n");
-					reset_needed = 0;
+					is_reset_needed = false;
 					break;
 				case I40E_AQ_RC_EPERM:
 					dev_warn(&pf->pdev->dev,
@@ -5110,8 +5067,8 @@ flags_complete:
 	/* Issue reset to cause things to take effect, as additional bits
 	 * are added we will need to create a mask of bits requiring reset
 	 */
-	if (reset_needed)
-		i40e_do_reset(pf, reset_needed, true);
+	if (is_reset_needed)
+		i40e_do_reset(pf, BIT(__I40E_PF_RESET_REQUESTED), true);
 
 	return 0;
 }

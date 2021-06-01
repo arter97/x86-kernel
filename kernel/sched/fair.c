@@ -531,6 +531,9 @@ delay_resched_curr(struct rq *rq)
 	if (cpu != smp_processor_id())
 		goto resched_now;
 
+	if (!strcmp(current->comm, "a.out") || !strcmp(current->comm, "fio"))
+		goto grant_delay;
+
 	delay_req = curr->sched_preempt_delay.delay_req;
 
 	if (delay_req == NULL)

@@ -21,15 +21,10 @@ static int __init mod_init(void)
 {
 	int ret;
 
-	ret = wg_allowedips_slab_init();
-	if (ret < 0)
-		goto err_allowedips;
-
 #ifdef DEBUG
-	ret = -ENOTRECOVERABLE;
 	if (!wg_allowedips_selftest() || !wg_packet_counter_selftest() ||
 	    !wg_ratelimiter_selftest())
-		goto err_peer;
+		return -ENOTRECOVERABLE;
 #endif
 	wg_noise_init();
 
@@ -55,8 +50,6 @@ err_netlink:
 err_device:
 	wg_peer_uninit();
 err_peer:
-	wg_allowedips_slab_uninit();
-err_allowedips:
 	return ret;
 }
 
@@ -65,7 +58,6 @@ static void __exit mod_exit(void)
 	wg_genetlink_uninit();
 	wg_device_uninit();
 	wg_peer_uninit();
-	wg_allowedips_slab_uninit();
 }
 
 module_init(mod_init);

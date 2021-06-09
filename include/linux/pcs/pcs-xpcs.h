@@ -51,11 +51,11 @@ struct dw_xpcs;
 struct phylink_pcs *xpcs_to_phylink_pcs(struct dw_xpcs *xpcs);
 int xpcs_get_an_mode(struct dw_xpcs *xpcs, phy_interface_t interface);
 void xpcs_config_eee_mult_fact(struct dw_xpcs *xpcs, u8 mult_fact);
-struct dw_xpcs *xpcs_create_mdiodev(struct mii_bus *bus, int addr);
+struct dw_xpcs *xpcs_create_mdiodev(struct mii_bus *bus, int addr, bool skip_reset);
 struct dw_xpcs *xpcs_create_fwnode(struct fwnode_handle *fwnode);
 void xpcs_destroy(struct dw_xpcs *xpcs);
 
-struct phylink_pcs *xpcs_create_pcs_mdiodev(struct mii_bus *bus, int addr);
+struct phylink_pcs *xpcs_create_pcs_mdiodev(struct mii_bus *bus, int addr, bool skip_reset);
 void xpcs_destroy_pcs(struct phylink_pcs *pcs);
 
 #endif /* __LINUX_PCS_XPCS_H */

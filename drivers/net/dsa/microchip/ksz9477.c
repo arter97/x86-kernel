@@ -336,7 +336,7 @@ int ksz9477_pcs_create(struct ksz_device *dev)
 		if (ret)
 			return ret;
 
-		pcs = xpcs_create_pcs_mdiodev(bus, 0);
+		pcs = xpcs_create_pcs_mdiodev(bus, 0, false);
 		if (IS_ERR(pcs))
 			return PTR_ERR(pcs);
 		p->pcs = pcs;

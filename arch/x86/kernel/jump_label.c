@@ -54,9 +54,10 @@ __jump_label_set_jump_code(struct jump_entry *entry, enum jump_label_type type)
 	return code;
 }
 
-static inline void __jump_label_transform(struct jump_entry *entry,
-					  enum jump_label_type type,
-					  int init)
+static __always_inline void
+__jump_label_transform(struct jump_entry *entry,
+		       enum jump_label_type type,
+		       int init)
 {
 	const void *opcode = __jump_label_set_jump_code(entry, type);
 

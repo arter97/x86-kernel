@@ -308,6 +308,24 @@ config X86_GENERIC
 	  This is really intended for distributors who need more
 	  generic optimizations.
 
+config MTUNE_FOR
+	string "String for the compiler's -mtune option"
+	default "generic"
+	help
+	  This option will pass the specified string to the compiler
+	  as the -mtune flag.
+
+config MARCH
+	bool "Apply the -mtune option to -march as well"
+	depends on MTUNE_FOR != "generic"
+	default n
+	help
+	  Enabling this option will pass the same string to the compiler's
+	  -march flag.
+
+	  This will prevent the kernel from working if the CPU doesn't match.
+	  Say N if unsure.
+
 #
 # Define implied options from the CPU selection here
 config X86_INTERNODE_CACHE_SHIFT

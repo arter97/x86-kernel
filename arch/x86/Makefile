@@ -178,7 +178,8 @@ else
         cflags-$(CONFIG_MPSC)		+= -march=nocona
         cflags-$(CONFIG_MCORE2)		+= -march=core2
         cflags-$(CONFIG_MATOM)		+= -march=atom
-        cflags-$(CONFIG_GENERIC_CPU)	+= -mtune=generic
+	cflags-$(CONFIG_MARCH)		+= -march=$(CONFIG_MTUNE_FOR)
+	cflags-y			+= -mtune=$(CONFIG_MTUNE_FOR)
         KBUILD_CFLAGS += $(cflags-y)
 
         rustflags-$(CONFIG_MK8)		+= -Ctarget-cpu=k8

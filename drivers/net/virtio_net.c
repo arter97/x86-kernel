@@ -423,7 +423,7 @@ static struct sk_buff *page_to_skb(struct virtnet_info *vi,
 	 * space are aligned.
 	 */
 	truesize = headroom ? PAGE_SIZE : truesize;
-	tailroom = truesize - len - headroom;
+	tailroom = truesize - len - headroom - (hdr_padded_len - hdr_len);
 	buf = p - headroom;
 
 	len -= hdr_len;

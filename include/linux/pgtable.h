@@ -259,13 +259,14 @@ static inline int pmdp_clear_flush_young(struct vm_area_struct *vma,
 #endif
 
 #ifndef arch_has_hw_pte_young
-static inline bool arch_has_hw_pte_young(void)
+/*
+ * Return whether the accessed bit is supported by the local CPU or all CPUs.
+ *
+ * Those arches which have hw access flag feature need to implement their own
+ * helper. By default, "false" means pagefault will be hit on old pte.
+ */
+static inline bool arch_has_hw_pte_young(bool local)
 {
-	/*
-	 * Those arches which have hw access flag feature need to implement
-	 * their own helper. By default, "false" means pagefault will be hit
-	 * on old pte.
-	 */
 	return false;
 }
 #endif

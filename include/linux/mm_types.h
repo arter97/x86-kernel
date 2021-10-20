@@ -618,7 +618,6 @@ static inline cpumask_t *mm_cpumask(struct mm_struct *mm)
 
 #ifdef CONFIG_LRU_GEN
 
-void lru_gen_init_mm(struct mm_struct *mm);
 void lru_gen_add_mm(struct mm_struct *mm);
 void lru_gen_del_mm(struct mm_struct *mm);
 #ifdef CONFIG_MEMCG
@@ -627,32 +626,35 @@ void lru_gen_free_mm_list(struct mem_cgroup *memcg);
 void lru_gen_migrate_mm(struct mm_struct *mm);
 #endif
 
+static inline void lru_gen_init_mm(struct mm_struct *mm)
+{
+	INIT_LIST_HEAD(&mm->lrugen.list);
+#ifdef CONFIG_MEMCG
+	mm->lrugen.memcg = NULL;
+#endif
+#ifndef CONFIG_ARCH_WANT_BATCHED_UNMAP_TLB_FLUSH
+	atomic_set(&mm->lrugen.nr_cpus, 0);
+#endif
+	nodes_clear(mm->lrugen.nodes);
+}
+
 /* Track the usage of each mm_struct so that we can skip inactive ones. */
 static inline void lru_gen_switch_mm(struct mm_struct *old, struct mm_struct *new)
 {
 	/* exclude init_mm, efi_mm, etc. */
 	if (!core_kernel_data((unsigned long)old)) {
-		VM_BUG_ON(old == &init_mm);
-
 		nodes_setall(old->lrugen.nodes);
 #ifndef CONFIG_ARCH_WANT_BATCHED_UNMAP_TLB_FLUSH
 		atomic_dec(&old->lrugen.nr_cpus);
-		VM_BUG_ON_MM(atomic_read(&old->lrugen.nr_cpus) < 0, old);
 #endif
-	} else
-		VM_BUG_ON_MM(READ_ONCE(old->lrugen.list.prev) ||
-			     READ_ONCE(old->lrugen.list.next), old);
+	}
 
 	if (!core_kernel_data((unsigned long)new)) {
-		VM_BUG_ON(new == &init_mm);
-
+		VM_BUG_ON_MM(new == &init_mm, new);
 #ifndef CONFIG_ARCH_WANT_BATCHED_UNMAP_TLB_FLUSH
 		atomic_inc(&new->lrugen.nr_cpus);
-		VM_BUG_ON_MM(atomic_read(&new->lrugen.nr_cpus) < 0, new);
 #endif
-	} else
-		VM_BUG_ON_MM(READ_ONCE(new->lrugen.list.prev) ||
-			     READ_ONCE(new->lrugen.list.next), new);
+	}
 }
 
 /* Return whether this mm_struct is being used on any CPUs. */
@@ -666,10 +668,6 @@ static inline bool lru_gen_mm_is_active(struct mm_struct *mm)
 }
 
 #else /* CONFIG_LRU_GEN */
-
-static inline void lru_gen_init_mm(struct mm_struct *mm)
-{
-}
 
 static inline void lru_gen_add_mm(struct mm_struct *mm)
 {
@@ -693,6 +691,10 @@ static inline void lru_gen_migrate_mm(struct mm_struct *mm)
 {
 }
 #endif
+
+static inline void lru_gen_init_mm(struct mm_struct *mm)
+{
+}
 
 static inline void lru_gen_switch_mm(struct mm_struct *old, struct mm_struct *new)
 {

@@ -238,6 +238,7 @@ static void *lru_gen_eviction(struct page *page)
 	struct lrugen *lrugen;
 	int type = page_is_file_lru(page);
 	int usage = page_get_usage(page);
+	int delta = thp_nr_pages(page);
 	bool workingset = PageWorkingset(page);
 	struct mem_cgroup *memcg = page_memcg(page);
 	struct pglist_data *pgdat = page_pgdat(page);
@@ -249,7 +250,7 @@ static void *lru_gen_eviction(struct page *page)
 
 	hist = lru_hist_from_seq(min_seq);
 	tier = lru_tier_from_usage(usage + workingset);
-	atomic_long_add(thp_nr_pages(page), &lrugen->evicted[hist][type][tier]);
+	atomic_long_add(delta, &lrugen->evicted[hist][type][tier]);
 
 	return pack_shadow(mem_cgroup_id(memcg), pgdat, token, workingset);
 }
@@ -267,6 +268,7 @@ static void lru_gen_refault(struct page *page, void *shadow)
 	struct mem_cgroup *memcg;
 	struct pglist_data *pgdat;
 	int type = page_is_file_lru(page);
+	int delta = thp_nr_pages(page);
 
 	unpack_shadow(shadow, &memcg_id, &pgdat, &token, &workingset);
 	if (page_pgdat(page) != pgdat)
@@ -290,8 +292,8 @@ static void lru_gen_refault(struct page *page, void *shadow)
 
 	hist = lru_hist_from_seq(min_seq);
 	tier = lru_tier_from_usage(usage + workingset);
-	atomic_long_add(thp_nr_pages(page), &lrugen->refaulted[hist][type][tier]);
-	inc_lruvec_state(lruvec, WORKINGSET_REFAULT_BASE + type);
+	atomic_long_add(delta, &lrugen->refaulted[hist][type][tier]);
+	mod_lruvec_state(lruvec, WORKINGSET_REFAULT_BASE + type, delta);
 
 	/*
 	 * Tiers don't offer any protection to pages accessed via page tables.
@@ -302,7 +304,7 @@ static void lru_gen_refault(struct page *page, void *shadow)
 	 */
 	if (task_in_nonseq_fault() || usage + workingset == BIT(LRU_USAGE_WIDTH)) {
 		SetPageWorkingset(page);
-		inc_lruvec_state(lruvec, WORKINGSET_RESTORE_BASE + type);
+		mod_lruvec_state(lruvec, WORKINGSET_RESTORE_BASE + type, delta);
 	}
 unlock:
 	rcu_read_unlock();

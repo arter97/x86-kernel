@@ -73,7 +73,7 @@ For each ``lruvec``, evictable pages are divided into multiple
 generations. The youngest generation number is stored in
 ``lrugen->max_seq`` for both anon and file types as they are aged on
 an equal footing. The oldest generation numbers are stored in
-``lrugen->min_seq[2]`` separately for anon and file types as clean
+``lrugen->min_seq[]`` separately for anon and file types as clean
 file pages can be evicted regardless of swap and writeback
 constraints. These three variables are monotonically increasing.
 Generation numbers are truncated into
@@ -106,22 +106,21 @@ to scan PTEs for accessed pages (a ``mm_struct`` list is maintained
 for each ``memcg``). Upon finding one, the aging updates its
 generation number to ``max_seq`` (modulo ``CONFIG_NR_LRU_GENS``).
 After each round of traversal, the aging increments ``max_seq``. The
-aging is due when both ``min_seq[2]`` have caught up with
-``max_seq-1``.
+aging is due when ``min_seq[]`` reaches ``max_seq-1``.
 
 Eviction
 --------
 The eviction consumes old generations. Given an ``lruvec``, the
 eviction scans pages on the per-zone lists indexed by anon and file
-``min_seq[2]`` (modulo ``CONFIG_NR_LRU_GENS``). It first tries to
-select a type based on the values of ``min_seq[2]``. If they are
+``min_seq[]`` (modulo ``CONFIG_NR_LRU_GENS``). It first tries to
+select a type based on the values of ``min_seq[]``. If they are
 equal, it selects the type that has a lower refault rate. The eviction
 sorts a page according to its updated generation number if the aging
 has found this page accessed. It also moves a page to the next
 generation if this page is from an upper tier that has a higher
 refault rate than the base tier. The eviction increments
-``min_seq[2]`` of a selected type when it finds all the per-zone lists
-indexed by ``min_seq[2]`` of this selected type are empty.
+``min_seq[]`` of a selected type when it finds all the per-zone lists
+indexed by ``min_seq[]`` of this selected type are empty.
 
 To-do List
 ==========

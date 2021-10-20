@@ -1399,7 +1399,7 @@ static inline bool arch_has_pfn_modify_check(void)
 }
 
 #define arch_has_hw_pte_young arch_has_hw_pte_young
-static inline bool arch_has_hw_pte_young(void)
+static inline bool arch_has_hw_pte_young(bool local)
 {
 	return true;
 }

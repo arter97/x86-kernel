@@ -419,7 +419,6 @@ struct io_ring_ctx {
 		struct wait_queue_head	cq_wait;
 		unsigned		cq_extra;
 		atomic_t		cq_timeouts;
-		struct fasync_struct	*cq_fasync;
 		unsigned		cq_last_tm_flush;
 	} ____cacheline_aligned_in_smp;
 
@@ -1448,10 +1447,8 @@ static void io_cqring_ev_posted(struct io_ring_ctx *ctx)
 		wake_up(&ctx->sq_data->wait);
 	if (io_should_trigger_evfd(ctx))
 		eventfd_signal(ctx->cq_ev_fd, 1);
-	if (waitqueue_active(&ctx->poll_wait)) {
+	if (waitqueue_active(&ctx->poll_wait))
 		wake_up_interruptible(&ctx->poll_wait);
-		kill_fasync(&ctx->cq_fasync, SIGIO, POLL_IN);
-	}
 }
 
 static void io_cqring_ev_posted_iopoll(struct io_ring_ctx *ctx)
@@ -1465,10 +1462,8 @@ static void io_cqring_ev_posted_iopoll(struct io_ring_ctx *ctx)
 	}
 	if (io_should_trigger_evfd(ctx))
 		eventfd_signal(ctx->cq_ev_fd, 1);
-	if (waitqueue_active(&ctx->poll_wait)) {
+	if (waitqueue_active(&ctx->poll_wait))
 		wake_up_interruptible(&ctx->poll_wait);
-		kill_fasync(&ctx->cq_fasync, SIGIO, POLL_IN);
-	}
 }
 
 /* Returns true if there are no backlogged entries after the flush */
@@ -8648,8 +8643,10 @@ static void io_destroy_buffers(struct io_ring_ctx *ctx)
 	struct io_buffer *buf;
 	unsigned long index;
 
-	xa_for_each(&ctx->io_buffers, index, buf)
+	xa_for_each(&ctx->io_buffers, index, buf) {
 		__io_remove_buffers(ctx, buf, index, -1U);
+		cond_resched();
+	}
 }
 
 static void io_req_cache_free(struct list_head *list, struct task_struct *tsk)
@@ -8775,13 +8772,6 @@ static __poll_t io_uring_poll(struct file *file, poll_table *wait)
 		mask |= EPOLLIN | EPOLLRDNORM;
 
 	return mask;
-}
-
-static int io_uring_fasync(int fd, struct file *file, int on)
-{
-	struct io_ring_ctx *ctx = file->private_data;
-
-	return fasync_helper(fd, file, on, &ctx->cq_fasync);
 }
 
 static int io_unregister_personality(struct io_ring_ctx *ctx, unsigned id)
@@ -9145,8 +9135,10 @@ static void io_uring_clean_tctx(struct io_uring_task *tctx)
 	struct io_tctx_node *node;
 	unsigned long index;
 
-	xa_for_each(&tctx->xa, index, node)
+	xa_for_each(&tctx->xa, index, node) {
 		io_uring_del_tctx_node(index);
+		cond_resched();
+	}
 	if (wq) {
 		/*
 		 * Must be after io_uring_del_task_file() (removes nodes under
@@ -9567,7 +9559,6 @@ static const struct file_operations io_uring_fops = {
 	.mmap_capabilities = io_uring_nommu_mmap_capabilities,
 #endif
 	.poll		= io_uring_poll,
-	.fasync		= io_uring_fasync,
 #ifdef CONFIG_PROC_FS
 	.show_fdinfo	= io_uring_show_fdinfo,
 #endif

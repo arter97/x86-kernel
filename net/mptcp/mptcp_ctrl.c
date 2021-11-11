@@ -1097,6 +1097,10 @@ static void mptcp_sub_inherit_sockopts(const struct sock *meta_sk, struct sock *
 		sk_dst_reset(sub_sk);
 	}
 
+	/* IPV6_TCLASS */
+	if (sub_sk->sk_family == AF_INET6 && meta_sk->sk_family == AF_INET6)
+		inet6_sk(sub_sk)->tclass = inet6_sk(meta_sk)->tclass;
+
 	/* Inherit SO_REUSEADDR */
 	sub_sk->sk_reuse = meta_sk->sk_reuse;
 
@@ -1453,6 +1457,8 @@ static int mptcp_alloc_mpcb(struct sock *meta_sk, __u64 remote_key,
 	master_sk->tcp_rtx_queue = RB_ROOT;
 	INIT_LIST_HEAD(&master_tp->tsq_node);
 	INIT_LIST_HEAD(&master_tp->tsorted_sent_queue);
+
+	master_tp->fastopen_req = NULL;
 
 	master_sk->sk_tsq_flags = 0;
 	/* icsk_bind_hash inherited from the meta, but it will be properly set in
@@ -2086,7 +2092,6 @@ adjudge_to_death:
 		}
 	}
 
-
 	if (meta_sk->sk_state == TCP_CLOSE)
 		inet_csk_destroy_sock(meta_sk);
 	/* Otherwise, socket is reprieved until protocol close. */
@@ -2145,7 +2150,6 @@ void mptcp_disconnect(struct sock *meta_sk)
 #endif
 	meta_sk->sk_destruct = inet_sock_destruct;
 }
-
 
 /* Returns True if we should enable MPTCP for that socket. */
 bool mptcp_doit(struct sock *sk)
@@ -3252,7 +3256,6 @@ void __init mptcp_init(void)
 
 	for (i = 0; i <= mptcp_reqsk_tk_htb.mask; i++)
 		INIT_HLIST_NULLS_HEAD(&mptcp_reqsk_tk_htb.hashtable[i], i);
-
 
 	spin_lock_init(&mptcp_tk_hashlock);
 

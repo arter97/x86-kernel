@@ -568,6 +568,7 @@ struct hnae3_ae_ops {
 			       u32 *auto_neg, u32 *rx_en, u32 *tx_en);
 	int (*set_pauseparam)(struct hnae3_handle *handle,
 			      u32 auto_neg, u32 rx_en, u32 tx_en);
+	int (*restore_pauseparam)(struct hnae3_handle *handle);
 
 	int (*set_autoneg)(struct hnae3_handle *handle, bool enable);
 	int (*get_autoneg)(struct hnae3_handle *handle);
@@ -850,6 +851,7 @@ struct hnae3_handle {
 int hnae3_register_ae_dev(struct hnae3_ae_dev *ae_dev);
 void hnae3_unregister_ae_dev(struct hnae3_ae_dev *ae_dev);
 
+void hnae3_unregister_ae_algo_prepare(struct hnae3_ae_algo *ae_algo);
 void hnae3_unregister_ae_algo(struct hnae3_ae_algo *ae_algo);
 void hnae3_register_ae_algo(struct hnae3_ae_algo *ae_algo);
 

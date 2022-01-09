@@ -1997,12 +1997,12 @@ static int __init inet_init(void)
 
 	ip_init();
 
-	/* We must initialize MPTCP before TCP. */
-	mptcp_init();
-
 	/* Initialise per-cpu ipv4 mibs */
 	if (init_ipv4_mibs())
 		panic("%s: Cannot init ipv4 mibs\n", __func__);
+
+	/* We must initialize MPTCP before TCP. */
+	mptcp_init();
 
 	/* Setup TCP slab cache for open requests. */
 	tcp_init();

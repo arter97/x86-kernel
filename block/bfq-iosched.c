@@ -124,8 +124,6 @@
 #include <linux/sbitmap.h>
 #include <linux/delay.h>
 
-#include <trace/events/block.h>
-
 #include "blk.h"
 #include "blk-mq.h"
 #include "blk-mq-tag.h"
@@ -5982,7 +5980,7 @@ static void bfq_insert_request(struct blk_mq_hw_ctx *hctx, struct request *rq,
 
 	spin_unlock_irq(&bfqd->lock);
 
-	trace_block_rq_insert(rq);
+	blk_mq_sched_request_inserted(rq);
 
 	spin_lock_irq(&bfqd->lock);
 	bfqq = bfq_init_rq(rq);

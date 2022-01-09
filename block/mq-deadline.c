@@ -18,8 +18,6 @@
 #include <linux/rbtree.h>
 #include <linux/sbitmap.h>
 
-#include <trace/events/block.h>
-
 #include "blk.h"
 #include "blk-mq.h"
 #include "blk-mq-debugfs.h"
@@ -733,7 +731,7 @@ static void dd_insert_request(struct blk_mq_hw_ctx *hctx, struct request *rq,
 	if (blk_mq_sched_try_insert_merge(q, rq))
 		return;
 
-	trace_block_rq_insert(rq);
+	blk_mq_sched_request_inserted(rq);
 
 	if (at_head) {
 		list_add(&rq->queuelist, &per_prio->dispatch);

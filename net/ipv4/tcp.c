@@ -2383,6 +2383,7 @@ static const unsigned char new_state[16] = {
   [TCP_LISTEN]		= TCP_CLOSE,
   [TCP_CLOSING]		= TCP_CLOSING,
   [TCP_NEW_SYN_RECV]	= TCP_CLOSE,	/* should not happen ! */
+  [TCP_RST_WAIT]	= TCP_CLOSE,
 };
 
 int tcp_close_state(struct sock *sk)
@@ -2741,6 +2742,7 @@ int tcp_disconnect(struct sock *sk, int flags)
 	if (is_meta_sk(sk)) {
 		mptcp_disconnect(sk);
 	} else {
+		tp->request_mptcp = 0;
 		if (tp->inside_tk_table)
 			mptcp_hash_remove_bh(tp);
 	}

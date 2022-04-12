@@ -1999,6 +1999,7 @@ int truncate_bdev_range(struct block_device *bdev, fmode_t mode, loff_t lstart,
 #ifdef CONFIG_BLOCK
 void invalidate_bdev(struct block_device *bdev);
 int sync_blockdev(struct block_device *bdev);
+int sync_blockdev_range(struct block_device *bdev, loff_t lstart, loff_t lend);
 #else
 static inline void invalidate_bdev(struct block_device *bdev)
 {

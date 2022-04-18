@@ -412,9 +412,10 @@ static int mptcp_verif_dss_csum(struct sock *sk)
 				kfree_skb(tmp);
 			}
 
-			mptcp_fallback_close(tp->mpcb, sk);
-
-			ans = 0;
+			if (mptcp_fallback_close(tp->mpcb, sk))
+				ans = -1;
+			else
+				ans = 0;
 		}
 	}
 
@@ -590,7 +591,8 @@ static int mptcp_prevalidate_skb(struct sock *sk, struct sk_buff *skb)
 		mpcb->infinite_mapping_rcv = 1;
 		mpcb->infinite_rcv_seq = mptcp_get_rcv_nxt_64(mptcp_meta_tp(tp));
 
-		mptcp_fallback_close(mpcb, sk);
+		if (mptcp_fallback_close(mpcb, sk))
+			return 1;
 
 		/* We do a seamless fallback and should not send a inf.mapping. */
 		mpcb->send_infinite_mapping = 0;
@@ -766,7 +768,8 @@ static int mptcp_detect_mapping(struct sock *sk, struct sk_buff *skb)
 		data_len = skb->len + (mptcp_is_data_fin(skb) ? 1 : 0);
 		sub_seq = tcb->seq;
 
-		mptcp_fallback_close(mpcb, sk);
+		if (mptcp_fallback_close(mpcb, sk))
+			return 1;
 
 		mptcp_restart_sending(tp->meta_sk, meta_tp->snd_una);
 
@@ -1642,26 +1645,34 @@ bool mptcp_handle_ack_in_infinite(struct sock *sk, const struct sk_buff *skb,
 	if (!(flag & MPTCP_FLAG_DATA_ACKED))
 		return false;
 
-	pr_debug("%s %#x will fallback - pi %d, src %pI4:%u dst %pI4:%u rcv_nxt %u from %pS\n",
+	pr_debug("%s %#x will fallback - pi %d, src %pI4:%u dst %pI4:%u rcv_nxt %u\n",
 		 __func__, mpcb->mptcp_loc_token, tp->mptcp->path_index,
 		 &inet_sk(sk)->inet_saddr, ntohs(inet_sk(sk)->inet_sport),
 		 &inet_sk(sk)->inet_daddr, ntohs(inet_sk(sk)->inet_dport),
-		 tp->rcv_nxt, __builtin_return_address(0));
+		 tp->rcv_nxt);
 	if (!is_master_tp(tp)) {
 		MPTCP_INC_STATS(sock_net(sk), MPTCP_MIB_FBACKSUB);
 		return true;
 	}
+
+	/* We have sent more than what has ever been sent on the master subflow.
+	 * This means, we won't be able to seamlessly fallback because there
+	 * will now be a hole in the sequence space.
+	 */
+	if (before(tp->mptcp->last_end_data_seq, meta_tp->snd_una))
+		return true;
 
 	mpcb->infinite_mapping_snd = 1;
 	mpcb->infinite_mapping_rcv = 1;
 	mpcb->infinite_rcv_seq = mptcp_get_rcv_nxt_64(mptcp_meta_tp(tp));
 	tp->mptcp->fully_established = 1;
 
-	mptcp_fallback_close(mpcb, sk);
+	MPTCP_INC_STATS(sock_net(sk), MPTCP_MIB_FBACKINIT);
+
+	if (mptcp_fallback_close(mpcb, sk))
+		return true;
 
 	mptcp_restart_sending(tp->meta_sk, tp->mptcp->last_end_data_seq);
-
-	MPTCP_INC_STATS(sock_net(sk), MPTCP_MIB_FBACKINIT);
 
 	/* The acknowledged data-seq at the subflow-level is:
 	 * last_end_data_seq - (tp->snd_nxt - tp->snd_una)
@@ -2242,7 +2253,8 @@ static bool mptcp_mp_fastclose_rcvd(struct sock *sk)
 	return true;
 }
 
-static void mptcp_mp_fail_rcvd(struct sock *sk, const struct tcphdr *th)
+/* Returns true if we should stop processing NOW */
+static bool mptcp_mp_fail_rcvd(struct sock *sk, const struct tcphdr *th)
 {
 	struct mptcp_tcp_sock *mptcp = tcp_sk(sk)->mptcp;
 	struct sock *meta_sk = mptcp_meta_sk(sk);
@@ -2256,8 +2268,10 @@ static void mptcp_mp_fail_rcvd(struct sock *sk, const struct tcphdr *th)
 
 		mptcp_restart_sending(meta_sk, tcp_sk(meta_sk)->snd_una);
 
-		mptcp_fallback_close(mpcb, sk);
+		return mptcp_fallback_close(mpcb, sk);
 	}
+
+	return false;
 }
 
 static inline void mptcp_path_array_check(struct sock *meta_sk)
@@ -2291,8 +2305,8 @@ bool mptcp_handle_options(struct sock *sk, const struct tcphdr *th,
 		mptcp_initialize_recv_vars(mptcp_meta_tp(tp), tp->mpcb,
 					   mopt->mptcp_sender_key);
 
-	if (unlikely(mopt->mp_fail))
-		mptcp_mp_fail_rcvd(sk, th);
+	if (unlikely(mopt->mp_fail) && mptcp_mp_fail_rcvd(sk, th))
+		return true;
 
 	/* RFC 6824, Section 3.3:
 	 * If a checksum is not present when its use has been negotiated, the

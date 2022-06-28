@@ -206,7 +206,6 @@ static int virtgpu_restore(struct virtio_device *vdev)
 		DRM_ERROR("Failed to recover objects\n");
 		return error;
 	}
-
 	error = drm_mode_config_helper_resume(dev);
 	if (error) {
 		DRM_ERROR("resume error %d\n", error);

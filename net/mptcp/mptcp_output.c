@@ -293,6 +293,7 @@ static void __mptcp_reinject_data(struct sk_buff *orig_skb, struct sock *meta_sk
 void mptcp_reinject_data(struct sock *sk, int clone_it)
 {
 	struct sock *meta_sk = mptcp_meta_sk(sk);
+	struct tcp_sock *tp = tcp_sk(sk);
 	struct sk_buff *skb_it, *tmp;
 	enum tcp_queue tcp_queue;
 
@@ -319,6 +320,10 @@ void mptcp_reinject_data(struct sock *sk, int clone_it)
 		__mptcp_reinject_data(skb_it, meta_sk, sk, clone_it,
 				      TCP_FRAG_IN_WRITE_QUEUE);
 	}
+
+	/* We are emptying the rtx-queue. highest_sack is invalid */
+	if (!clone_it)
+		tp->highest_sack = NULL;
 
 	skb_it = tcp_rtx_queue_head(sk);
 	skb_rbtree_walk_from_safe(skb_it, tmp) {
@@ -352,11 +357,11 @@ void mptcp_reinject_data(struct sock *sk, int clone_it)
 
 	/* If sk has sent the empty data-fin, we have to reinject it too. */
 	if (skb_it && mptcp_is_data_fin(skb_it) && skb_it->len == 0 &&
-	    TCP_SKB_CB(skb_it)->path_mask & mptcp_pi_to_flag(tcp_sk(sk)->mptcp->path_index)) {
+	    TCP_SKB_CB(skb_it)->path_mask & mptcp_pi_to_flag(tp->mptcp->path_index)) {
 		__mptcp_reinject_data(skb_it, meta_sk, NULL, 1, tcp_queue);
 	}
 
-	tcp_sk(sk)->pf = 1;
+	tp->pf = 1;
 
 	mptcp_push_pending_frames(meta_sk);
 }
@@ -554,9 +559,20 @@ static bool mptcp_skb_entail(struct sock *sk, struct sk_buff *skb, int reinject)
 	struct tcp_skb_cb *tcb;
 	struct sk_buff *subskb = NULL;
 
-	if (!reinject)
+	if (reinject) {
+		/* Make sure to update counters and MIB in case of meta-retrans
+		 * AKA reinjections, similar to what is done in
+		 * __tcp_retransmit_skb().
+		 */
+		int segs = tcp_skb_pcount(skb);
+
+		MPTCP_ADD_STATS(sock_net(meta_sk), MPTCP_MIB_RETRANSSEGS, segs);
+		tcp_sk(meta_sk)->total_retrans += segs;
+		tcp_sk(meta_sk)->bytes_retrans += skb->len;
+	} else {
 		TCP_SKB_CB(skb)->mptcp_flags |= (mpcb->snd_hiseq_index ?
 						  MPTCPHDR_SEQ64_INDEX : 0);
+	}
 
 	tcp_skb_tsorted_save(skb) {
 		subskb = pskb_copy_for_clone(skb, GFP_ATOMIC);
@@ -615,6 +631,7 @@ static bool mptcp_skb_entail(struct sock *sk, struct sk_buff *skb, int reinject)
 
 		tcp_add_write_queue_tail(sk, subskb);
 		sk->sk_wmem_queued += subskb->truesize;
+		sk_forced_mem_schedule(sk, subskb->truesize);
 		sk_mem_charge(sk, subskb->truesize);
 	} else {
 		/* Necessary to initialize for tcp_transmit_skb. mss of 1, as
@@ -1483,6 +1500,7 @@ void mptcp_send_fin(struct sock *meta_sk)
 		tcp_init_nondata_skb(skb, meta_tp->write_seq, TCPHDR_ACK);
 		TCP_SKB_CB(skb)->end_seq++;
 		TCP_SKB_CB(skb)->mptcp_flags |= MPTCPHDR_FIN;
+		sk_forced_mem_schedule(meta_sk, skb->truesize);
 		tcp_queue_skb(meta_sk, skb);
 	}
 	__tcp_push_pending_frames(meta_sk, mss_now, TCP_NAGLE_OFF);
@@ -1652,7 +1670,9 @@ int mptcp_retransmit_skb(struct sock *meta_sk, struct sk_buff *skb)
 	 */
 	if (refcount_read(&meta_sk->sk_wmem_alloc) >
 	    min(meta_sk->sk_wmem_queued + (meta_sk->sk_wmem_queued >> 2), meta_sk->sk_sndbuf)) {
-		return -EAGAIN;
+		err = -EAGAIN;
+
+		goto failed;
 	}
 
 	/* We need to make sure that the retransmitted segment can be sent on a
@@ -1699,9 +1719,6 @@ int mptcp_retransmit_skb(struct sock *meta_sk, struct sk_buff *skb)
 	if (!mptcp_skb_entail(subsk, skb, -1))
 		goto failed;
 
-	/* Update global TCP statistics. */
-	MPTCP_INC_STATS(sock_net(meta_sk), MPTCP_MIB_RETRANSSEGS);
-
 	/* Diff to tcp_retransmit_skb */
 
 	/* Save stamp of the first retransmit. */
@@ -1718,6 +1735,12 @@ int mptcp_retransmit_skb(struct sock *meta_sk, struct sk_buff *skb)
 
 failed:
 	NET_INC_STATS(sock_net(meta_sk), LINUX_MIB_TCPRETRANSFAIL);
+	/* Save stamp of the first attempted retransmit. */
+	if (!meta_tp->retrans_stamp) {
+		tcp_mstamp_refresh(meta_tp);
+		meta_tp->retrans_stamp = tcp_time_stamp(meta_tp);
+	}
+
 	return err;
 }
 

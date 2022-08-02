@@ -300,8 +300,10 @@ static void tgl_get_interfaces(struct stmmac_priv *priv, void *bsp_priv,
 		dev_info(priv->device, "Link Speed Mode: 2.5Gbps\n");
 		priv->plat->mdio_bus_data->default_an_inband = false;
 		interface = PHY_INTERFACE_MODE_2500BASEX;
+		priv->plat->fixed_2G5_clock_rate = true;
 	} else {
 		interface = PHY_INTERFACE_MODE_SGMII;
+		priv->plat->fixed_2G5_clock_rate = false;
 	}
 
 	__set_bit(interface, interfaces);

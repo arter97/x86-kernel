@@ -1238,10 +1238,11 @@ static inline int wait_on_page_bit_common(wait_queue_head_t *q,
 	wait_queue_entry_t *wait = &wait_page.wait;
 	bool thrashing = false;
 	unsigned long pflags;
+	bool in_thrashing;
 
 	if (bit_nr == PG_locked &&
 	    !PageUptodate(page) && PageWorkingset(page)) {
-		delayacct_thrashing_start();
+		delayacct_thrashing_start(&in_thrashing);
 		psi_memstall_enter(&pflags);
 		thrashing = true;
 	}
@@ -1341,7 +1342,7 @@ repeat:
 	finish_wait(q, wait);
 
 	if (thrashing) {
-		delayacct_thrashing_end();
+		delayacct_thrashing_end(&in_thrashing);
 		psi_memstall_leave(&pflags);
 	}
 

@@ -1352,6 +1352,11 @@ static inline enum blk_zoned_model bdev_zoned_model(struct block_device *bdev)
 	return blk_queue_zoned_model(q);
 }
 
+static inline unsigned int bdev_zone_no(struct block_device *bdev, sector_t sec)
+{
+	return disk_zone_no(bdev->bd_disk, sec);
+}
+
 static inline int queue_dma_alignment(const struct request_queue *q)
 {
 	return q ? q->limits.dma_alignment : 511;

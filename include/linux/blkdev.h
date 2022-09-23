@@ -635,6 +635,11 @@ static inline bool queue_is_mq(struct request_queue *q)
 	return q->mq_ops;
 }
 
+static inline struct request_queue *bdev_get_queue(struct block_device *bdev)
+{
+	return bdev->bd_queue;	/* this is never NULL */
+}
+
 #ifdef CONFIG_PM
 static inline enum rpm_status queue_rpm_status(struct request_queue *q)
 {
@@ -664,6 +669,31 @@ static inline bool blk_queue_is_zoned(struct request_queue *q)
 	default:
 		return false;
 	}
+}
+
+static inline bool bdev_is_zoned(struct block_device *bdev)
+{
+	struct request_queue *q = bdev_get_queue(bdev);
+
+	return blk_queue_is_zoned(q);
+}
+
+static inline bool bdev_op_is_zoned_write(struct block_device *bdev,
+					  blk_opf_t op)
+{
+	if (!bdev_is_zoned(bdev))
+		return false;
+
+	return op == REQ_OP_WRITE || op == REQ_OP_WRITE_ZEROES;
+}
+
+static inline sector_t bdev_zone_sectors(struct block_device *bdev)
+{
+	struct request_queue *q = bdev_get_queue(bdev);
+
+	if (!blk_queue_is_zoned(q))
+		return 0;
+	return q->limits.chunk_sectors;
 }
 
 #ifdef CONFIG_BLK_DEV_ZONED
@@ -891,11 +921,6 @@ blk_status_t errno_to_blk_status(int errno);
 int bio_poll(struct bio *bio, struct io_comp_batch *iob, unsigned int flags);
 int iocb_bio_iopoll(struct kiocb *kiocb, struct io_comp_batch *iob,
 			unsigned int flags);
-
-static inline struct request_queue *bdev_get_queue(struct block_device *bdev)
-{
-	return bdev->bd_queue;	/* this is never NULL */
-}
 
 /* Helper to convert BLK_ZONE_ZONE_XXX to its string format XXX */
 const char *blk_zone_cond_str(enum blk_zone_cond zone_cond);
@@ -1295,31 +1320,6 @@ static inline enum blk_zoned_model bdev_zoned_model(struct block_device *bdev)
 	struct request_queue *q = bdev_get_queue(bdev);
 
 	return blk_queue_zoned_model(q);
-}
-
-static inline bool bdev_is_zoned(struct block_device *bdev)
-{
-	struct request_queue *q = bdev_get_queue(bdev);
-
-	return blk_queue_is_zoned(q);
-}
-
-static inline bool bdev_op_is_zoned_write(struct block_device *bdev,
-					  blk_opf_t op)
-{
-	if (!bdev_is_zoned(bdev))
-		return false;
-
-	return op == REQ_OP_WRITE || op == REQ_OP_WRITE_ZEROES;
-}
-
-static inline sector_t bdev_zone_sectors(struct block_device *bdev)
-{
-	struct request_queue *q = bdev_get_queue(bdev);
-
-	if (!blk_queue_is_zoned(q))
-		return 0;
-	return q->limits.chunk_sectors;
 }
 
 static inline int queue_dma_alignment(const struct request_queue *q)

@@ -159,6 +159,7 @@ void nvme_mpath_revalidate_paths(struct nvme_ns *ns)
 
 	for_each_node(node)
 		rcu_assign_pointer(head->current_path[node], NULL);
+	kblockd_schedule_work(&head->requeue_work);
 }
 
 static bool nvme_path_is_disabled(struct nvme_ns *ns)
@@ -388,6 +389,7 @@ const struct block_device_operations nvme_ns_head_ops = {
 	.open		= nvme_ns_head_open,
 	.release	= nvme_ns_head_release,
 	.ioctl		= nvme_ns_head_ioctl,
+	.compat_ioctl	= blkdev_compat_ptr_ioctl,
 	.getgeo		= nvme_getgeo,
 	.report_zones	= nvme_ns_head_report_zones,
 	.pr_ops		= &nvme_pr_ops,

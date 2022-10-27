@@ -3318,6 +3318,9 @@ static ssize_t __cifs_writev(
 
 ssize_t cifs_direct_writev(struct kiocb *iocb, struct iov_iter *from)
 {
+	struct file *file = iocb->ki_filp;
+
+	cifs_revalidate_mapping(file->f_inode);
 	return __cifs_writev(iocb, from, true);
 }
 
@@ -4010,6 +4013,15 @@ static ssize_t __cifs_readv(
 			return rc;
 		}
 		len = ctx->len;
+	}
+
+	if (direct) {
+		rc = filemap_write_and_wait_range(file->f_inode->i_mapping,
+						  offset, offset + len - 1);
+		if (rc) {
+			kref_put(&ctx->refcount, cifs_aio_ctx_release);
+			return -EAGAIN;
+		}
 	}
 
 	/* grab a lock here due to read response handlers can access ctx */
@@ -4855,8 +4867,6 @@ void cifs_oplock_break(struct work_struct *work)
 	struct TCP_Server_Info *server = tcon->ses->server;
 	int rc = 0;
 	bool purge_cache = false;
-	bool is_deferred = false;
-	struct cifs_deferred_close *dclose;
 
 	wait_on_bit(&cinode->flags, CIFS_INODE_PENDING_WRITERS,
 			TASK_UNINTERRUPTIBLE);
@@ -4893,22 +4903,6 @@ void cifs_oplock_break(struct work_struct *work)
 
 oplock_break_ack:
 	/*
-	 * When oplock break is received and there are no active
-	 * file handles but cached, then schedule deferred close immediately.
-	 * So, new open will not use cached handle.
-	 */
-	spin_lock(&CIFS_I(inode)->deferred_lock);
-	is_deferred = cifs_is_deferred_close(cfile, &dclose);
-	spin_unlock(&CIFS_I(inode)->deferred_lock);
-	if (is_deferred &&
-	    cfile->deferred_close_scheduled &&
-	    delayed_work_pending(&cfile->deferred)) {
-		if (cancel_delayed_work(&cfile->deferred)) {
-			_cifsFileInfo_put(cfile, false, false);
-			goto oplock_break_done;
-		}
-	}
-	/*
 	 * releasing stale oplock after recent reconnect of smb session using
 	 * a now incorrect file handle is not a data integrity issue but do
 	 * not bother sending an oplock release if session to server still is
@@ -4919,7 +4913,7 @@ oplock_break_ack:
 							     cinode);
 		cifs_dbg(FYI, "Oplock release rc = %d\n", rc);
 	}
-oplock_break_done:
+
 	_cifsFileInfo_put(cfile, false /* do not wait for ourself */, false);
 	cifs_done_oplock_break(cinode);
 }

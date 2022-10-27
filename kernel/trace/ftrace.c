@@ -2901,6 +2901,16 @@ int ftrace_startup(struct ftrace_ops *ops, int command)
 
 	ftrace_startup_enable(command);
 
+	/*
+	 * If ftrace is in an undefined state, we just remove ops from list
+	 * to prevent the NULL pointer, instead of totally rolling it back and
+	 * free trampoline, because those actions could cause further damage.
+	 */
+	if (unlikely(ftrace_disabled)) {
+		__unregister_ftrace_function(ops);
+		return -ENODEV;
+	}
+
 	ops->flags &= ~FTRACE_OPS_FL_ADDING;
 
 	return 0;
@@ -5644,8 +5654,12 @@ int ftrace_regex_release(struct inode *inode, struct file *file)
 
 		if (filter_hash) {
 			orig_hash = &iter->ops->func_hash->filter_hash;
-			if (iter->tr && !list_empty(&iter->tr->mod_trace))
-				iter->hash->flags |= FTRACE_HASH_FL_MOD;
+			if (iter->tr) {
+				if (list_empty(&iter->tr->mod_trace))
+					iter->hash->flags &= ~FTRACE_HASH_FL_MOD;
+				else
+					iter->hash->flags |= FTRACE_HASH_FL_MOD;
+			}
 		} else
 			orig_hash = &iter->ops->func_hash->notrace_hash;
 
@@ -7184,10 +7198,10 @@ static void clear_ftrace_pids(struct trace_array *tr, int type)
 	synchronize_rcu();
 
 	if ((type & TRACE_PIDS) && pid_list)
-		trace_free_pid_list(pid_list);
+		trace_pid_list_free(pid_list);
 
 	if ((type & TRACE_NO_PIDS) && no_pid_list)
-		trace_free_pid_list(no_pid_list);
+		trace_pid_list_free(no_pid_list);
 }
 
 void ftrace_clear_pids(struct trace_array *tr)
@@ -7428,7 +7442,7 @@ pid_write(struct file *filp, const char __user *ubuf,
 
 	if (filtered_pids) {
 		synchronize_rcu();
-		trace_free_pid_list(filtered_pids);
+		trace_pid_list_free(filtered_pids);
 	} else if (pid_list && !other_pids) {
 		/* Register a probe to set whether to ignore the tracing of a task */
 		register_trace_sched_switch(ftrace_filter_pid_sched_switch_probe, tr);

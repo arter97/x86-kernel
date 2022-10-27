@@ -388,12 +388,12 @@ int walk_page_range(struct mm_struct *mm, unsigned long start,
 			walk.vma = NULL;
 			next = end;
 			if (ops->pte_hole)
-				err = ops->pte_hole(start, next, &walk);
+				err = ops->pte_hole(start, next, -1, &walk);
 		} else if (start < vma->vm_start) { /* outside vma */
 			walk.vma = NULL;
 			next = min(end, vma->vm_start);
 			if (ops->pte_hole)
-				err = ops->pte_hole(start, next, &walk);
+				err = ops->pte_hole(start, next, -1, &walk);
 		} else { /* inside vma */
 			walk.vma = vma;
 			next = min(end, vma->vm_end);

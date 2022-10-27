@@ -415,6 +415,8 @@ mptcp_nl_pm_add_raddr(struct mptcp_cb *mpcb, const union inet_addr *addr,
 	struct sk_buff	*msg;
 	void		*hdr;
 
+	mpcb->add_addr_accepted++;
+
 	if (!mptcp_nl_must_notify(MPTCPF_EVENT_ANNOUNCED, mpcb->meta_sk))
 		return;
 
@@ -539,6 +541,8 @@ mptcp_nl_pm_addr_signal(struct sock *sk, unsigned *size,
 		if (skb)
 			priv->announced4 |= (1 << i);
 		*size += MPTCP_SUB_LEN_ADD_ADDR4_ALIGN;
+
+		mpcb->add_addr_signal++;
 	}
 
 #if IS_ENABLED(CONFIG_IPV6)
@@ -556,6 +560,8 @@ mptcp_nl_pm_addr_signal(struct sock *sk, unsigned *size,
 		if (skb)
 			priv->announced6 |= (1 << i);
 		*size += MPTCP_SUB_LEN_ADD_ADDR6_ALIGN;
+
+		mpcb->add_addr_signal++;
 	}
 #endif
 

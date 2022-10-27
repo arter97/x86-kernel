@@ -191,8 +191,13 @@ static void mptcp_addv4_raddr(struct mptcp_cb *mpcb,
 	rem4->bitfield = 0;
 	rem4->retry_bitfield = 0;
 	rem4->rem4_id = id;
-	mpcb->list_rcvd = 1;
 	fmp->rem4_bits |= (1 << i);
+
+	mpcb->list_rcvd = 1;
+
+	/* Don't count the address of the initial subflow */
+	if (id != 0)
+		mpcb->add_addr_accepted++;
 
 	return;
 }
@@ -246,8 +251,13 @@ static void mptcp_addv6_raddr(struct mptcp_cb *mpcb,
 	rem6->bitfield = 0;
 	rem6->retry_bitfield = 0;
 	rem6->rem6_id = id;
-	mpcb->list_rcvd = 1;
 	fmp->rem6_bits |= (1 << i);
+
+	mpcb->list_rcvd = 1;
+
+	/* Don't count the address of the initial subflow */
+	if (id != 0)
+		mpcb->add_addr_accepted++;
 
 	return;
 }
@@ -1611,6 +1621,7 @@ static void full_mesh_addr_signal(struct sock *sk, unsigned *size,
 		if (mpcb->mptcp_ver >= MPTCP_VERSION_1)
 			*size += MPTCP_SUB_LEN_ADD_ADDR4_ALIGN_VER1;
 
+		mpcb->add_addr_signal++;
 		goto skip_ipv6;
 	}
 
@@ -1649,6 +1660,8 @@ skip_ipv4:
 			*size += MPTCP_SUB_LEN_ADD_ADDR6_ALIGN;
 		if (mpcb->mptcp_ver >= MPTCP_VERSION_1)
 			*size += MPTCP_SUB_LEN_ADD_ADDR6_ALIGN_VER1;
+
+		mpcb->add_addr_signal++;
 	}
 
 skip_ipv6:

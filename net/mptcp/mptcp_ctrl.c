@@ -62,6 +62,8 @@
 #include <linux/atomic.h>
 #include <linux/sysctl.h>
 
+#include <uapi/linux/mptcp.h>
+
 static struct kmem_cache *mptcp_sock_cache __read_mostly;
 static struct kmem_cache *mptcp_cb_cache __read_mostly;
 static struct kmem_cache *mptcp_tw_cache __read_mostly;
@@ -1062,6 +1064,305 @@ static void mptcp_sub_inherit_sockopts(const struct sock *meta_sk, struct sock *
 	inet_sk(sub_sk)->recverr = 0;
 }
 
+static void mptcp_diag_fill_info(struct sock *meta_sk, struct mptcp_info_upstream *info)
+{
+	struct tcp_sock *meta_tp;
+	struct mptcp_cb *mpcb;
+	u32 flags = 0;
+
+	memset(info, 0, sizeof(*info));
+
+	lock_sock(meta_sk);
+
+	meta_tp = tcp_sk(meta_sk);
+	mpcb = meta_tp->mpcb;
+
+	/* If connection fell back to regular TCP we need to set the FALLBACK flag */
+	if (!mptcp(meta_tp) || meta_tp->request_mptcp == 0) {
+		if (meta_sk->sk_state != TCP_CLOSE)
+			info->mptcpi_flags |= MPTCP_INFO_FLAG_FALLBACK;
+
+		goto exit;
+	}
+
+	info->mptcpi_subflows = hweight32(mpcb->path_index_bits);
+	info->mptcpi_add_addr_signal = mpcb->add_addr_signal;
+	info->mptcpi_add_addr_accepted = mpcb->add_addr_accepted;
+	info->mptcpi_subflows_max = sizeof(mpcb->path_index_bits) * 8;
+	/* mptcpi_add_addr_signal_max - addresses endpoint added with the 'signal' flag:
+	 *                              doesn't apply to our model, we don't have
+	 *                                $ ip mptcp endpoints add ADDRESS signal
+	 */
+	info->mptcpi_add_addr_accepted_max = U8_MAX;
+
+	if (mptcp_in_infinite_mapping_weak(mpcb))
+		flags |= MPTCP_INFO_FLAG_FALLBACK;
+	if (mpcb->rem_key_set)
+		flags |= MPTCP_INFO_FLAG_REMOTE_KEY_RECEIVED;
+	info->mptcpi_flags = flags;
+
+	info->mptcpi_token = mpcb->mptcp_loc_token;
+	info->mptcpi_write_seq = meta_tp->write_seq;
+	info->mptcpi_snd_una = meta_tp->snd_una;
+	info->mptcpi_rcv_nxt = meta_tp->rcv_nxt;
+
+	/* mptcpi_local_addr_used - hard to apply to our model because we can have
+	 *                          multiple subflows on same local addr
+	 */
+	/* mptcpi_local_addr_max - addresses endpoint added with the 'subflow' flag:
+	 *                         doesn't apply to our model, we don't have
+	 *                           $ ip mptcp endpoints add ADDRESS subflow
+	 */
+	info->mptcpi_csum_enabled = mpcb->dss_csum;
+
+exit:
+	release_sock(meta_sk);
+}
+
+static int mptcp_getsockopt_info(struct sock *meta_sk, char __user *optval,
+				 int __user *optlen)
+{
+	struct mptcp_info_upstream m_info;
+	int len;
+
+	if (get_user(len, optlen))
+		return -EFAULT;
+
+	len = min_t(unsigned int, len, sizeof(struct mptcp_info_upstream));
+
+	mptcp_diag_fill_info(meta_sk, &m_info);
+
+	if (put_user(len, optlen))
+		return -EFAULT;
+
+	if (copy_to_user(optval, &m_info, len))
+		return -EFAULT;
+
+	return 0;
+}
+
+#define MIN_INFO_OPTLEN_SIZE	16
+
+static int mptcp_get_subflow_data(struct mptcp_subflow_data *sfd,
+				  char __user *optval, int __user *optlen)
+{
+	int len, copylen;
+
+	if (get_user(len, optlen))
+		return -EFAULT;
+
+	/* if mptcp_subflow_data size is changed, need to adjust
+	 * this function to deal with programs using old version.
+	 */
+	BUILD_BUG_ON(sizeof(*sfd) != MIN_INFO_OPTLEN_SIZE);
+
+	if (len < MIN_INFO_OPTLEN_SIZE)
+		return -EINVAL;
+
+	memset(sfd, 0, sizeof(*sfd));
+
+	copylen = min_t(unsigned int, len, sizeof(*sfd));
+	if (copy_from_user(sfd, optval, copylen))
+		return -EFAULT;
+
+	/* size_subflow_data is u32, but len is signed */
+	if (sfd->size_subflow_data > INT_MAX ||
+	    sfd->size_user > INT_MAX)
+		return -EINVAL;
+
+	if (sfd->size_subflow_data < MIN_INFO_OPTLEN_SIZE ||
+	    sfd->size_subflow_data > len)
+		return -EINVAL;
+
+	if (sfd->num_subflows || sfd->size_kernel)
+		return -EINVAL;
+
+	return len - sfd->size_subflow_data;
+}
+
+static int mptcp_put_subflow_data(struct mptcp_subflow_data *sfd,
+				  char __user *optval,
+				  u32 copied,
+				  int __user *optlen)
+{
+	u32 copylen = min_t(u32, sfd->size_subflow_data, sizeof(*sfd));
+
+	if (copied)
+		copied += sfd->size_subflow_data;
+	else
+		copied = copylen;
+
+	if (put_user(copied, optlen))
+		return -EFAULT;
+
+	if (copy_to_user(optval, sfd, copylen))
+		return -EFAULT;
+
+	return 0;
+}
+
+static int mptcp_getsockopt_tcpinfo(struct sock *meta_sk, char __user *optval,
+				    int __user *optlen)
+{
+	unsigned int sfcount = 0, copied = 0;
+	struct mptcp_subflow_data sfd;
+	struct mptcp_tcp_sock *mptcp;
+	char __user *infoptr;
+	int len;
+
+	len = mptcp_get_subflow_data(&sfd, optval, optlen);
+	if (len < 0)
+		return len;
+
+	sfd.size_kernel = sizeof(struct tcp_info);
+	sfd.size_user = min_t(unsigned int, sfd.size_user,
+			      sizeof(struct tcp_info));
+
+	infoptr = optval + sfd.size_subflow_data;
+
+	lock_sock(meta_sk);
+
+	mptcp_for_each_sub(tcp_sk(meta_sk)->mpcb, mptcp) {
+		struct sock *ssk = mptcp_to_sock(mptcp);
+
+		++sfcount;
+
+		if (len && len >= sfd.size_user) {
+			struct tcp_info info;
+
+			tcp_get_info(ssk, &info, true);
+
+			if (copy_to_user(infoptr, &info, sfd.size_user)) {
+				release_sock(meta_sk);
+				return -EFAULT;
+			}
+
+			infoptr += sfd.size_user;
+			copied += sfd.size_user;
+			len -= sfd.size_user;
+		}
+	}
+
+	release_sock(meta_sk);
+
+	sfd.num_subflows = sfcount;
+
+	if (mptcp_put_subflow_data(&sfd, optval, copied, optlen))
+		return -EFAULT;
+
+	return 0;
+}
+
+static void mptcp_get_sub_addrs(const struct sock *sk, struct mptcp_subflow_addrs *a)
+{
+	struct inet_sock *inet = inet_sk(sk);
+
+	memset(a, 0, sizeof(*a));
+
+	if (sk->sk_family == AF_INET) {
+		a->sin_local.sin_family = AF_INET;
+		a->sin_local.sin_port = inet->inet_sport;
+		a->sin_local.sin_addr.s_addr = inet->inet_rcv_saddr;
+
+		if (!a->sin_local.sin_addr.s_addr)
+			a->sin_local.sin_addr.s_addr = inet->inet_saddr;
+
+		a->sin_remote.sin_family = AF_INET;
+		a->sin_remote.sin_port = inet->inet_dport;
+		a->sin_remote.sin_addr.s_addr = inet->inet_daddr;
+#if IS_ENABLED(CONFIG_IPV6)
+	} else if (sk->sk_family == AF_INET6) {
+		const struct ipv6_pinfo *np = inet6_sk(sk);
+
+		if (WARN_ON_ONCE(!np))
+			return;
+
+		a->sin6_local.sin6_family = AF_INET6;
+		a->sin6_local.sin6_port = inet->inet_sport;
+
+		if (ipv6_addr_any(&sk->sk_v6_rcv_saddr))
+			a->sin6_local.sin6_addr = np->saddr;
+		else
+			a->sin6_local.sin6_addr = sk->sk_v6_rcv_saddr;
+
+		a->sin6_remote.sin6_family = AF_INET6;
+		a->sin6_remote.sin6_port = inet->inet_dport;
+		a->sin6_remote.sin6_addr = sk->sk_v6_daddr;
+#endif
+	}
+}
+
+static int mptcp_getsockopt_subflow_addrs(struct sock *meta_sk,
+					  char __user *optval,
+					  int __user *optlen)
+{
+	unsigned int sfcount = 0, copied = 0;
+	struct mptcp_subflow_data sfd;
+	struct mptcp_tcp_sock *mptcp;
+	char __user *addrptr;
+	int len;
+
+	len = mptcp_get_subflow_data(&sfd, optval, optlen);
+	if (len < 0)
+		return len;
+
+	sfd.size_kernel = sizeof(struct mptcp_subflow_addrs);
+	sfd.size_user = min_t(unsigned int, sfd.size_user,
+			      sizeof(struct mptcp_subflow_addrs));
+
+	addrptr = optval + sfd.size_subflow_data;
+
+	lock_sock(meta_sk);
+
+	mptcp_for_each_sub(tcp_sk(meta_sk)->mpcb, mptcp) {
+		struct sock *ssk = mptcp_to_sock(mptcp);
+
+		++sfcount;
+
+		if (len && len >= sfd.size_user) {
+			struct mptcp_subflow_addrs a;
+
+			mptcp_get_sub_addrs(ssk, &a);
+
+			if (copy_to_user(addrptr, &a, sfd.size_user)) {
+				release_sock(meta_sk);
+				return -EFAULT;
+			}
+
+			addrptr += sfd.size_user;
+			copied += sfd.size_user;
+			len -= sfd.size_user;
+		}
+	}
+
+	release_sock(meta_sk);
+
+	sfd.num_subflows = sfcount;
+
+	if (mptcp_put_subflow_data(&sfd, optval, copied, optlen))
+		return -EFAULT;
+
+	return 0;
+}
+
+int mptcp_getsockopt(struct sock *meta_sk, int level, int optname,
+		     char __user *optval, int __user *optlen)
+{
+	if (level != SOL_MPTCP)
+		return -EOPNOTSUPP;
+
+	switch (optname) {
+	case MPTCP_INFO:
+		return mptcp_getsockopt_info(meta_sk, optval, optlen);
+	case MPTCP_TCPINFO:
+		return mptcp_getsockopt_tcpinfo(meta_sk, optval, optlen);
+	case MPTCP_SUBFLOW_ADDRS:
+		return mptcp_getsockopt_subflow_addrs(meta_sk, optval, optlen);
+	}
+
+	return -EOPNOTSUPP;
+}
+
 void mptcp_prepare_for_backlog(struct sock *sk, struct sk_buff *skb)
 {
 	/* In case of success (in mptcp_backlog_rcv) and error (in kfree_skb) of
@@ -1232,7 +1533,6 @@ static void mptcp_icsk_forced_close(struct sock *sk)
 	/* The below has to be done to allow calling inet_csk_destroy_sock */
 	sock_set_flag(sk, SOCK_DEAD);
 	percpu_counter_inc(sk->sk_prot->orphan_count);
-	inet_sk(sk)->inet_num = 0;
 
 	tcp_done(sk);
 
@@ -2117,9 +2417,6 @@ void mptcp_disconnect(struct sock *meta_sk)
 	mptcp_for_each_sub_safe(meta_tp->mpcb, mptcp, tmp) {
 		struct sock *subsk = mptcp_to_sock(mptcp);
 
-		if (spin_is_locked(&subsk->sk_lock.slock))
-			bh_unlock_sock(subsk);
-
 		tcp_sk(subsk)->tcp_disconnect = 1;
 
 		meta_sk->sk_prot->disconnect(subsk, O_NONBLOCK);
@@ -2270,9 +2567,6 @@ static int __mptcp_check_req_master(struct sock *child,
 	 */
 	mptcp_reqsk_remove_tk(req);
 
-	/* Hold when creating the meta-sk in tcp_vX_syn_recv_sock. */
-	sock_put(meta_sk);
-
 	return 0;
 }
 
@@ -2349,9 +2643,7 @@ int mptcp_check_req_master(struct sock *sk, struct sock *child,
 		reqsk_queue_removed(&inet_csk(sk)->icsk_accept_queue, req);
 		if (!inet_csk_reqsk_queue_add(sk, req, meta_sk)) {
 			bh_unlock_sock(meta_sk);
-			/* No sock_put() of the meta needed. The reference has
-			 * already been dropped in __mptcp_check_req_master().
-			 */
+			sock_put(meta_sk);
 			sock_put(child);
 			return -1;
 		}
@@ -2361,13 +2653,13 @@ int mptcp_check_req_master(struct sock *sk, struct sock *child,
 		tcp_sk(meta_sk)->tsoffset = tsoff;
 		if (!inet_csk_reqsk_queue_add(sk, req, meta_sk)) {
 			bh_unlock_sock(meta_sk);
-			/* No sock_put() of the meta needed. The reference has
-			 * already been dropped in __mptcp_check_req_master().
-			 */
+			sock_put(meta_sk);
 			sock_put(child);
 			return -1;
 		}
 	}
+
+	sock_put(meta_sk);
 
 	return 0;
 }
@@ -3302,3 +3594,15 @@ mptcp_cb_cache_failed:
 mptcp_sock_cache_failed:
 	mptcp_init_failed = true;
 }
+
+#ifdef CONFIG_MPTCP_DEBUG_LOCK
+void mptcp_check_lock(struct sock *sk)
+{
+	struct tcp_sock *tp = tcp_sk(sk);
+	/* make sure the meta lock is held when we hold the sublock */
+	if (mptcp(tp) && !is_meta_tp(tp) && tp->meta_sk)
+		WARN_ON(!spin_is_locked(&tp->meta_sk->sk_lock.slock) &&
+			!sock_owned_by_user(tp->meta_sk));
+}
+EXPORT_SYMBOL(mptcp_check_lock);
+#endif

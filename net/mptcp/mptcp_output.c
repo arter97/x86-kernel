@@ -1615,7 +1615,7 @@ static void mptcp_ack_retransmit_timer(struct sock *sk)
 	icsk->icsk_rto = min(icsk->icsk_rto << 1, TCP_RTO_MAX);
 	sk_reset_timer(sk, &tp->mptcp->mptcp_ack_timer,
 		       jiffies + icsk->icsk_rto);
-	if (retransmits_timed_out(sk, net->ipv4.sysctl_tcp_retries1 + 1, 0))
+	if (retransmits_timed_out(sk, READ_ONCE(net->ipv4.sysctl_tcp_retries1) + 1, 0))
 		__sk_dst_reset(sk);
 
 out:;
@@ -1845,7 +1845,7 @@ out_reset_timer:
 	 * linear-timeout retransmissions into a black hole
 	 */
 	if (meta_sk->sk_state == TCP_ESTABLISHED &&
-	    (meta_tp->thin_lto || sock_net(meta_sk)->ipv4.sysctl_tcp_thin_linear_timeouts) &&
+	    (meta_tp->thin_lto || READ_ONCE(sock_net(meta_sk)->ipv4.sysctl_tcp_thin_linear_timeouts)) &&
 	    tcp_stream_is_thin(meta_tp) &&
 	    meta_icsk->icsk_retransmits <= TCP_THIN_LINEAR_RETRIES) {
 		meta_icsk->icsk_backoff = 0;

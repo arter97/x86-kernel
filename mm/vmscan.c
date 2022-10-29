@@ -4748,7 +4748,7 @@ static int evict_pages(struct lruvec *lruvec, struct scan_control *sc, int swapp
 
 		if (PageReclaim(page) && (PageDirty(page) || PageWriteback(page)))
 			ClearPageActive(page);
-		else if (page_is_file_lru(page) || PageSwapCache(page))
+		else
 			SetPageActive(page);
 	}
 

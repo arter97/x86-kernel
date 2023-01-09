@@ -2417,6 +2417,8 @@ void mptcp_disconnect(struct sock *meta_sk)
 	mptcp_for_each_sub_safe(meta_tp->mpcb, mptcp, tmp) {
 		struct sock *subsk = mptcp_to_sock(mptcp);
 
+		BUG_ON(spin_is_locked(&subsk->sk_lock.slock));
+
 		tcp_sk(subsk)->tcp_disconnect = 1;
 
 		meta_sk->sk_prot->disconnect(subsk, O_NONBLOCK);
@@ -2528,12 +2530,14 @@ static int __mptcp_check_req_master(struct sock *child,
 		 * must still remove it.
 		 */
 		MPTCP_INC_STATS(sock_net(meta_sk), MPTCP_MIB_MPCAPABLEPASSIVEFALLBACK);
-		mptcp_reqsk_remove_tk(req);
 		return 1;
 	}
 
 	/* mopt can be NULL when coming from FAST-OPEN */
-	if (mopt && mopt->saw_mpc && mtreq->mptcp_ver == MPTCP_VERSION_1) {
+	if (mopt && mtreq->mptcp_ver == MPTCP_VERSION_1) {
+		if (!mopt->saw_mpc)
+			return 1;
+
 		mtreq->mptcp_rem_key = mopt->mptcp_sender_key;
 		mtreq->rem_key_set = 1;
 	}
@@ -2561,11 +2565,6 @@ static int __mptcp_check_req_master(struct sock *child,
 
 	mpcb->dss_csum = mtreq->dss_csum;
 	mpcb->server_side = 1;
-
-	/* Needs to be done here additionally, because when accepting a
-	 * new connection we pass by __reqsk_free and not reqsk_free.
-	 */
-	mptcp_reqsk_remove_tk(req);
 
 	return 0;
 }

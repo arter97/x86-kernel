@@ -142,6 +142,18 @@ choice
 		  This is the redundant scheduler, sending packets redundantly over
 		  all the subflows.
 
+	config DEFAULT_BLEST
+		bool "BLEST" if MPTCP_BLEST=y
+		---help---
+		  This is the BLEST scheduler, sending packets following the
+		  BLocking ESTimation-based algorithm.
+
+	config DEFAULT_ECF
+		bool "ECF" if MPTCP_ECF=y
+		---help---
+		  This is the ECF scheduler, sending packets following the
+		  Earliest Completion First algorithm.
+
 endchoice
 endif
 
@@ -151,6 +163,8 @@ config DEFAULT_MPTCP_SCHED
 	default "default" if DEFAULT_SCHEDULER
 	default "roundrobin" if DEFAULT_ROUNDROBIN
 	default "redundant" if DEFAULT_REDUNDANT
+	default "BLEST" if DEFAULT_BLEST
+	default "ECF" if DEFAULT_ECF
 	default "default"
 
 config MPTCP_DEBUG_LOCK

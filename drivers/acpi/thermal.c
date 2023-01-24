@@ -30,6 +30,7 @@
 #include <linux/workqueue.h>
 #include <linux/uaccess.h>
 #include <linux/units.h>
+#include <linux/suspend.h>
 
 #define ACPI_THERMAL_CLASS		"thermal_zone"
 #define ACPI_THERMAL_DEVICE_NAME	"Thermal Zone"
@@ -132,6 +133,7 @@ struct acpi_thermal {
 	struct work_struct thermal_check_work;
 	struct mutex thermal_check_lock;
 	refcount_t thermal_check_count;
+	struct delayed_work suspend_work;
 };
 
 /* --------------------------------------------------------------------------
@@ -541,20 +543,36 @@ static void acpi_thermal_zone_device_hot(struct thermal_zone_device *thermal)
 {
 	struct acpi_thermal *tz = thermal_zone_device_priv(thermal);
 
+	pr_warn("device is hot: temperature = %ld C, last_temperature = %ld C\n",
+		deci_kelvin_to_celsius(tz->temperature),
+		deci_kelvin_to_celsius(tz->last_temperature));
+
 	acpi_bus_generate_netlink_event(tz->device->pnp.device_class,
 					dev_name(&tz->device->dev),
 					ACPI_THERMAL_NOTIFY_HOT, 1);
+}
+
+static void suspend_fn(struct work_struct *unused)
+{
+	pr_warn("entering suspend to reset ACPI sensors\n");
+	pm_suspend(PM_SUSPEND_MEM);
 }
 
 static void acpi_thermal_zone_device_critical(struct thermal_zone_device *thermal)
 {
 	struct acpi_thermal *tz = thermal_zone_device_priv(thermal);
 
+	pr_warn("device is critically hot: temperature = %ld C, last_temperature = %ld C\n",
+		deci_kelvin_to_celsius(tz->temperature),
+		deci_kelvin_to_celsius(tz->last_temperature));
+
+	queue_delayed_work(system_highpri_wq, &tz->suspend_work, HZ);
+
 	acpi_bus_generate_netlink_event(tz->device->pnp.device_class,
 					dev_name(&tz->device->dev),
-					ACPI_THERMAL_NOTIFY_CRITICAL, 1);
+					ACPI_THERMAL_NOTIFY_HOT, 1);
 
-	thermal_zone_device_critical(thermal);
+	// thermal_zone_device_critical(thermal);
 }
 
 static int acpi_thermal_cooling_device_cb(struct thermal_zone_device *thermal,
@@ -799,14 +817,19 @@ static void acpi_thermal_notify(acpi_handle handle, u32 event, void *data)
 
 	switch (event) {
 	case ACPI_THERMAL_NOTIFY_TEMPERATURE:
+		acpi_handle_info(device->handle, "ACPI_THERMAL_NOTIFY_TEMPERATURE triggered\n");
 		acpi_queue_thermal_check(tz);
 		break;
 	case ACPI_THERMAL_NOTIFY_THRESHOLDS:
+		acpi_handle_info(device->handle, "ACPI_THERMAL_NOTIFY_THRESHOLDS triggered\n");
+		acpi_thermal_trips_update(tz, event);
+		break;
 	case ACPI_THERMAL_NOTIFY_DEVICES:
+		acpi_handle_info(device->handle, "ACPI_THERMAL_NOTIFY_DEVICES triggered\n");
 		acpi_thermal_trips_update(tz, event);
 		break;
 	default:
-		acpi_handle_debug(device->handle, "Unsupported event [0x%x]\n",
+		acpi_handle_info(device->handle, "Unsupported event [0x%x]\n",
 				  event);
 		break;
 	}
@@ -899,6 +922,7 @@ static void acpi_thermal_check_fn(struct work_struct *work)
 {
 	struct acpi_thermal *tz = container_of(work, struct acpi_thermal,
 					       thermal_check_work);
+	int temperature = -EINVAL;
 
 	/*
 	 * In general, it is not sufficient to check the pending bit, because
@@ -918,6 +942,9 @@ static void acpi_thermal_check_fn(struct work_struct *work)
 	refcount_inc(&tz->thermal_check_count);
 
 	mutex_unlock(&tz->thermal_check_lock);
+
+	thermal_get_temp(tz->thermal_zone, &temperature);
+	pr_info("%s: temperature = %d C\n", __func__, temperature);
 }
 
 static int acpi_thermal_add(struct acpi_device *device)
@@ -936,6 +963,7 @@ static int acpi_thermal_add(struct acpi_device *device)
 	strcpy(tz->name, device->pnp.bus_id);
 	strcpy(acpi_device_name(device), ACPI_THERMAL_DEVICE_NAME);
 	strcpy(acpi_device_class(device), ACPI_THERMAL_CLASS);
+	INIT_DELAYED_WORK(&tz->suspend_work, suspend_fn);
 	device->driver_data = tz;
 
 	result = acpi_thermal_get_info(tz);

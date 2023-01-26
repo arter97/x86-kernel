@@ -20459,7 +20459,7 @@ static ssize_t sg_en_store(struct device *dev, struct device_attribute *attr,
 	}
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,26)
-	netif_set_tso_max_size(netdev, tso_size);
+	netif_set_gso_max_size(netdev, tso_size);
 #endif /* LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,26) */
 
 	return count;
@@ -20622,7 +20622,7 @@ static int rtl8152_probe(struct usb_interface *intf,
 	netdev->ethtool_ops = &ops;
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,26)
 	if (!tp->sg_use)
-		netif_set_tso_max_size(netdev, RTL_LIMITED_TSO_SIZE);
+		netif_set_gso_max_size(netdev, RTL_LIMITED_TSO_SIZE);
 #else
 	netdev->features &= ~(NETIF_F_TSO | NETIF_F_TSO6);
 #endif /* LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,26) */
@@ -20701,9 +20701,9 @@ static int rtl8152_probe(struct usb_interface *intf,
 	usb_set_intfdata(intf, tp);
 
 	if (tp->support_2500full)
-		netif_napi_add_weight(netdev, &tp->napi, r8152_poll, 256);
+		netif_napi_add(netdev, &tp->napi, r8152_poll, 256);
 	else
-		netif_napi_add_weight(netdev, &tp->napi, r8152_poll, 64);
+		netif_napi_add(netdev, &tp->napi, r8152_poll, 64);
 
 	ret = register_netdev(netdev);
 	if (ret != 0) {

@@ -528,59 +528,39 @@ mptcp_nl_pm_addr_signal(struct sock *sk, unsigned *size,
 	int			remove_addr_len;
 
 	unannounced = (~priv->announced4) & priv->loc4_bits;
-	if (unannounced &&
-	    MAX_TCP_OPTION_SPACE - *size >= MPTCP_SUB_LEN_ADD_ADDR4_ALIGN) {
+	if (unannounced && mptcp_options_add_addr4_enough_space(mpcb, *size)) {
 		int i = mptcp_nl_find_free_index(~unannounced);
 
-		opts->options		|= OPTION_MPTCP;
-		opts->mptcp_options	|= OPTION_ADD_ADDR;
-		opts->add_addr4.addr_id = priv->locaddr4[i].loc4_id;
-		opts->add_addr4.addr	= priv->locaddr4[i].addr;
-		opts->add_addr_v4	= 1;
+		*size += mptcp_options_fill_add_addr4(mpcb, opts,
+						      &priv->locaddr4[i]);
 
 		if (skb)
 			priv->announced4 |= (1 << i);
-		*size += MPTCP_SUB_LEN_ADD_ADDR4_ALIGN;
-
-		mpcb->add_addr_signal++;
 	}
 
 #if IS_ENABLED(CONFIG_IPV6)
 	unannounced = (~priv->announced6) & priv->loc6_bits;
-	if (unannounced &&
-	    MAX_TCP_OPTION_SPACE - *size >= MPTCP_SUB_LEN_ADD_ADDR6_ALIGN) {
+	if (unannounced && mptcp_options_add_addr6_enough_space(mpcb, *size)) {
 		int i = mptcp_nl_find_free_index(~unannounced);
 
-		opts->options		|= OPTION_MPTCP;
-		opts->mptcp_options	|= OPTION_ADD_ADDR;
-		opts->add_addr6.addr_id = priv->locaddr6[i].loc6_id;
-		opts->add_addr6.addr	= priv->locaddr6[i].addr;
-		opts->add_addr_v6	= 1;
+		*size += mptcp_options_fill_add_addr6(mpcb, opts,
+						      &priv->locaddr6[i]);
 
 		if (skb)
 			priv->announced6 |= (1 << i);
-		*size += MPTCP_SUB_LEN_ADD_ADDR6_ALIGN;
-
-		mpcb->add_addr_signal++;
 	}
 #endif
 
-	if (likely(!priv->remove_addrs))
-		goto exit;
+	if (unlikely(priv->remove_addrs) &&
+	    mptcp_options_rm_addr_enough_space(priv->remove_addrs,
+					       &remove_addr_len, *size)) {
+		*size += mptcp_options_fill_rm_addr(opts, priv->remove_addrs,
+						    remove_addr_len);
 
-	remove_addr_len = mptcp_sub_len_remove_addr_align(priv->remove_addrs);
-	if (MAX_TCP_OPTION_SPACE - *size < remove_addr_len)
-		goto exit;
+		if (skb)
+			priv->remove_addrs = 0;
+	}
 
-	opts->options		|= OPTION_MPTCP;
-	opts->mptcp_options	|= OPTION_REMOVE_ADDR;
-	opts->remove_addrs	= priv->remove_addrs;
-
-	if (skb)
-		priv->remove_addrs = 0;
-	*size += remove_addr_len;
-
-exit:
 	mpcb->addr_signal = !!((~priv->announced4) & priv->loc4_bits ||
 #if IS_ENABLED(CONFIG_IPV6)
 			       (~priv->announced6) & priv->loc6_bits ||
@@ -700,11 +680,15 @@ mptcp_nl_genl_announce(struct sk_buff *skb, struct genl_info *info)
 
 	mpcb->addr_signal = 1;
 
-	rcu_read_lock_bh();
-	subsk = mptcp_select_ack_sock(meta_sk);
-	if (subsk)
-		tcp_send_ack(subsk);
-	rcu_read_unlock_bh();
+	/* Only version 0 can send ADD_ADDR right at the beginning */
+	if (mpcb->mptcp_ver < MPTCP_VERSION_1 ||
+	    tcp_sk(meta_sk)->mptcp->fully_established) {
+		rcu_read_lock_bh();
+		subsk = mptcp_select_ack_sock(meta_sk);
+		if (subsk)
+			tcp_send_ack(subsk);
+		rcu_read_unlock_bh();
+	}
 
 exit:
 	release_sock(meta_sk);

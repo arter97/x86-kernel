@@ -215,7 +215,6 @@ struct mptcp_tw {
 	   in_list:1;
 };
 
-#define MPTCP_PM_NAME_MAX 16
 struct mptcp_pm_ops {
 	struct list_head list;
 
@@ -1362,6 +1361,48 @@ static inline int mptcp_subflow_count(const struct mptcp_cb *mpcb)
 
 	return i;
 }
+
+static inline bool mptcp_options_add_addr4_enough_space(const struct mptcp_cb *mpcb,
+							unsigned int size)
+{
+	unsigned int remaining = MAX_TCP_OPTION_SPACE - size;
+
+	if (mpcb->mptcp_ver < MPTCP_VERSION_1)
+		return remaining >= MPTCP_SUB_LEN_ADD_ADDR4_ALIGN;
+
+	return remaining >= MPTCP_SUB_LEN_ADD_ADDR4_ALIGN_VER1;
+}
+
+static inline bool mptcp_options_add_addr6_enough_space(const struct mptcp_cb *mpcb,
+							unsigned int size)
+{
+	unsigned int remaining = MAX_TCP_OPTION_SPACE - size;
+
+	if (mpcb->mptcp_ver < MPTCP_VERSION_1)
+		return remaining >= MPTCP_SUB_LEN_ADD_ADDR6_ALIGN;
+
+	return remaining >= MPTCP_SUB_LEN_ADD_ADDR6_ALIGN_VER1;
+}
+
+static inline bool mptcp_options_rm_addr_enough_space(u16 remove_addrs,
+						      int *remove_addr_len,
+						      unsigned int size)
+{
+	unsigned int remaining = MAX_TCP_OPTION_SPACE - size;
+
+	*remove_addr_len = mptcp_sub_len_remove_addr_align(remove_addrs);
+
+	return remaining >= *remove_addr_len;
+}
+
+unsigned int mptcp_options_fill_add_addr4(struct mptcp_cb *mpcb,
+					  struct tcp_out_options *opts,
+					  struct mptcp_loc4 *loc);
+unsigned int mptcp_options_fill_add_addr6(struct mptcp_cb *mpcb,
+					  struct tcp_out_options *opts,
+					  struct mptcp_loc6 *loc);
+unsigned int mptcp_options_fill_rm_addr(struct tcp_out_options *opts,
+					u16 remove_addrs, int remove_addr_len);
 
 /* TCP and MPTCP mpc flag-depending functions */
 u16 mptcp_select_window(struct sock *sk);

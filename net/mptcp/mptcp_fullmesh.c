@@ -1591,41 +1591,17 @@ static void full_mesh_addr_signal(struct sock *sk, unsigned *size,
 
 	/* IPv4 */
 	unannouncedv4 = (~fmp->announced_addrs_v4) & mptcp_local->loc4_bits;
-	if (unannouncedv4 &&
-	    ((mpcb->mptcp_ver == MPTCP_VERSION_0 &&
-	    MAX_TCP_OPTION_SPACE - *size >= MPTCP_SUB_LEN_ADD_ADDR4_ALIGN) ||
-	    (mpcb->mptcp_ver >= MPTCP_VERSION_1 &&
-	    MAX_TCP_OPTION_SPACE - *size >= MPTCP_SUB_LEN_ADD_ADDR4_ALIGN_VER1))) {
+	if (unannouncedv4 && mptcp_options_add_addr4_enough_space(mpcb, *size)) {
 		int ind = mptcp_find_free_index(~unannouncedv4);
 
-		opts->options |= OPTION_MPTCP;
-		opts->mptcp_options |= OPTION_ADD_ADDR;
-		opts->add_addr4.addr_id = mptcp_local->locaddr4[ind].loc4_id;
-		opts->add_addr4.addr = mptcp_local->locaddr4[ind].addr;
-		opts->add_addr_v4 = 1;
-		if (mpcb->mptcp_ver >= MPTCP_VERSION_1) {
-			u8 mptcp_hash_mac[SHA256_DIGEST_SIZE];
-			u16 port = 0;
-
-			mptcp_hmac(mpcb->mptcp_ver, (u8 *)&mpcb->mptcp_loc_key,
-				   (u8 *)&mpcb->mptcp_rem_key, mptcp_hash_mac, 3,
-				   1, (u8 *)&mptcp_local->locaddr4[ind].loc4_id,
-				   4, (u8 *)&opts->add_addr4.addr.s_addr,
-				   2, (u8 *)&port);
-			opts->add_addr4.trunc_mac = *(u64 *)&mptcp_hash_mac[SHA256_DIGEST_SIZE - sizeof(u64)];
-		}
+		*size += mptcp_options_fill_add_addr4(mpcb, opts,
+						      &mptcp_local->locaddr4[ind]);
 
 		if (skb) {
 			fmp->announced_addrs_v4 |= (1 << ind);
 			fmp->add_addr--;
 		}
 
-		if (mpcb->mptcp_ver < MPTCP_VERSION_1)
-			*size += MPTCP_SUB_LEN_ADD_ADDR4_ALIGN;
-		if (mpcb->mptcp_ver >= MPTCP_VERSION_1)
-			*size += MPTCP_SUB_LEN_ADD_ADDR4_ALIGN_VER1;
-
-		mpcb->add_addr_signal++;
 		goto skip_ipv6;
 	}
 
@@ -1634,40 +1610,16 @@ static void full_mesh_addr_signal(struct sock *sk, unsigned *size,
 skip_ipv4:
 	/* IPv6 */
 	unannouncedv6 = (~fmp->announced_addrs_v6) & mptcp_local->loc6_bits;
-	if (unannouncedv6 &&
-	    ((mpcb->mptcp_ver == MPTCP_VERSION_0 &&
-	    MAX_TCP_OPTION_SPACE - *size >= MPTCP_SUB_LEN_ADD_ADDR6_ALIGN) ||
-	    (mpcb->mptcp_ver >= MPTCP_VERSION_1 &&
-	    MAX_TCP_OPTION_SPACE - *size >= MPTCP_SUB_LEN_ADD_ADDR6_ALIGN_VER1))) {
+	if (unannouncedv6 && mptcp_options_add_addr6_enough_space(mpcb, *size)) {
 		int ind = mptcp_find_free_index(~unannouncedv6);
 
-		opts->options |= OPTION_MPTCP;
-		opts->mptcp_options |= OPTION_ADD_ADDR;
-		opts->add_addr6.addr_id = mptcp_local->locaddr6[ind].loc6_id;
-		opts->add_addr6.addr = mptcp_local->locaddr6[ind].addr;
-		opts->add_addr_v6 = 1;
-		if (mpcb->mptcp_ver >= MPTCP_VERSION_1) {
-			u8 mptcp_hash_mac[SHA256_DIGEST_SIZE];
-			u16 port = 0;
-
-			mptcp_hmac(mpcb->mptcp_ver, (u8 *)&mpcb->mptcp_loc_key,
-				   (u8 *)&mpcb->mptcp_rem_key, mptcp_hash_mac, 3,
-				   1, (u8 *)&mptcp_local->locaddr6[ind].loc6_id,
-				   16, (u8 *)opts->add_addr6.addr.s6_addr,
-				   2, (u8 *)&port);
-			opts->add_addr6.trunc_mac = *(u64 *)&mptcp_hash_mac[SHA256_DIGEST_SIZE - sizeof(u64)];
-		}
+		*size += mptcp_options_fill_add_addr6(mpcb, opts,
+						      &mptcp_local->locaddr6[ind]);
 
 		if (skb) {
 			fmp->announced_addrs_v6 |= (1 << ind);
 			fmp->add_addr--;
 		}
-		if (mpcb->mptcp_ver < MPTCP_VERSION_1)
-			*size += MPTCP_SUB_LEN_ADD_ADDR6_ALIGN;
-		if (mpcb->mptcp_ver >= MPTCP_VERSION_1)
-			*size += MPTCP_SUB_LEN_ADD_ADDR6_ALIGN_VER1;
-
-		mpcb->add_addr_signal++;
 	}
 
 skip_ipv6:
@@ -1677,21 +1629,16 @@ skip_ipv6:
 		fmp->add_addr--;
 
 remove_addr:
-	if (likely(!fmp->remove_addrs))
-		goto exit;
+	if (unlikely(fmp->remove_addrs) &&
+	    mptcp_options_rm_addr_enough_space(fmp->remove_addrs,
+					       &remove_addr_len, *size)) {
+		*size += mptcp_options_fill_rm_addr(opts, fmp->remove_addrs,
+						    remove_addr_len);
 
-	remove_addr_len = mptcp_sub_len_remove_addr_align(fmp->remove_addrs);
-	if (MAX_TCP_OPTION_SPACE - *size < remove_addr_len)
-		goto exit;
+		if (skb)
+			fmp->remove_addrs = 0;
+	}
 
-	opts->options |= OPTION_MPTCP;
-	opts->mptcp_options |= OPTION_REMOVE_ADDR;
-	opts->remove_addrs = fmp->remove_addrs;
-	*size += remove_addr_len;
-	if (skb)
-		fmp->remove_addrs = 0;
-
-exit:
 	mpcb->addr_signal = !!(fmp->add_addr || fmp->remove_addrs);
 }
 

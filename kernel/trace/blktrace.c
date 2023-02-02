@@ -734,8 +734,6 @@ int blk_trace_ioctl(struct block_device *bdev, unsigned cmd, char __user *arg)
 	char b[BDEVNAME_SIZE];
 
 	q = bdev_get_queue(bdev);
-	if (!q)
-		return -ENXIO;
 
 	mutex_lock(&q->debugfs_mutex);
 

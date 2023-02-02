@@ -342,8 +342,6 @@ int blkdev_report_zones_ioctl(struct block_device *bdev, fmode_t mode,
 		return -EINVAL;
 
 	q = bdev_get_queue(bdev);
-	if (!q)
-		return -ENXIO;
 
 	if (!bdev_is_zoned(bdev))
 		return -ENOTTY;
@@ -400,8 +398,6 @@ int blkdev_zone_mgmt_ioctl(struct block_device *bdev, fmode_t mode,
 		return -EINVAL;
 
 	q = bdev_get_queue(bdev);
-	if (!q)
-		return -ENXIO;
 
 	if (!bdev_is_zoned(bdev))
 		return -ENOTTY;

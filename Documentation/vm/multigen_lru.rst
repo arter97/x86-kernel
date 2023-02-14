@@ -103,7 +103,8 @@ moving across tiers only involves atomic operations on
 ``page->flags`` and therefore has a negligible cost. A feedback loop
 modeled after the PID controller monitors refaults over all the tiers
 from anon and file types and decides which tiers from which types to
-evict or protect.
+evict or protect. The desired effect is to balance refault percentages
+between anon and file types proportional to the swappiness level.
 
 There are two conceptually independent procedures: the aging and the
 eviction. They form a closed-loop system, i.e., the page reclaim.
@@ -147,9 +148,9 @@ The multi-gen LRU can be disassembled into the following parts:
 
 * Generations
 * Rmap walks
-* Page table walks
-* Bloom filters
-* PID controller
+* Page table walks via ``mm_struct`` list
+* Bloom filters for rmap/PT walk feedback
+* PID controller for refault feedback
 
 The aging and the eviction form a producer-consumer model;
 specifically, the latter drives the former by the sliding window over

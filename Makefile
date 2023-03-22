@@ -436,7 +436,7 @@ HOST_LFS_CFLAGS := $(shell getconf LFS_CFLAGS 2>/dev/null)
 HOST_LFS_LDFLAGS := $(shell getconf LFS_LDFLAGS 2>/dev/null)
 HOST_LFS_LIBS := $(shell getconf LFS_LIBS 2>/dev/null)
 
-override LLVM=1
+override LLVM=/home/arter97/android/nathan/llvm-16.0.0/bin/
 override LLVM_IAS=1
 export LLVM
 export LLVM_IAS

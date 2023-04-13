@@ -5,7 +5,7 @@
 #include <linux/huge_mm.h>
 #include <linux/swap.h>
 
-#ifndef arch_try_cmpxchg
+#if !defined(arch_try_cmpxchg) && !defined(try_cmpxchg)
 #define arch_try_cmpxchg(_ptr, _oldp, _new) \
 ({ \
 	typeof(*(_ptr)) *___op = (_oldp), ___o = *___op, ___r; \

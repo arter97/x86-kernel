@@ -1239,7 +1239,12 @@ static int stmmac_config_multi_msi(struct pci_dev *pdev,
 static int intel_eth_pci_suspend(struct device *dev, void *bsp_priv)
 {
 	struct pci_dev *pdev = to_pci_dev(dev);
+	struct net_device *ndev = dev_get_drvdata(&pdev->dev);
 	int ret;
+
+	rtnl_lock();
+	stmmac_rearm_wol(ndev);
+	rtnl_unlock();
 
 	ret = pci_save_state(pdev);
 	if (ret)

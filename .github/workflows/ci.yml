@@ -46,11 +46,11 @@ jobs:
         run: |
           rm -rf .git .gitattributes .gitignore
           make CC=gcc-12 ARCH=x86_64 defconfig
-          ./scripts/kconfig/merge_config.sh .config ./scripts/package/truenas/debian_amd64.config
-          ./scripts/kconfig/merge_config.sh .config ./scripts/package/truenas/truenas.config
-          ./scripts/kconfig/merge_config.sh .config ./scripts/package/truenas/tn-production.config
-          ./scripts/kconfig/merge_config.sh .config ./scripts/package/truenas/arter97.config
-          make CC=gcc-12 ARCH=x86_64 syncconfig
+          ./scripts/kconfig/merge_config.sh -m .config ./scripts/package/truenas/debian_amd64.config
+          ./scripts/kconfig/merge_config.sh -m .config ./scripts/package/truenas/truenas.config
+          ./scripts/kconfig/merge_config.sh -m .config ./scripts/package/truenas/tn-production.config
+          ./scripts/kconfig/merge_config.sh -m .config ./scripts/package/truenas/arter97.config
+          make CC=gcc-12 ARCH=x86_64 olddefconfig
           make CC=gcc-12 ARCH=x86_64 archprepare
           # Workaround to provide additional free space for kernel build
           # https://github.com/actions/virtual-environments/issues/2840

@@ -17,7 +17,7 @@ comp-type-$(CONFIG_KERNEL_LZ4)		:= lz4
 comp-type-$(CONFIG_KERNEL_LZMA)		:= lzma
 comp-type-$(CONFIG_KERNEL_LZO)		:= lzo
 comp-type-$(CONFIG_KERNEL_XZ)		:= xzkern
-comp-type-$(CONFIG_KERNEL_ZSTD)		:= zstd22
+comp-type-$(CONFIG_KERNEL_ZSTD)		:= zstd
 
 # in GZIP, the appended le32 carrying the uncompressed size is part of the
 # format, but in other cases, we just append it at the end for convenience,

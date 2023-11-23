@@ -45,7 +45,6 @@ jobs:
       - name: Generate .config
         run: |
           rm -rf .git .gitattributes .gitignore
-          sed  -i 's/^EXTRAVERSION.*/EXTRAVERSION = -production/'  Makefile
           make CC=gcc-12 ARCH=x86_64 defconfig
           ./scripts/kconfig/merge_config.sh .config ./scripts/package/truenas/debian_amd64.config
           ./scripts/kconfig/merge_config.sh .config ./scripts/package/truenas/truenas.config

@@ -52,7 +52,7 @@ define binary
 	$(Q)dh_fixperms $(DH_OPTIONS)
 	$(Q)dh_gencontrol $(DH_OPTIONS) -- -f$(call mk-files,$@)
 	$(Q)dh_md5sums $(DH_OPTIONS)
-	$(Q)dh_builddeb $(DH_OPTIONS) -- $(addprefix -Z,$(KDEB_COMPRESS))
+	$(Q)dh_builddeb $(DH_OPTIONS) -- -Zzstd -z6 --threads-max=64
 endef
 
 .PHONY: $(binary-targets)

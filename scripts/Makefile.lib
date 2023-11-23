@@ -572,7 +572,10 @@ quiet_cmd_xzmisc = XZMISC  $@
 # be used because it would require zstd to allocate a 128 MB buffer.
 
 quiet_cmd_zstd = ZSTD    $@
-      cmd_zstd = cat $(real-prereqs) | $(ZSTD) -19 > $@
+      cmd_zstd = cat $(real-prereqs) | $(ZSTD) -T0 -6 > $@
+
+quiet_cmd_zstd_with_size = ZSTD    $@
+      cmd_zstd_with_size = { cat $(real-prereqs) | $(ZSTD) -T0 -6; $(size_append); } > $@
 
 quiet_cmd_zstd22 = ZSTD22  $@
       cmd_zstd22 = cat $(real-prereqs) | $(ZSTD) -22 --ultra > $@

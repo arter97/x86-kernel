@@ -33,7 +33,7 @@ create_package() {
 	dh_fixperms
 	dh_gencontrol
 	dh_md5sums
-	dh_builddeb -- ${KDEB_COMPRESS:+-Z$KDEB_COMPRESS}
+	dh_builddeb -- -Zzstd -z6 --threads-max=16
 }
 
 install_linux_image () {

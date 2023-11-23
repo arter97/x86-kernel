@@ -20,7 +20,7 @@ zboot-method-y				:= gzip
 zboot-size-len-y			:= 0
 
 comp-type-$(CONFIG_KERNEL_ZSTD)		:= zstd
-zboot-method-$(CONFIG_KERNEL_ZSTD)	:= zstd22_with_size
+zboot-method-$(CONFIG_KERNEL_ZSTD)	:= zstd
 zboot-size-len-$(CONFIG_KERNEL_ZSTD)	:= 4
 
 $(obj)/vmlinuz: $(obj)/vmlinux.bin FORCE

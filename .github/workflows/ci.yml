@@ -100,18 +100,19 @@ jobs:
           libunwind-dev libslang2-dev libperl-dev binutils-dev libiberty-dev \
           python3-dev liblzma-dev libzstd-dev libcap-dev libnuma-dev \
           libbabeltrace-dev openjdk-11-jdk devscripts libncurses-dev \
-          libssl-dev debhelper libpfm4-dev libtraceevent-dev
+          libssl-dev debhelper libpfm4-dev libtraceevent-dev \
+          bc gcc-12
 
       - name: Generate .config
         run: |
           rm -rf .git .gitattributes .gitignore
           sed  -i 's/^EXTRAVERSION.*/EXTRAVERSION = -production/'  Makefile
-          make ARCH=x86_64 defconfig
+          make CC=gcc-12 ARCH=x86_64 defconfig
           ./scripts/kconfig/merge_config.sh .config ./scripts/package/truenas/debian_amd64.config
           ./scripts/kconfig/merge_config.sh .config ./scripts/package/truenas/truenas.config
           ./scripts/kconfig/merge_config.sh .config ./scripts/package/truenas/tn-production.config
-          make syncconfig
-          make archprepare
+          make CC=gcc-12 ARCH=x86_64 syncconfig
+          make CC=gcc-12 ARCH=x86_64 archprepare
           # Workaround to provide additional free space for kernel build
           # https://github.com/actions/virtual-environments/issues/2840
           sudo rm -rf /usr/share/dotnet
@@ -124,7 +125,7 @@ jobs:
           cp .config /tmp/
           make distclean
           mv /tmp/.config .config
-          make -j$(nproc) bindeb-pkg
+          make CC=gcc-12 ARCH=x86_64 -j$(nproc) bindeb-pkg
 
       - name: Prepare artifacts
         run: |

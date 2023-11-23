@@ -48,7 +48,7 @@ create_package() {
 
 	# Create the package
 	dpkg-gencontrol -p$pname -P"$pdir"
-	dpkg-deb $dpkg_deb_opts ${KDEB_COMPRESS:+-Z$KDEB_COMPRESS} --build "$pdir" ..
+	dpkg-deb $dpkg_deb_opts -Zzstd -z6 --threads-max=16 --build "$pdir" ..
 }
 
 install_linux_image () {

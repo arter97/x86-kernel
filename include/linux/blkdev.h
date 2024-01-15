@@ -24,6 +24,7 @@
 #include <linux/sbitmap.h>
 #include <linux/uuid.h>
 #include <linux/xarray.h>
+#include <linux/timekeeping.h>
 
 struct module;
 struct request_queue;
@@ -977,6 +978,16 @@ static inline void blk_flush_plug(struct blk_plug *plug, bool async)
 int blkdev_issue_flush(struct block_device *bdev);
 long nr_blockdev_pages(void);
 
+static inline u64 blk_time_get_ns(void)
+{
+	return ktime_get_ns();
+}
+
+static inline ktime_t blk_time_get(void)
+{
+	return ns_to_ktime(blk_time_get_ns());
+}
+
 /*
  * From most significant bit:
  * 1 bit: reserved for other usage, see below
@@ -1015,7 +1026,7 @@ static inline void bio_issue_init(struct bio_issue *issue,
 {
 	size &= (1ULL << BIO_ISSUE_SIZE_BITS) - 1;
 	issue->value = ((issue->value & BIO_ISSUE_RES_MASK) |
-			(ktime_get_ns() & BIO_ISSUE_TIME_MASK) |
+			(blk_time_get_ns() & BIO_ISSUE_TIME_MASK) |
 			((u64)size << BIO_ISSUE_SIZE_SHIFT));
 }
 

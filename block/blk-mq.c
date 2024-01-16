@@ -1275,6 +1275,8 @@ EXPORT_SYMBOL(blk_mq_start_request);
  */
 static inline unsigned short blk_plug_max_rq_count(struct blk_plug *plug)
 {
+	BUILD_BUG_ON(2 * BLK_MAX_REQUEST_COUNT > U8_MAX);
+
 	if (plug->multiple_queues)
 		return BLK_MAX_REQUEST_COUNT * 2;
 	return BLK_MAX_REQUEST_COUNT;

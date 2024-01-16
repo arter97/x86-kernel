@@ -1006,9 +1006,9 @@ struct blk_plug {
 	/* if ios_left is > 1, we can batch tag/rq allocations */
 	struct request *cached_rq;
 	u64 cur_ktime;
-	unsigned short nr_ios;
+	unsigned char nr_ios;
 
-	unsigned short rq_count;
+	unsigned char rq_count;
 
 	bool multiple_queues;
 	bool has_elevator;
@@ -1026,7 +1026,7 @@ struct blk_plug_cb {
 extern struct blk_plug_cb *blk_check_plugged(blk_plug_cb_fn unplug,
 					     void *data, int size);
 extern void blk_start_plug(struct blk_plug *);
-extern void blk_start_plug_nr_ios(struct blk_plug *, unsigned short);
+extern void blk_start_plug_nr_ios(struct blk_plug *, unsigned char);
 extern void blk_finish_plug(struct blk_plug *);
 
 void __blk_flush_plug(struct blk_plug *plug, bool from_schedule);
@@ -1055,7 +1055,7 @@ struct blk_plug {
 };
 
 static inline void blk_start_plug_nr_ios(struct blk_plug *plug,
-					 unsigned short nr_ios)
+					 unsigned char nr_ios)
 {
 }
 

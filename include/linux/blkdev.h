@@ -993,13 +993,13 @@ struct blk_plug {
 	bool multiple_queues;
 	bool has_elevator;
 
-	struct list_head cb_list; /* md requires an unplug callback */
+	struct hlist_head cb_list; /* md requires an unplug callback */
 };
 
 struct blk_plug_cb;
 typedef void (*blk_plug_cb_fn)(struct blk_plug_cb *, bool);
 struct blk_plug_cb {
-	struct list_head list;
+	struct hlist_node list;
 	blk_plug_cb_fn callback;
 	void *data;
 };

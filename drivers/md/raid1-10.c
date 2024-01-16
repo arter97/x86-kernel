@@ -152,7 +152,7 @@ static inline bool raid1_add_bio_to_plug(struct mddev *mddev, struct bio *bio,
 	plug = container_of(cb, struct raid1_plug_cb, cb);
 	bio_list_add(&plug->pending, bio);
 	if (++plug->count / MAX_PLUG_BIO >= copies) {
-		list_del(&cb->list);
+		hlist_del(&cb->list);
 		cb->callback(cb, false);
 	}
 

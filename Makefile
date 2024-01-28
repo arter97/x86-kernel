@@ -489,7 +489,7 @@ KBUILD_HOSTLDLIBS   := $(HOST_LFS_LIBS) $(HOSTLDLIBS)
 # Make variables (CC, etc...)
 CPP		= $(CC) -E
 ifneq ($(LLVM),)
-CC		= $(LLVM_PREFIX)clang$(LLVM_SUFFIX)
+CC		= ccache $(LLVM_PREFIX)clang$(LLVM_SUFFIX)
 LD		= $(LLVM_PREFIX)ld.lld$(LLVM_SUFFIX)
 AR		= $(LLVM_PREFIX)llvm-ar$(LLVM_SUFFIX)
 NM		= $(LLVM_PREFIX)llvm-nm$(LLVM_SUFFIX)

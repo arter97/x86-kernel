@@ -66,9 +66,6 @@ scm_version()
 	# it. This is the case in linux-next.
 	tag=${file_localversion#-}
 	desc=
-	if [ -n "${tag}" ]; then
-		desc=$(git describe --match=$tag 2>/dev/null)
-	fi
 
 	# Otherwise, if a localversion* file exists, and the tag
 	# obtained by appending it to the tag derived from
@@ -76,13 +73,11 @@ scm_version()
 	# it. This is e.g. the case in linux-rt.
 	if [ -z "${desc}" ] && [ -n "${file_localversion}" ]; then
 		tag="${version_tag}${file_localversion}"
-		desc=$(git describe --match=$tag 2>/dev/null)
 	fi
 
 	# Otherwise, default to the annotated tag derived from KERNELVERSION.
 	if [ -z "${desc}" ]; then
 		tag="${version_tag}"
-		desc=$(git describe --match=$tag 2>/dev/null)
 	fi
 
 	# If we are at the tagged commit, we ignore it because the version is

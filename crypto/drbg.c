@@ -88,6 +88,7 @@
  * Just mix both scenarios above.
  */
 
+#include <crypto/drbg.h>
 #include <crypto/internal/rng.h>
 #include <crypto/sha2.h>
 #include <linux/fips.h>
@@ -130,6 +131,7 @@ struct drbg_state {
 	/* Number of RNG requests since last reseed -- 10.1.2.1 1c */
 	size_t reseed_ctr;
 	bool instantiated;
+	bool external;		/* driven via drbg_*_external()? */
 	struct crypto_rng *jent;
 	const u8 *test_entropy;
 	size_t test_entropylen;
@@ -185,8 +187,12 @@ static void drbg_hmac_generate(struct drbg_state *drbg, u8 *out, size_t outlen,
 	 *
 	 * Note that there's no need to pull bytes from jitterentropy here too,
 	 * since FIPS doesn't require any entropy in the additional input.
+	 *
+	 * Externally driven states (see drbg_alloc_state()) are exempt, as the
+	 * external user (e.g. the LRNG) may itself implement get_random_bytes()
+	 * on top of this DRBG and is responsible for seeding it.
 	 */
-	if (drbg->test_entropylen == 0) {
+	if (drbg->test_entropylen == 0 && !drbg->external) {
 		get_random_bytes(addtl2, sizeof(addtl2));
 		addtl2_len = sizeof(addtl2);
 	}
@@ -400,6 +406,90 @@ static int drbg_generate(struct drbg_state *drbg, u8 *out, size_t outlen,
 
 	return 0;
 }
+
+/***************************************************************
+ * Interface for DRBG users outside of the kernel crypto API (LRNG)
+ ***************************************************************/
+
+/*
+ * Allocate a DRBG state which is driven directly by the caller instead of
+ * the kernel crypto API RNG interface.  The state is initialized as per
+ * 10.1.2.3 steps 2 and 3 and must be seeded with drbg_seed_external() by the
+ * caller.  The DRBG never pulls seed material from get_random_bytes() or the
+ * Jitter RNG for such a state; the caller is responsible for seeding,
+ * reseeding, and locking.
+ *
+ * return: DRBG state or NULL on allocation failure
+ */
+struct drbg_state *drbg_alloc_state(void)
+{
+	static const u8 initial_key[DRBG_STATE_LEN]; /* all zeroes */
+	struct drbg_state *drbg;
+
+	drbg = kzalloc_obj(struct drbg_state);
+	if (!drbg)
+		return NULL;
+
+	mutex_init(&drbg->drbg_mutex);
+	memset(drbg->V, 1, DRBG_STATE_LEN);
+	hmac_sha512_preparekey(&drbg->key, initial_key, DRBG_STATE_LEN);
+	drbg->reseed_ctr = 1;
+	drbg->external = true;
+
+	return drbg;
+}
+EXPORT_SYMBOL(drbg_alloc_state);
+
+/* Free a DRBG state allocated with drbg_alloc_state(). */
+void drbg_dealloc_state(struct drbg_state *drbg)
+{
+	if (!drbg)
+		return;
+
+	crypto_free_rng(drbg->jent);
+	kfree_sensitive(drbg);
+}
+EXPORT_SYMBOL(drbg_dealloc_state);
+
+/* Security strength of the DRBG in bytes. */
+unsigned short drbg_sec_strength(void)
+{
+	return DRBG_SEC_STRENGTH;
+}
+EXPORT_SYMBOL(drbg_sec_strength);
+
+/*
+ * Seed or reseed an externally driven DRBG state with caller-provided seed
+ * material -- 10.1.2.3 step 3 / 10.1.2.4 step 2.  May be called in atomic
+ * context.
+ */
+void drbg_seed_external(struct drbg_state *drbg, const u8 *seed, size_t seedlen)
+{
+	drbg_hmac_update(drbg, seed, seedlen, NULL, 0);
+	/* 10.1.2.3 step 4 / 10.1.2.4 step 3 */
+	drbg->reseed_ctr = 1;
+	drbg->instantiated = true;
+}
+EXPORT_SYMBOL(drbg_seed_external);
+
+/*
+ * Generate random bytes from an externally driven DRBG state.  Reseeding is
+ * left to the caller, so the reseed counter is only tracked here, not
+ * enforced.  May be called in atomic context.
+ */
+void drbg_generate_external(struct drbg_state *drbg, u8 *out, size_t outlen)
+{
+	while (outlen) {
+		size_t n = min_t(size_t, outlen, DRBG_MAX_REQUEST_BYTES);
+
+		drbg_hmac_generate(drbg, out, n, NULL, 0);
+		/* 10.1.2.5 step 7 */
+		drbg->reseed_ctr++;
+		out += n;
+		outlen -= n;
+	}
+}
+EXPORT_SYMBOL(drbg_generate_external);
 
 /***************************************************************
  * Kernel crypto API interface to DRBG

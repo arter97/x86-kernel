@@ -72,6 +72,7 @@
 #define BBR_VERSION		3
 
 #define bbr_param(sk,name)	(bbr_ ## name)
+#define bbr_param_enabled(sk,name)	(!!(bbr_ ## name))
 
 /* Scale factor for rate in pkt/uSec unit to avoid truncation in bandwidth
  * estimation. The rate unit ~= (1500 bytes / 1 usec / 2^24) ~= 715 bps.
@@ -490,7 +491,7 @@ static u32 bbr_tso_segs_generic(struct sock *sk, unsigned int mss_now,
 	 * K = 2^tso_rtt_shift microseconds of min_rtt, halve the burst.
 	 * The min_rtt-based burst allowance is: 64 KBytes / 2^(min_rtt/K)
 	 */
-	if (bbr_param(sk, tso_rtt_shift)) {
+	if (bbr_param_enabled(sk, tso_rtt_shift)) {
 		r = bbr->min_rtt_us >> bbr_param(sk, tso_rtt_shift);
 		if (r < BITS_PER_TYPE(u32))   /* prevent undefined behavior */
 			bytes += GSO_LEGACY_MAX_SIZE >> r;
@@ -549,12 +550,12 @@ __bpf_kfunc static void bbr_cwnd_event(struct sock *sk, enum tcp_ca_event event)
 	} else if ((event == CA_EVENT_ECN_IS_CE ||
 		    event == CA_EVENT_ECN_NO_CE) &&
 		   bbr_can_use_ecn(sk) &&
-		   bbr_param(sk, precise_ece_ack)) {
+		   bbr_param_enabled(sk, precise_ece_ack)) {
 		u32 state = bbr->ce_state;
 		dctcp_ece_ack_update(sk, event, &bbr->prior_rcv_nxt, &state);
 		bbr->ce_state = state;
 	} else if (event == CA_EVENT_TLP_RECOVERY &&
-		   bbr_param(sk, loss_probe_recovery)) {
+		   bbr_param_enabled(sk, loss_probe_recovery)) {
 		bbr_run_loss_probe_recovery(sk);
 	}
 }
@@ -669,7 +670,7 @@ static u32 bbr_ack_aggregation_cwnd(struct sock *sk)
 {
 	u32 max_aggr_cwnd, aggr_cwnd = 0;
 
-	if (bbr_param(sk, extra_acked_gain)) {
+	if (bbr_param_enabled(sk, extra_acked_gain)) {
 		max_aggr_cwnd = ((u64)bbr_bw(sk) * bbr_extra_acked_max_us)
 				/ BW_UNIT;
 		aggr_cwnd = (bbr_param(sk, extra_acked_gain) * bbr_extra_acked(sk))
@@ -804,7 +805,7 @@ static void bbr_update_ack_aggregation(struct sock *sk,
 	struct tcp_sock *tp = tcp_sk(sk);
 	u32 extra_acked_win_rtts_thresh = bbr_param(sk, extra_acked_win_rtts);
 
-	if (!bbr_param(sk, extra_acked_gain) || rs->acked_sacked <= 0 ||
+	if (!bbr_param_enabled(sk, extra_acked_gain) || rs->acked_sacked <= 0 ||
 	    rs->delivered < 0 || rs->interval_us <= 0)
 		return;
 
@@ -955,7 +956,7 @@ static void bbr_update_gains(struct sock *sk)
 	case BBR_PROBE_BW:
 		bbr->pacing_gain = bbr_pacing_gain[bbr->cycle_idx];
 		bbr->cwnd_gain	 = bbr_param(sk, cwnd_gain);
-		if (bbr_param(sk, bw_probe_cwnd_gain) &&
+		if (bbr_param_enabled(sk, bw_probe_cwnd_gain) &&
 		    bbr->cycle_idx == BBR_BW_PROBE_UP)
 			bbr->cwnd_gain +=
 				BBR_UNIT * bbr_param(sk, bw_probe_cwnd_gain) / 4;
@@ -1050,15 +1051,15 @@ static void bbr_check_ecn_too_high_in_startup(struct sock *sk, u32 ce_ratio)
 	struct bbr *bbr = inet_csk_ca(sk);
 
 	if (bbr_full_bw_reached(sk) || !bbr->ecn_eligible ||
-	    !bbr_param(sk, full_ecn_cnt) || !bbr_param(sk, ecn_thresh))
+	    !bbr_param_enabled(sk, full_ecn_cnt) || !bbr_param_enabled(sk, ecn_thresh))
 		return;
 
-	if (ce_ratio >= bbr_param(sk, ecn_thresh))
+	if (ce_ratio >= bbr_param_enabled(sk, ecn_thresh))
 		bbr->startup_ecn_rounds++;
 	else
 		bbr->startup_ecn_rounds = 0;
 
-	if (bbr->startup_ecn_rounds >= bbr_param(sk, full_ecn_cnt)) {
+	if (bbr->startup_ecn_rounds >= bbr_param_enabled(sk, full_ecn_cnt)) {
 		bbr_handle_queue_too_high_in_startup(sk);
 		return;
 	}
@@ -1077,7 +1078,7 @@ static int bbr_update_ecn_alpha(struct sock *sk)
 
 	/* See if we should use ECN sender logic for this connection. */
 	if (!bbr->ecn_eligible && bbr_can_use_ecn(sk) &&
-	    bbr_param(sk, ecn_factor) &&
+	    bbr_param_enabled(sk, ecn_factor) &&
 	    (bbr->min_rtt_us <= bbr_ecn_max_rtt_us ||
 	     !bbr_ecn_max_rtt_us))
 		bbr->ecn_eligible = 1;
@@ -1184,7 +1185,7 @@ static bool bbr_is_inflight_too_high(const struct sock *sk,
 	}
 
 	if (rs->delivered_ce > 0 && rs->delivered > 0 &&
-	    bbr->ecn_eligible && bbr_param(sk, ecn_thresh)) {
+	    bbr->ecn_eligible && bbr_param_enabled(sk, ecn_thresh)) {
 		ecn_thresh = (u64)rs->delivered * bbr_param(sk, ecn_thresh) >>
 				BBR_SCALE;
 		if (rs->delivered_ce > ecn_thresh) {
@@ -1382,7 +1383,7 @@ static void bbr_adapt_lower_bounds(struct sock *sk,
 		return;
 
 	/* ECN response. */
-	if (bbr->ecn_in_round && bbr_param(sk, ecn_factor)) {
+	if (bbr->ecn_in_round && bbr_param_enabled(sk, ecn_factor)) {
 		bbr_init_lower_bounds(sk, false);
 		bbr_ecn_lower_bounds(sk, &ecn_inflight_lo);
 	}
@@ -1719,7 +1720,7 @@ static bool bbr_check_time_to_probe_bw(struct sock *sk,
 	 * but we are seeing ECN marks, then when the ECN marks cease we reprobe
 	 * quickly (in case cross-traffic has ceased and freed up bw).
 	 */
-	if (bbr_param(sk, ecn_reprobe_gain) && bbr->ecn_eligible &&
+	if (bbr_param_enabled(sk, ecn_reprobe_gain) && bbr->ecn_eligible &&
 	    bbr->ecn_in_cycle && !bbr->loss_in_cycle &&
 	    inet_csk(sk)->icsk_ca_state == TCP_CA_Open) {
 		/* Calculate n so that when bbr_raise_inflight_hi_slope()
@@ -1902,7 +1903,7 @@ static void bbr_check_loss_too_high_in_startup(struct sock *sk,
 	 */
 	if (rs->losses && bbr->loss_events_in_round < 0xf)
 		bbr->loss_events_in_round++;  /* update saturating counter */
-	if (bbr_param(sk, full_loss_cnt) && bbr->loss_round_start &&
+	if (bbr_param_enabled(sk, full_loss_cnt) && bbr->loss_round_start &&
 	    inet_csk(sk)->icsk_ca_state == TCP_CA_Recovery &&
 	    bbr->loss_events_in_round >= bbr_param(sk, full_loss_cnt) &&
 	    bbr_is_inflight_too_high(sk, rs)) {
@@ -2012,7 +2013,7 @@ static bool bbr_run_fast_path(struct sock *sk, bool *update_model,
 	struct bbr *bbr = inet_csk_ca(sk);
 	u32 prev_min_rtt_us, prev_mode;
 
-	if (bbr_param(sk, fast_path) && bbr->try_fast_path &&
+	if (bbr_param_enabled(sk, fast_path) && bbr->try_fast_path &&
 	    rs->is_app_limited && ctx->sample_bw < bbr_max_bw(sk) &&
 	    !bbr->loss_in_round && !bbr->ecn_in_round ) {
 		prev_mode = bbr->mode;

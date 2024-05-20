@@ -520,10 +520,15 @@ static int mock_prepares_pf2guc_and_waits(void *arg)
 		FIELD_PREP(GUC_HXG_REQUEST_MSG_0_ACTION, IOV_ACTION_SELFTEST_RELAY),
 		FIELD_PREP(GUC_HXG_REQUEST_MSG_n_DATAn, SELFTEST_RELAY_DATA),
 	};
-	u32 buf[PF2GUC_RELAY_TO_VF_REQUEST_MSG_NUM_RELAY_DATA];
+	u32 *buf;
 	struct payload_params params;
 	unsigned int n;
 	int err = 0;
+
+	buf = kmalloc_array(PF2GUC_RELAY_TO_VF_REQUEST_MSG_NUM_RELAY_DATA,
+			    sizeof(*buf), GFP_KERNEL);
+	if (!buf)
+		return -ENOMEM;
 
 	for (n = GUC_HXG_MSG_MIN_LEN; n <= ARRAY_SIZE(msg); n++) {
 
@@ -538,7 +543,8 @@ static int mock_prepares_pf2guc_and_waits(void *arg)
 		iov->relay.selftest.host2guc = pf2guc_auto_reply_success;
 
 		err = intel_iov_relay_send_to_vf(&iov->relay, vfid, msg, n,
-						 buf, ARRAY_SIZE(buf));
+					 buf,
+					 PF2GUC_RELAY_TO_VF_REQUEST_MSG_NUM_RELAY_DATA);
 
 		if (err < 0) {
 			IOV_SELFTEST_ERROR(iov, "failed to send msg len=%u, %d\n", n, err);
@@ -562,6 +568,8 @@ static int mock_prepares_pf2guc_and_waits(void *arg)
 	iov->relay.selftest.disable_strict = 0;
 	iov->relay.selftest.host2guc = NULL;
 	iov->relay.selftest.data = NULL;
+
+	kfree(buf);
 
 	return err;
 }
@@ -598,10 +606,15 @@ static int mock_prepares_pf2guc_and_fails(void *arg)
 		FIELD_PREP(GUC_HXG_REQUEST_MSG_0_ACTION, IOV_ACTION_SELFTEST_RELAY),
 		FIELD_PREP(GUC_HXG_REQUEST_MSG_n_DATAn, SELFTEST_RELAY_DATA),
 	};
-	u32 buf[PF2GUC_RELAY_TO_VF_REQUEST_MSG_NUM_RELAY_DATA];
+	u32 *buf;
 	struct payload_params params;
 	unsigned int n;
 	int err = 0;
+
+	buf = kmalloc_array(PF2GUC_RELAY_TO_VF_REQUEST_MSG_NUM_RELAY_DATA,
+			    sizeof(*buf), GFP_KERNEL);
+	if (!buf)
+		return -ENOMEM;
 
 	for (n = GUC_HXG_MSG_MIN_LEN; n <= ARRAY_SIZE(msg); n++) {
 
@@ -616,7 +629,8 @@ static int mock_prepares_pf2guc_and_fails(void *arg)
 		iov->relay.selftest.host2guc = pf2guc_auto_reply_failure;
 
 		err = intel_iov_relay_send_to_vf(&iov->relay, vfid, msg, n,
-						 buf, ARRAY_SIZE(buf));
+					 buf,
+					 PF2GUC_RELAY_TO_VF_REQUEST_MSG_NUM_RELAY_DATA);
 
 		if (err > 0) {
 			IOV_SELFTEST_ERROR(iov, "unexpected success msg len=%u, %d\n", n, err);
@@ -641,10 +655,13 @@ static int mock_prepares_pf2guc_and_fails(void *arg)
 	iov->relay.selftest.host2guc = NULL;
 	iov->relay.selftest.data = NULL;
 
+	kfree(buf);
+
 	return err;
 }
 
-static int pf2guc_auto_reply_retry(struct intel_iov_relay *relay, const u32 *msg, u32 len)
+static __maybe_unused int pf2guc_auto_reply_retry(struct intel_iov_relay *relay,
+					  const u32 *msg, u32 len)
 {
 	u32 reply[] = {
 		MSG_GUC2PF_RELAY_FROM_VF(0),
@@ -668,60 +685,7 @@ static int pf2guc_auto_reply_retry(struct intel_iov_relay *relay, const u32 *msg
 
 static int mock_prepares_pf2guc_and_retries(void *arg)
 {
-	struct intel_iov *iov = arg;
-	u32 vfid = VFID(1);
-	u32 msg[] = {
-		FIELD_PREP(GUC_HXG_MSG_0_ORIGIN, GUC_HXG_ORIGIN_HOST) |
-		FIELD_PREP(GUC_HXG_MSG_0_TYPE, GUC_HXG_TYPE_REQUEST) |
-		FIELD_PREP(GUC_HXG_REQUEST_MSG_0_ACTION, IOV_ACTION_SELFTEST_RELAY),
-		FIELD_PREP(GUC_HXG_REQUEST_MSG_n_DATAn, SELFTEST_RELAY_DATA),
-	};
-	u32 buf[PF2GUC_RELAY_TO_VF_REQUEST_MSG_NUM_RELAY_DATA];
-	struct payload_params params;
-	unsigned int n;
-	int err = 0;
-
 	return 0;
-
-	for (n = GUC_HXG_MSG_MIN_LEN; n <= ARRAY_SIZE(msg); n++) {
-
-		params.relayid = 0; /* don't check */
-		params.vfid = vfid;
-		params.data = msg;
-		params.len = n;
-
-		iov->relay.selftest.disable_strict = 1;
-		iov->relay.selftest.enable_loopback = 1;
-		iov->relay.selftest.data = &params;
-		iov->relay.selftest.host2guc = pf2guc_auto_reply_retry;
-
-		err = intel_iov_relay_send_to_vf(&iov->relay, vfid, msg, n,
-						 buf, ARRAY_SIZE(buf));
-
-		if (err > 0) {
-			IOV_SELFTEST_ERROR(iov, "unexpected success msg len=%u, %d\n", n, err);
-			break;
-		}
-
-		err = wait_for(IS_ERR_OR_NULL(READ_ONCE(iov->relay.selftest.host2guc)), 200);
-		if (err) {
-			IOV_SELFTEST_ERROR(iov, "didn't send msg len=%u, %d\n", n, err);
-			break;
-		}
-
-		err = PTR_ERR_OR_ZERO(iov->relay.selftest.host2guc);
-		if (err) {
-			IOV_SELFTEST_ERROR(iov, "invalid msg len=%u, %d\n", n, err);
-			break;
-		}
-	}
-
-	iov->relay.selftest.enable_loopback = 0;
-	iov->relay.selftest.disable_strict = 0;
-	iov->relay.selftest.host2guc = NULL;
-	iov->relay.selftest.data = NULL;
-
-	return err;
 }
 
 int selftest_mock_iov_relay(void)

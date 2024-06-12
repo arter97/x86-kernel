@@ -51,28 +51,31 @@ static int pf_loopback_to_vf_delay(void *arg)
 static int pf_loopback_to_vf_throughput(void *arg)
 {
 	struct intel_iov *iov = arg;
-	u32 msg[PF2GUC_RELAY_TO_VF_REQUEST_MSG_NUM_RELAY_DATA] = {
-		MSG_IOV_SELFTEST_RELAY(SELFTEST_RELAY_OPCODE_NOP),
-		FIELD_PREP(GUC_HXG_REQUEST_MSG_n_DATAn, SELFTEST_RELAY_DATA),
-		/* ... */
-	};
+	u32 *msg;
+	const u32 msg_len = PF2GUC_RELAY_TO_VF_REQUEST_MSG_NUM_RELAY_DATA;
 	u32 buf[GUC_HXG_MSG_MIN_LEN];
 	ktime_t finish;
 	u64 throughput = 0;
 	u64 counter = 0;
 	int ret = 0;
 
+	msg = kcalloc(msg_len, sizeof(*msg), GFP_KERNEL);
+	if (!msg)
+		return -ENOMEM;
+	msg[0] = MSG_IOV_SELFTEST_RELAY(SELFTEST_RELAY_OPCODE_NOP);
+	msg[1] = FIELD_PREP(GUC_HXG_REQUEST_MSG_n_DATAn, SELFTEST_RELAY_DATA);
+
 	iov->relay.selftest.enable_loopback = 1;
 	finish = ktime_add_ms(ktime_get(), SELFTEST_RELAY_PERF_TIME_MS);
 
 	while (ktime_before(ktime_get(), finish)) {
-		ret = intel_iov_relay_send_to_vf(&iov->relay, PFID, msg, ARRAY_SIZE(msg),
+		ret = intel_iov_relay_send_to_vf(&iov->relay, PFID, msg, msg_len,
 						 buf, ARRAY_SIZE(buf));
 
 		if (ret != GUC_HXG_MSG_MIN_LEN)
 			break;
 
-		throughput += ARRAY_SIZE(msg);
+		throughput += msg_len;
 		throughput += ret;
 		counter++;
 	}
@@ -80,7 +83,11 @@ static int pf_loopback_to_vf_throughput(void *arg)
 	iov->relay.selftest.enable_loopback = 0;
 
 	if (ret != GUC_HXG_MSG_MIN_LEN)
-		return -ENODATA;
+		ret = -ENODATA;
+
+	kfree(msg);
+	if (ret)
+		return ret;
 
 	dev_info(iov_to_dev(iov), "throughput %llu bytes/s (%llu relays/s)\n",
 		 div_s64(throughput * sizeof(u32) * MSEC_PER_SEC,
@@ -144,33 +151,40 @@ static int pf_loopback_to_pf_delay(void *arg)
 
 static int relay_to_pf_throughput(struct intel_iov *iov)
 {
-	u32 msg[PF2GUC_RELAY_TO_VF_REQUEST_MSG_NUM_RELAY_DATA] = {
-		MSG_IOV_SELFTEST_RELAY(SELFTEST_RELAY_OPCODE_NOP),
-		FIELD_PREP(GUC_HXG_REQUEST_MSG_n_DATAn, SELFTEST_RELAY_DATA),
-		/* ... */
-	};
+	u32 *msg;
+	const u32 msg_len = PF2GUC_RELAY_TO_VF_REQUEST_MSG_NUM_RELAY_DATA;
 	u32 buf[GUC_HXG_MSG_MIN_LEN];
 	ktime_t finish;
 	u64 throughput = 0;
 	u64 counter = 0;
 	int ret = 0;
 
+	msg = kcalloc(msg_len, sizeof(*msg), GFP_KERNEL);
+	if (!msg)
+		return -ENOMEM;
+	msg[0] = MSG_IOV_SELFTEST_RELAY(SELFTEST_RELAY_OPCODE_NOP);
+	msg[1] = FIELD_PREP(GUC_HXG_REQUEST_MSG_n_DATAn, SELFTEST_RELAY_DATA);
+
 	finish = ktime_add_ms(ktime_get(), SELFTEST_RELAY_PERF_TIME_MS);
 
 	while (ktime_before(ktime_get(), finish)) {
-		ret = intel_iov_relay_send_to_pf(&iov->relay, msg, ARRAY_SIZE(msg),
+		ret = intel_iov_relay_send_to_pf(&iov->relay, msg, msg_len,
 						 buf, ARRAY_SIZE(buf));
 
 		if (ret != GUC_HXG_MSG_MIN_LEN)
 			break;
 
-		throughput += ARRAY_SIZE(msg);
+		throughput += msg_len;
 		throughput += ret;
 		counter++;
 	}
 
 	if (ret != GUC_HXG_MSG_MIN_LEN)
-		return -ENODATA;
+		ret = -ENODATA;
+
+	kfree(msg);
+	if (ret)
+		return ret;
 
 	dev_info(iov_to_dev(iov), "throughput %llu bytes/s (%llu relays/s)\n",
 		 div_s64(throughput * sizeof(u32) * MSEC_PER_SEC,

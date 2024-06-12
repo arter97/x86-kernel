@@ -8,6 +8,7 @@
 
 #include "i915_drv.h"
 #include "gt/intel_gt_print.h"
+#include "gt/iov/intel_iov_types.h"
 
 static inline struct intel_gt *iov_to_gt(struct intel_iov *iov)
 {

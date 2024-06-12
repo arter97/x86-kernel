@@ -5,6 +5,10 @@
 
 #include <drm/i915_sriov.h>
 
+#ifndef I915_SRIOV_NS
+#define I915_SRIOV_NS "i915_sriov"
+#endif
+
 #include "i915_sriov.h"
 #include "i915_sriov_sysfs.h"
 #include "i915_drv.h"

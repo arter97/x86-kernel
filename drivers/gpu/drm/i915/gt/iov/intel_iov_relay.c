@@ -4,6 +4,7 @@
  */
 
 #include <linux/bitfield.h>
+#include <linux/slab.h>
 
 #include "abi/iov_actions_abi.h"
 #include "abi/iov_actions_selftest_abi.h"
@@ -91,13 +92,7 @@ struct pending_relay {
 static int pf_relay_send(struct intel_iov_relay *relay, u32 target,
 			 u32 relay_id, const u32 *msg, u32 len)
 {
-	u32 request[PF2GUC_RELAY_TO_VF_REQUEST_MSG_MAX_LEN] = {
-		FIELD_PREP(GUC_HXG_MSG_0_ORIGIN, GUC_HXG_ORIGIN_HOST) |
-		FIELD_PREP(GUC_HXG_MSG_0_TYPE, GUC_HXG_TYPE_REQUEST) |
-		FIELD_PREP(GUC_HXG_REQUEST_MSG_0_ACTION, GUC_ACTION_PF2GUC_RELAY_TO_VF),
-		FIELD_PREP(PF2GUC_RELAY_TO_VF_REQUEST_MSG_1_VFID, target),
-		FIELD_PREP(PF2GUC_RELAY_TO_VF_REQUEST_MSG_2_RELAY_ID, relay_id),
-	};
+	u32 *request;
 	int err;
 
 	GEM_BUG_ON(!IS_SRIOV_PF(relay_to_i915(relay)) &&
@@ -107,6 +102,17 @@ static int pf_relay_send(struct intel_iov_relay *relay, u32 target,
 	GEM_BUG_ON(len + PF2GUC_RELAY_TO_VF_REQUEST_MSG_MIN_LEN >
 		   PF2GUC_RELAY_TO_VF_REQUEST_MSG_MAX_LEN);
 
+	request = kcalloc(PF2GUC_RELAY_TO_VF_REQUEST_MSG_MAX_LEN, sizeof(*request),
+			 GFP_KERNEL);
+	if (!request)
+		return -ENOMEM;
+
+	request[0] = FIELD_PREP(GUC_HXG_MSG_0_ORIGIN, GUC_HXG_ORIGIN_HOST) |
+		    FIELD_PREP(GUC_HXG_MSG_0_TYPE, GUC_HXG_TYPE_REQUEST) |
+		    FIELD_PREP(GUC_HXG_REQUEST_MSG_0_ACTION, GUC_ACTION_PF2GUC_RELAY_TO_VF);
+	request[1] = FIELD_PREP(PF2GUC_RELAY_TO_VF_REQUEST_MSG_1_VFID, target);
+	request[2] = FIELD_PREP(PF2GUC_RELAY_TO_VF_REQUEST_MSG_2_RELAY_ID, relay_id);
+
 	memcpy(&request[PF2GUC_RELAY_TO_VF_REQUEST_MSG_MIN_LEN], msg, 4 * len);
 
 retry:
@@ -115,18 +121,14 @@ retry:
 	if (unlikely(err == -EBUSY))
 		goto retry;
 
+	kfree(request);
 	return err;
 }
 
 static int vf_relay_send(struct intel_iov_relay *relay,
 			 u32 relay_id, const u32 *msg, u32 len)
 {
-	u32 request[VF2GUC_RELAY_TO_PF_REQUEST_MSG_MAX_LEN] = {
-		FIELD_PREP(GUC_HXG_MSG_0_ORIGIN, GUC_HXG_ORIGIN_HOST) |
-		FIELD_PREP(GUC_HXG_MSG_0_TYPE, GUC_HXG_TYPE_REQUEST) |
-		FIELD_PREP(GUC_HXG_REQUEST_MSG_0_ACTION, GUC_ACTION_VF2GUC_RELAY_TO_PF),
-		FIELD_PREP(VF2GUC_RELAY_TO_PF_REQUEST_MSG_1_RELAY_ID, relay_id),
-	};
+	u32 *request;
 	int err;
 
 	GEM_BUG_ON(!IS_SRIOV_VF(relay_to_i915(relay)) &&
@@ -134,6 +136,16 @@ static int vf_relay_send(struct intel_iov_relay *relay,
 	GEM_BUG_ON(!len);
 	GEM_BUG_ON(len + VF2GUC_RELAY_TO_PF_REQUEST_MSG_MIN_LEN >
 		   VF2GUC_RELAY_TO_PF_REQUEST_MSG_MAX_LEN);
+
+	request = kcalloc(VF2GUC_RELAY_TO_PF_REQUEST_MSG_MAX_LEN, sizeof(*request),
+			 GFP_KERNEL);
+	if (!request)
+		return -ENOMEM;
+
+	request[0] = FIELD_PREP(GUC_HXG_MSG_0_ORIGIN, GUC_HXG_ORIGIN_HOST) |
+		    FIELD_PREP(GUC_HXG_MSG_0_TYPE, GUC_HXG_TYPE_REQUEST) |
+		    FIELD_PREP(GUC_HXG_REQUEST_MSG_0_ACTION, GUC_ACTION_VF2GUC_RELAY_TO_PF);
+	request[1] = FIELD_PREP(VF2GUC_RELAY_TO_PF_REQUEST_MSG_1_RELAY_ID, relay_id);
 
 	memcpy(&request[VF2GUC_RELAY_TO_PF_REQUEST_MSG_MIN_LEN], msg, 4 * len);
 
@@ -143,6 +155,7 @@ retry:
 	if (unlikely(err == -EBUSY))
 		goto retry;
 
+	kfree(request);
 	return err;
 }
 

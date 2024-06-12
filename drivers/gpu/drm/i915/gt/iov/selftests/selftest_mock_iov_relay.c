@@ -109,7 +109,8 @@ static int mock_drops_malformed_guc2pf(void *arg)
 	u32 msg_unexpected_vfid[GUC2PF_RELAY_FROM_VF_EVENT_MSG_MIN_LEN] = {
 		MSG_GUC2PF_RELAY_FROM_VF(0),
 	};
-	u32 msg_too_long[GUC2PF_RELAY_FROM_VF_EVENT_MSG_MAX_LEN + 1] = {
+	u32 *msg_too_long;
+	u32 msg_too_long_header[] = {
 		MSG_GUC2PF_RELAY_FROM_VF(1),
 	};
 	struct {
@@ -122,11 +123,21 @@ static int mock_drops_malformed_guc2pf(void *arg)
 		TC(msg_no_relayid),
 		TC(msg_unexpected_subaction),
 		TC(msg_unexpected_vfid),
-		TC(msg_too_long),
+		{ "msg_too_long", NULL, GUC2PF_RELAY_FROM_VF_EVENT_MSG_MAX_LEN + 1 },
 #undef TC
 		{ }
 	}, *tc = testcases;
 	int err, ret = 0;
+
+	msg_too_long = kcalloc(GUC2PF_RELAY_FROM_VF_EVENT_MSG_MAX_LEN + 1,
+			       sizeof(*msg_too_long), GFP_KERNEL);
+	if (!msg_too_long)
+		return -ENOMEM;
+	memcpy(msg_too_long, msg_too_long_header, sizeof(msg_too_long_header));
+	for (tc = testcases; tc->name; tc++)
+		if (!strcmp(tc->name, "msg_too_long"))
+			tc->msg = msg_too_long;
+	tc = testcases;
 
 	iov->relay.selftest.disable_strict = 1;
 	iov->relay.selftest.host2guc = host2guc_success;
@@ -144,6 +155,8 @@ static int mock_drops_malformed_guc2pf(void *arg)
 
 	iov->relay.selftest.disable_strict = 0;
 	iov->relay.selftest.host2guc = NULL;
+
+	kfree(msg_too_long);
 
 	return ret;
 }
@@ -163,7 +176,8 @@ static int mock_drops_malformed_guc2vf(void *arg)
 		FIELD_PREP(GUC_HXG_EVENT_MSG_0_ACTION, GUC_ACTION_GUC2VF_RELAY_FROM_PF),
 		FIELD_PREP(GUC2VF_RELAY_FROM_PF_EVENT_MSG_1_RELAY_ID, SELFTEST_RELAY_ID),
 	};
-	u32 msg_too_long[GUC2VF_RELAY_FROM_PF_EVENT_MSG_MAX_LEN + 1] = {
+	u32 *msg_too_long;
+	u32 msg_too_long_header[] = {
 		MSG_GUC2VF_RELAY_FROM_PF,
 	};
 	struct {
@@ -174,11 +188,21 @@ static int mock_drops_malformed_guc2vf(void *arg)
 #define TC(X) { #X, X, ARRAY_SIZE(X) }
 		TC(msg_no_relayid),
 		TC(msg_unexpected_subaction),
-		TC(msg_too_long),
+		{ "msg_too_long", NULL, GUC2VF_RELAY_FROM_PF_EVENT_MSG_MAX_LEN + 1 },
 #undef TC
 		{ }
 	}, *tc = testcases;
 	int err, ret = 0;
+
+	msg_too_long = kcalloc(GUC2VF_RELAY_FROM_PF_EVENT_MSG_MAX_LEN + 1,
+			       sizeof(*msg_too_long), GFP_KERNEL);
+	if (!msg_too_long)
+		return -ENOMEM;
+	memcpy(msg_too_long, msg_too_long_header, sizeof(msg_too_long_header));
+	for (tc = testcases; tc->name; tc++)
+		if (!strcmp(tc->name, "msg_too_long"))
+			tc->msg = msg_too_long;
+	tc = testcases;
 
 	iov->relay.selftest.disable_strict = 1;
 	iov->relay.selftest.host2guc = host2guc_success;
@@ -196,6 +220,8 @@ static int mock_drops_malformed_guc2vf(void *arg)
 
 	iov->relay.selftest.disable_strict = 0;
 	iov->relay.selftest.host2guc = NULL;
+
+	kfree(msg_too_long);
 
 	return ret;
 }

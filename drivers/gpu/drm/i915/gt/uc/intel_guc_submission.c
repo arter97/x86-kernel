@@ -2311,10 +2311,9 @@ static int new_mlrc_guc_id(struct intel_guc *guc, struct intel_context *ce)
 
 static int new_slrc_guc_id(struct intel_guc *guc, struct intel_context *ce)
 {
-	unsigned int max;
+	u32 max;
 
 	GEM_BUG_ON(intel_context_is_parent(ce));
-
 	max = number_slrc_guc_id(guc);
 	if (!max)
 		return -ENOSPC;

@@ -6,6 +6,11 @@
 #include <drm/drm_print.h>
 
 #include "i915_drv.h"
+
+/* xe builds i915 display code with compat headers; avoid pulling i915 SR-IOV. */
+#ifndef _XE_I915_DRV_H_
+#include "i915_sriov.h"
+#endif
 #include "intel_display_core.h"
 #include "intel_display_power_map.h"
 #include "intel_display_power_well.h"

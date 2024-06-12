@@ -4,7 +4,7 @@
  */
 
 #include "i915_pci.h"
-#include "i915_wait_util.h"
+#include "i915_utils.h"
 #include "intel_iov.h"
 #include "intel_iov_event.h"
 #include "intel_iov_ggtt.h"
@@ -12,6 +12,8 @@
 #include "intel_iov_utils.h"
 #include "gt/intel_gt.h"
 #include "gt/uc/abi/guc_actions_pf_abi.h"
+
+#include "i915_wait_util.h"
 
 static void pf_state_worker_func(struct work_struct *w);
 

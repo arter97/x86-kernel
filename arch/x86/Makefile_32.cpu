@@ -48,7 +48,9 @@ ifeq ($(CONFIG_MTUNE_FOR),"generic")
 	cflags-$(CONFIG_X86_GENERIC) 	+= $(call tune,generic,$(call tune,i686))
 else
 	cflags-$(CONFIG_MARCH) += -march=$(CONFIG_MTUNE_FOR)
-	cflags-y += -mtune=$(CONFIG_MTUNE_FOR)
+	ifneq ($(CONFIG_MARCH_ONLY),y)
+		cflags-y += -mtune=$(CONFIG_MTUNE_FOR)
+	endif
 endif
 
 # Bug fix for binutils: this option is required in order to keep

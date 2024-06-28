@@ -179,7 +179,9 @@ else
         cflags-$(CONFIG_MCORE2)		+= -march=core2
         cflags-$(CONFIG_MATOM)		+= -march=atom
 	cflags-$(CONFIG_MARCH)		+= -march=$(CONFIG_MTUNE_FOR)
-	cflags-y			+= -mtune=$(CONFIG_MTUNE_FOR)
+	ifneq ($(CONFIG_MARCH_ONLY),y)
+		cflags-y			+= -mtune=$(CONFIG_MTUNE_FOR)
+	endif
         KBUILD_CFLAGS += $(cflags-y)
 
         rustflags-$(CONFIG_MK8)		+= -Ctarget-cpu=k8

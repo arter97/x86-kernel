@@ -326,6 +326,17 @@ config MARCH
 	  This will prevent the kernel from working if the CPU doesn't match.
 	  Say N if unsure.
 
+config MARCH_ONLY
+	bool "Apply the -mtune option to -march only, and drop the -mtune option"
+	depends on MARCH
+	default n
+	help
+	  Enabling this option will pass the -mtune string to the compiler's
+	  -march flag, and drop the -mtune flag.
+
+	  This will prevent the kernel from working if the CPU doesn't match.
+	  Say N if unsure.
+
 #
 # Define implied options from the CPU selection here
 config X86_INTERNODE_CACHE_SHIFT

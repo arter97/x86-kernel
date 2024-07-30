@@ -65,6 +65,17 @@ bool i915_error_injected(void);
 		drm_err(&(i915)->drm, fmt, ##__VA_ARGS__); \
 })
 
+#ifndef check_round_up_overflow
+#define check_round_up_overflow(a, b, d) __must_check_overflow(({              \
+	typeof(a) __a = (a);                                                    \
+	typeof(b) __b = (b);                                                    \
+	typeof(d) __d = (d);                                                    \
+	(void) (&__a == &__b);                                                  \
+	(void) (&__a == __d);                                                   \
+	(*__d = __a) && __builtin_add_overflow((__a-1) | (__b-1), 1, __d);      \
+}))
+#endif
+
 #define fetch_and_zero(ptr) ({						\
 	typeof(*ptr) __T = *(ptr);					\
 	*(ptr) = (typeof(*ptr))0;					\
@@ -160,6 +171,8 @@ static inline bool i915_run_as_guest(void)
 }
 
 bool i915_vtd_active(struct drm_i915_private *i915);
+
+#define make_u64(hi__, low__) ((u64)(hi__) << 32 | (low__))
 
 bool i915_direct_stolen_access(struct drm_i915_private *i915);
 

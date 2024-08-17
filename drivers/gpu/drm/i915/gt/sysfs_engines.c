@@ -507,6 +507,8 @@ void intel_engines_add_sysfs(struct drm_i915_private *i915)
 	if (!dir)
 		return;
 
+	i915->sysfs_engine = dir;
+
 	for_each_uabi_engine(engine, i915) {
 		struct kobject *kobj;
 
@@ -526,6 +528,8 @@ void intel_engines_add_sysfs(struct drm_i915_private *i915)
 			goto err_engine;
 
 		add_defaults(container_of(kobj, struct kobj_engine, base));
+
+		engine->kobj = kobj;
 
 		if (0) {
 err_object:

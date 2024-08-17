@@ -5,7 +5,9 @@
 
 #include "i915_drv.h"
 #include "intel_gt_ccs_mode.h"
+#include "intel_gt_print.h"
 #include "intel_gt_regs.h"
+#include "intel_gt_sysfs.h"
 
 static void intel_gt_apply_ccs_mode(struct intel_gt *gt)
 {
@@ -99,4 +101,23 @@ void intel_gt_ccs_mode_init(struct intel_gt *gt)
 
 	/* Initialize the CCS mode setting */
 	intel_gt_apply_ccs_mode(gt);
+}
+
+static ssize_t num_cslices_show(struct device *dev,
+				struct device_attribute *attr,
+				char *buff)
+{
+	struct intel_gt *gt = kobj_to_gt(&dev->kobj);
+	u32 num_slices;
+
+	num_slices = hweight32(CCS_MASK(gt));
+
+	return sysfs_emit(buff, "%u\n", num_slices);
+}
+static DEVICE_ATTR_RO(num_cslices);
+
+void intel_gt_sysfs_ccs_init(struct intel_gt *gt)
+{
+	if (sysfs_create_file(&gt->sysfs_gt, &dev_attr_num_cslices.attr))
+		gt_warn(gt, "Failed to create sysfs num_cslices files\n");
 }

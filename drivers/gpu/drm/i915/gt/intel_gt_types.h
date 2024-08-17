@@ -238,6 +238,13 @@ struct intel_gt {
 	 */
 	struct {
 		u32 mode_reg_val;
+
+		/*
+		 * CCS id_mask is the command streamer instance
+		 * exposed to the user. While the CCS_MASK(gt)
+		 * is the available unfused compute slices.
+		 */
+		intel_engine_mask_t id_mask;
 	} ccs;
 
 	/*

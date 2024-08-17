@@ -12,6 +12,7 @@
 static void intel_gt_apply_ccs_mode(struct intel_gt *gt)
 {
 	unsigned long cslices_mask = CCS_MASK(gt);
+	unsigned long ccs_mask = gt->ccs.id_mask;
 	u32 mode_val = 0;
 	/* CCS engine id, i.e. the engines position in the engine's bitmask */
 	int engine;
@@ -55,7 +56,7 @@ static void intel_gt_apply_ccs_mode(struct intel_gt *gt)
 	 *   slice 2: ccs2
 	 *   slice 3: ccs3
 	 */
-	engine = __ffs(cslices_mask);
+	engine = __ffs(ccs_mask);
 
 	for (cslice = 0; cslice < I915_MAX_CCS; cslice++) {
 		if (!(cslices_mask & BIT(cslice))) {
@@ -86,7 +87,7 @@ static void intel_gt_apply_ccs_mode(struct intel_gt *gt)
 			 * CCS mode, will be used later to
 			 * reset to a flexible value
 			 */
-			engine = __ffs(cslices_mask);
+			engine = __ffs(ccs_mask);
 			continue;
 		}
 	}
@@ -94,13 +95,45 @@ static void intel_gt_apply_ccs_mode(struct intel_gt *gt)
 	gt->ccs.mode_reg_val = mode_val;
 }
 
+static void __update_ccs_mask(struct intel_gt *gt, u32 ccs_mode)
+{
+	unsigned long cslices_mask = CCS_MASK(gt);
+	int i;
+
+	/* Mask off all the CCS engines */
+	gt->ccs.id_mask = 0;
+
+	for_each_set_bit(i, &cslices_mask, I915_MAX_CCS) {
+		gt->ccs.id_mask |= BIT(i);
+
+		ccs_mode--;
+		if (!ccs_mode)
+			break;
+	}
+
+	/*
+	 * It's impossible for 'ccs_mode' to be zero at this point.
+	 * This scenario would only occur if the 'ccs_mode' provided by
+	 * the caller exceeded the total number of CCS engines, a condition
+	 * we check before calling the 'update_ccs_mask()' function.
+	 */
+	GEM_BUG_ON(ccs_mode);
+
+	/* Initialize the CCS mode setting */
+	intel_gt_apply_ccs_mode(gt);
+}
+
 void intel_gt_ccs_mode_init(struct intel_gt *gt)
 {
 	if (!IS_DG2(gt->i915))
 		return;
 
-	/* Initialize the CCS mode setting */
-	intel_gt_apply_ccs_mode(gt);
+	/*
+	 * Set CCS balance mode 1 in the ccs_mask.
+	 *
+	 * During init the workaround are not set up yet.
+	 */
+	__update_ccs_mask(gt, 1);
 }
 
 static ssize_t num_cslices_show(struct device *dev,

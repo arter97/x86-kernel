@@ -9,7 +9,7 @@
 
 static void intel_gt_apply_ccs_mode(struct intel_gt *gt)
 {
-	unsigned long cslices_mask = gt->ccs.cslices;
+	unsigned long cslices_mask = CCS_MASK(gt);
 	u32 mode_val = 0;
 	/* CCS engine id, i.e. the engines position in the engine's bitmask */
 	int engine;

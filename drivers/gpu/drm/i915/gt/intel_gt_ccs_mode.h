@@ -6,7 +6,7 @@
 #ifndef __INTEL_GT_CCS_MODE_H__
 #define __INTEL_GT_CCS_MODE_H__
 
-struct intel_gt;
+#include "intel_gt.h"
 
 void intel_gt_ccs_mode_init(struct intel_gt *gt);
 

@@ -1735,6 +1735,9 @@ int vfs_mkobj(struct dentry *, umode_t,
 		int (*f)(struct dentry *, umode_t, void *),
 		void *);
 
+int vfs_fchown(struct file *file, uid_t user, gid_t group);
+int vfs_fchmod(struct file *file, umode_t mode);
+
 extern long vfs_ioctl(struct file *file, unsigned int cmd, unsigned long arg);
 
 #ifdef CONFIG_COMPAT
@@ -3619,11 +3622,11 @@ extern int generic_fadvise(struct file *file, loff_t offset, loff_t len,
 			   int advice);
 
 #if defined(CONFIG_IO_URING)
-extern struct sock *io_uring_get_socket(struct file *file);
+bool io_is_uring_fops(struct file *file);
 #else
-static inline struct sock *io_uring_get_socket(struct file *file)
+static inline bool io_is_uring_fops(struct file *file)
 {
-	return NULL;
+	return false;
 }
 #endif
 

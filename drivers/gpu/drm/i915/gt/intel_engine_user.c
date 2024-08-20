@@ -220,7 +220,7 @@ void intel_engines_driver_register(struct drm_i915_private *i915)
 			container_of(it, typeof(*engine), uabi_list);
 
 		if (intel_gt_has_unrecoverable_error(engine->gt))
-			continue; /* ignore incomplete engines */
+			goto clear_node_continue; /* ignore incomplete engines */
 
 		GEM_BUG_ON(engine->class >= ARRAY_SIZE(uabi_classes));
 		engine->uabi_class = uabi_classes[engine->class];
@@ -242,7 +242,7 @@ void intel_engines_driver_register(struct drm_i915_private *i915)
 			      engine->uabi_instance);
 
 		if (uabi_class > I915_LAST_UABI_ENGINE_CLASS)
-			continue;
+			goto clear_node_continue;
 
 		GEM_BUG_ON(uabi_class >=
 			   ARRAY_SIZE(i915->engine_uabi_class_count));
@@ -260,6 +260,11 @@ void intel_engines_driver_register(struct drm_i915_private *i915)
 
 		prev = &engine->uabi_node;
 		p = &prev->rb_right;
+
+		continue;
+
+clear_node_continue:
+		RB_CLEAR_NODE(&engine->uabi_node);
 	}
 
 	if (IS_ENABLED(CONFIG_DRM_I915_SELFTESTS) &&

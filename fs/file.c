@@ -311,9 +311,10 @@ static inline void __set_close_on_exec(unsigned int fd, struct fdtable *fdt,
 	}
 }
 
-static inline void __set_open_fd(unsigned int fd, struct fdtable *fdt)
+static inline void __set_open_fd(unsigned int fd, struct fdtable *fdt, bool set)
 {
 	__set_bit(fd, fdt->open_fds);
+	__set_close_on_exec(fd, fdt, set);
 	fd /= BITS_PER_LONG;
 	if (!~fdt->open_fds[fd])
 		__set_bit(fd, fdt->full_fds_bits);
@@ -580,8 +581,7 @@ repeat:
 	if (start <= files->next_fd)
 		files->next_fd = fd + 1;
 
-	__set_open_fd(fd, fdt);
-	__set_close_on_exec(fd, fdt, flags & O_CLOEXEC);
+	__set_open_fd(fd, fdt, flags & O_CLOEXEC);
 	error = fd;
 
 out:
@@ -1249,8 +1249,7 @@ __releases(&files->file_lock)
 		goto Ebusy;
 	get_file(file);
 	rcu_assign_pointer(fdt->fd[fd], file);
-	__set_open_fd(fd, fdt);
-	__set_close_on_exec(fd, fdt, flags & O_CLOEXEC);
+	__set_open_fd(fd, fdt, flags & O_CLOEXEC);
 	spin_unlock(&files->file_lock);
 
 	if (tofree)

@@ -296,7 +296,7 @@ static int igt_hang_sanitycheck(void *arg)
 	if (err)
 		return err;
 
-	for_each_engine(engine, gt, id) {
+	for_each_enabled_engine(engine, gt, id) {
 		struct intel_wedge_me w;
 		long timeout;
 
@@ -360,7 +360,7 @@ static int igt_reset_nop(void *arg)
 	reset_count = i915_reset_count(global);
 	count = 0;
 	do {
-		for_each_engine(engine, gt, id) {
+		for_each_enabled_engine(engine, gt, id) {
 			struct intel_context *ce;
 			int i;
 
@@ -433,7 +433,7 @@ static int igt_reset_nop_engine(void *arg)
 	if (!intel_has_reset_engine(gt))
 		return 0;
 
-	for_each_engine(engine, gt, id) {
+	for_each_enabled_engine(engine, gt, id) {
 		unsigned int reset_count, reset_engine_count, count;
 		struct intel_context *ce;
 		IGT_TIMEOUT(end_time);
@@ -553,7 +553,7 @@ static int igt_reset_fail_engine(void *arg)
 	if (!intel_has_reset_engine(gt))
 		return 0;
 
-	for_each_engine(engine, gt, id) {
+	for_each_enabled_engine(engine, gt, id) {
 		unsigned int count;
 		struct intel_context *ce;
 		IGT_TIMEOUT(end_time);
@@ -700,7 +700,7 @@ static int __igt_reset_engine(struct intel_gt *gt, bool active)
 			return err;
 	}
 
-	for_each_engine(engine, gt, id) {
+	for_each_enabled_engine(engine, gt, id) {
 		unsigned int reset_count, reset_engine_count;
 		unsigned long count;
 		bool using_guc = intel_engine_uses_guc(engine);
@@ -990,7 +990,7 @@ static int __igt_reset_engines(struct intel_gt *gt,
 	if (!threads)
 		return -ENOMEM;
 
-	for_each_engine(engine, gt, id) {
+	for_each_enabled_engine(engine, gt, id) {
 		unsigned long device = i915_reset_count(global);
 		unsigned long count = 0, reported;
 		bool using_guc = intel_engine_uses_guc(engine);
@@ -1010,7 +1010,7 @@ static int __igt_reset_engines(struct intel_gt *gt,
 		}
 
 		memset(threads, 0, sizeof(*threads) * I915_NUM_ENGINES);
-		for_each_engine(other, gt, tmp) {
+		for_each_enabled_engine(other, gt, tmp) {
 			struct kthread_worker *worker;
 
 			threads[tmp].resets =
@@ -1185,7 +1185,7 @@ restore:
 		}
 
 unwind:
-		for_each_engine(other, gt, tmp) {
+		for_each_enabled_engine(other, gt, tmp) {
 			int ret;
 
 			if (!threads[tmp].worker)
@@ -1621,7 +1621,7 @@ static int wait_for_others(struct intel_gt *gt,
 	struct intel_engine_cs *engine;
 	enum intel_engine_id id;
 
-	for_each_engine(engine, gt, id) {
+	for_each_enabled_engine(engine, gt, id) {
 		if (engine == exclude)
 			continue;
 
@@ -1649,7 +1649,7 @@ static int igt_reset_queue(void *arg)
 	if (err)
 		goto unlock;
 
-	for_each_engine(engine, gt, id) {
+	for_each_enabled_engine(engine, gt, id) {
 		struct intel_selftest_saved_policy saved;
 		struct i915_request *prev;
 		IGT_TIMEOUT(end_time);
@@ -1982,7 +1982,7 @@ static int igt_reset_engines_atomic(void *arg)
 		struct intel_engine_cs *engine;
 		enum intel_engine_id id;
 
-		for_each_engine(engine, gt, id) {
+		for_each_enabled_engine(engine, gt, id) {
 			err = igt_atomic_reset_engine(engine, p);
 			if (err)
 				goto out;

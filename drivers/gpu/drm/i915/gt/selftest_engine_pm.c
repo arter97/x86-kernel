@@ -203,7 +203,7 @@ static int live_engine_timestamps(void *arg)
 	if (GRAPHICS_VER(gt->i915) < 8)
 		return 0;
 
-	for_each_engine(engine, gt, id) {
+	for_each_enabled_engine(engine, gt, id) {
 		int err;
 
 		st_engine_heartbeat_disable(engine);
@@ -257,7 +257,7 @@ static int live_engine_busy_stats(void *arg)
 		return -ENOMEM;
 
 	GEM_BUG_ON(intel_gt_pm_is_awake(gt));
-	for_each_engine(engine, gt, id) {
+	for_each_enabled_engine(engine, gt, id) {
 		struct i915_request *rq;
 		ktime_t busyness, dummy;
 		ktime_t de, dt;
@@ -363,7 +363,7 @@ static int live_engine_pm(void *arg)
 	}
 
 	GEM_BUG_ON(intel_gt_pm_is_awake(gt));
-	for_each_engine(engine, gt, id) {
+	for_each_enabled_engine(engine, gt, id) {
 		const typeof(*igt_atomic_phases) *p;
 
 		for (p = igt_atomic_phases; p->name; p++) {

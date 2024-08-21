@@ -271,7 +271,7 @@ static int live_mocs_kernel(void *arg)
 	if (err)
 		return err;
 
-	for_each_engine(engine, gt, id) {
+	for_each_enabled_engine(engine, gt, id) {
 		intel_engine_pm_get(engine);
 		err = check_mocs_engine(&mocs, engine->kernel_context);
 		intel_engine_pm_put(engine);
@@ -297,7 +297,7 @@ static int live_mocs_clean(void *arg)
 	if (err)
 		return err;
 
-	for_each_engine(engine, gt, id) {
+	for_each_enabled_engine(engine, gt, id) {
 		struct intel_context *ce;
 
 		ce = mocs_context_create(engine);
@@ -400,7 +400,7 @@ static int live_mocs_reset(void *arg)
 		return err;
 
 	igt_global_reset_lock(gt);
-	for_each_engine(engine, gt, id) {
+	for_each_enabled_engine(engine, gt, id) {
 		bool using_guc = intel_engine_uses_guc(engine);
 		struct intel_selftest_saved_policy saved;
 		struct intel_context *ce;

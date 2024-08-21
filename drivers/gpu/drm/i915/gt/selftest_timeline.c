@@ -543,7 +543,7 @@ static int live_hwsp_engine(void *arg)
 		return -ENOMEM;
 
 	count = 0;
-	for_each_engine(engine, gt, id) {
+	for_each_enabled_engine(engine, gt, id) {
 		if (!intel_engine_can_store_dword(engine))
 			continue;
 
@@ -619,7 +619,7 @@ static int live_hwsp_alternate(void *arg)
 
 	count = 0;
 	for (n = 0; n < NUM_TIMELINES; n++) {
-		for_each_engine(engine, gt, id) {
+		for_each_enabled_engine(engine, gt, id) {
 			struct intel_timeline *tl;
 			struct i915_request *rq;
 
@@ -691,7 +691,7 @@ static int live_hwsp_wrap(void *arg)
 	if (err)
 		goto out_free;
 
-	for_each_engine(engine, gt, id) {
+	for_each_enabled_engine(engine, gt, id) {
 		const u32 *hwsp_seqno[2];
 		struct i915_request *rq;
 		u32 seqno[2];
@@ -1016,7 +1016,7 @@ static int live_hwsp_read(void *arg)
 			goto out;
 	}
 
-	for_each_engine(engine, gt, id) {
+	for_each_enabled_engine(engine, gt, id) {
 		struct intel_context *ce;
 		unsigned long count = 0;
 		IGT_TIMEOUT(end_time);
@@ -1188,7 +1188,7 @@ static int live_hwsp_rollover_kernel(void *arg)
 	 * see a seqno rollover.
 	 */
 
-	for_each_engine(engine, gt, id) {
+	for_each_enabled_engine(engine, gt, id) {
 		struct intel_context *ce = engine->kernel_context;
 		struct intel_timeline *tl = ce->timeline;
 		struct i915_request *rq[3] = {};
@@ -1266,7 +1266,7 @@ static int live_hwsp_rollover_user(void *arg)
 	 * on the user's timeline.
 	 */
 
-	for_each_engine(engine, gt, id) {
+	for_each_enabled_engine(engine, gt, id) {
 		struct i915_request *rq[3] = {};
 		struct intel_timeline *tl;
 		struct intel_context *ce;
@@ -1357,7 +1357,7 @@ static int live_hwsp_recycle(void *arg)
 	 */
 
 	count = 0;
-	for_each_engine(engine, gt, id) {
+	for_each_enabled_engine(engine, gt, id) {
 		IGT_TIMEOUT(end_time);
 
 		if (!intel_engine_can_store_dword(engine))

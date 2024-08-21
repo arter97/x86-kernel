@@ -70,7 +70,7 @@ reference_lists_init(struct intel_gt *gt, struct wa_lists *lists)
 	gt_init_workarounds(gt, &lists->gt_wa_list);
 	wa_init_finish(&lists->gt_wa_list);
 
-	for_each_engine(engine, gt, id) {
+	for_each_enabled_engine(engine, gt, id) {
 		struct i915_wa_list *wal = &lists->engine[id].wa_list;
 
 		wa_init_start(wal, gt, "REF", engine->name);
@@ -89,7 +89,7 @@ reference_lists_fini(struct intel_gt *gt, struct wa_lists *lists)
 	struct intel_engine_cs *engine;
 	enum intel_engine_id id;
 
-	for_each_engine(engine, gt, id)
+	for_each_enabled_engine(engine, gt, id)
 		intel_wa_list_free(&lists->engine[id].wa_list);
 
 	intel_wa_list_free(&lists->gt_wa_list);
@@ -764,7 +764,7 @@ static int live_dirty_whitelist(void *arg)
 	if (GRAPHICS_VER(gt->i915) < 7) /* minimum requirement for LRI, SRM, LRM */
 		return 0;
 
-	for_each_engine(engine, gt, id) {
+	for_each_enabled_engine(engine, gt, id) {
 		struct intel_context *ce;
 		int err;
 
@@ -794,7 +794,7 @@ static int live_reset_whitelist(void *arg)
 	/* If we reset the gpu, we should not lose the RING_NONPRIV */
 	igt_global_reset_lock(gt);
 
-	for_each_engine(engine, gt, id) {
+	for_each_enabled_engine(engine, gt, id) {
 		if (engine->whitelist.count == 0)
 			continue;
 
@@ -1089,7 +1089,7 @@ static int live_isolated_whitelist(void *arg)
 		}
 	}
 
-	for_each_engine(engine, gt, id) {
+	for_each_enabled_engine(engine, gt, id) {
 		struct intel_context *ce[2];
 
 		if (!engine->kernel_context->vm)
@@ -1172,7 +1172,7 @@ verify_wa_lists(struct intel_gt *gt, struct wa_lists *lists,
 
 	ok &= wa_list_verify(gt, &lists->gt_wa_list, str);
 
-	for_each_engine(engine, gt, id) {
+	for_each_enabled_engine(engine, gt, id) {
 		struct intel_context *ce;
 
 		ce = intel_context_create(engine);
@@ -1257,7 +1257,7 @@ live_engine_reset_workarounds(void *arg)
 
 	reference_lists_init(gt, lists);
 
-	for_each_engine(engine, gt, id) {
+	for_each_enabled_engine(engine, gt, id) {
 		struct intel_selftest_saved_policy saved;
 		bool using_guc = intel_engine_uses_guc(engine);
 		bool ok;

@@ -95,7 +95,7 @@ static int live_gt_clocks(void *arg)
 	wakeref = intel_gt_pm_get(gt);
 	intel_uncore_forcewake_get(gt->uncore, FORCEWAKE_ALL);
 
-	for_each_engine(engine, gt, id) {
+	for_each_enabled_engine(engine, gt, id) {
 		u32 cycles;
 		u32 expected;
 		u64 time;

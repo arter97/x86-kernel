@@ -508,6 +508,11 @@ void intel_engines_add_sysfs(struct drm_i915_private *i915)
 
 	i915->sysfs_engine = dir;
 
+	/*
+	 * We are still booting i915 and we are sure we are running
+	 * single-threaded. We don't need at this point to protect the
+	 * uabi_engines access list with the mutex.
+	 */
 	for_each_uabi_engine(engine, i915) {
 		struct kobject *kobj;
 

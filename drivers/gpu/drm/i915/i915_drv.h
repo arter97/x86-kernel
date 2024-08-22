@@ -246,6 +246,10 @@ struct drm_i915_private {
 		struct rb_root uabi_engines;
 	};
 	unsigned int engine_uabi_class_count[I915_LAST_UABI_ENGINE_CLASS + 1];
+	/*
+	 * Protect access to the uabi_engines list.
+	 */
+	struct mutex uabi_engines_mutex;
 
 	/* protects the irq masks */
 	spinlock_t irq_lock;

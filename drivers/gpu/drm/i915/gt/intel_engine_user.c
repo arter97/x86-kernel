@@ -210,6 +210,13 @@ void intel_engines_driver_register(struct drm_i915_private *i915)
 	LIST_HEAD(engines);
 
 	sort_engines(i915, &engines);
+	mutex_init(&i915->uabi_engines_mutex);
+
+	/*
+	 * We are still booting i915 and we are sure we are running
+	 * single-threaded. We don't need at this point to protect the
+	 * uabi_engines access list with the mutex.
+	 */
 
 	prev = NULL;
 	p = &i915->uabi_engines.rb_node;

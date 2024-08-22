@@ -1022,6 +1022,7 @@ create_event_attributes(struct i915_pmu *pmu)
 		}
 	}
 
+	mutex_lock(&i915->uabi_engines_mutex);
 	for_each_uabi_engine(engine, i915) {
 		for (i = 0; i < ARRAY_SIZE(engine_events); i++) {
 			if (!engine_event_status(engine,
@@ -1029,6 +1030,7 @@ create_event_attributes(struct i915_pmu *pmu)
 				count++;
 		}
 	}
+	mutex_unlock(&i915->uabi_engines_mutex);
 
 	/* Allocate attribute objects and table. */
 	i915_attr = kcalloc(count, sizeof(*i915_attr), GFP_KERNEL);
@@ -1086,6 +1088,7 @@ create_event_attributes(struct i915_pmu *pmu)
 	}
 
 	/* Initialize supported engine counters. */
+	mutex_lock(&i915->uabi_engines_mutex);
 	for_each_uabi_engine(engine, i915) {
 		for (i = 0; i < ARRAY_SIZE(engine_events); i++) {
 			char *str;
@@ -1097,7 +1100,7 @@ create_event_attributes(struct i915_pmu *pmu)
 			str = kasprintf(GFP_KERNEL, "%s-%s",
 					engine->name, engine_events[i].name);
 			if (!str)
-				goto err;
+				goto err_unlock;
 
 			*attr_iter++ = &i915_iter->attr.attr;
 			i915_iter =
@@ -1109,17 +1112,21 @@ create_event_attributes(struct i915_pmu *pmu)
 			str = kasprintf(GFP_KERNEL, "%s-%s.unit",
 					engine->name, engine_events[i].name);
 			if (!str)
-				goto err;
+				goto err_unlock;
 
 			*attr_iter++ = &pmu_iter->attr.attr;
 			pmu_iter = add_pmu_attr(pmu_iter, str, "ns");
 		}
 	}
+	mutex_unlock(&i915->uabi_engines_mutex);
 
 	pmu->i915_attr = i915_attr;
 	pmu->pmu_attr = pmu_attr;
 
 	return attr;
+
+err_unlock:
+	mutex_unlock(&i915->uabi_engines_mutex);
 
 err:;
 	for (attr_iter = attr; *attr_iter; attr_iter++)

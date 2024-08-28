@@ -2519,4 +2519,8 @@ long kvm_arch_vcpu_pre_fault_memory(struct kvm_vcpu *vcpu,
 				    struct kvm_pre_fault_memory *range);
 #endif
 
+void kvm_arch_vcpu_pre_memory_mapping(struct kvm_vcpu *vcpu);
+int kvm_arch_vcpu_memory_mapping(struct kvm_vcpu *vcpu,
+				 struct kvm_memory_mapping *mapping);
+
 #endif

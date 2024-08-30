@@ -396,7 +396,7 @@ static int tdx_get_capabilities(struct kvm_tdx_cmd *cmd)
 		.xfam_fixed0 = tdx_info->xfam_fixed0,
 		.xfam_fixed1 = tdx_info->xfam_fixed1,
 		.supported_gpaw = TDX_CAP_GPAW_48 |
-		((kvm_get_shadow_phys_bits() >= 52 &&
+		((kvm_host.maxphyaddr >= 52 &&
 		  cpu_has_vmx_ept_5levels()) ? TDX_CAP_GPAW_52 : 0),
 		.nr_cpuid_configs = tdx_info->num_cpuid_config,
 		.padding = 0,

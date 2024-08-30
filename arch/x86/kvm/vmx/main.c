@@ -7,6 +7,7 @@
 #include "pmu.h"
 #include "posted_intr.h"
 #include "tdx.h"
+#include "tdx_arch.h"
 
 static bool enable_tdx __ro_after_init;
 module_param_named(tdx, enable_tdx, bool, 0444);
@@ -19,6 +20,17 @@ static bool vt_is_vm_type_supported(unsigned long type)
 		(enable_tdx && tdx_is_vm_type_supported(type));
 }
 #endif
+
+static int vt_max_vcpus(struct kvm *kvm)
+{
+	if (!kvm)
+		return KVM_MAX_VCPUS;
+
+	if (is_td(kvm))
+		return min(kvm->max_vcpus, TDX_MAX_VCPUS);
+
+	return kvm->max_vcpus;
+}
 
 static __init int vt_hardware_setup(void)
 {
@@ -41,6 +53,14 @@ static void vt_hardware_unsetup(void)
 	if (enable_tdx)
 		tdx_hardware_unsetup();
 	vmx_hardware_unsetup();
+}
+
+static int vt_vm_enable_cap(struct kvm *kvm, struct kvm_enable_cap *cap)
+{
+	if (is_td(kvm))
+		return tdx_vm_enable_cap(kvm, cap);
+
+	return -EINVAL;
 }
 
 static int vt_vm_init(struct kvm *kvm)
@@ -83,6 +103,8 @@ struct kvm_x86_ops vt_x86_ops __initdata = {
 	.has_emulated_msr = vmx_has_emulated_msr,
 
 	.vm_size = sizeof(struct kvm_vmx),
+	.max_vcpus = vt_max_vcpus,
+	.vm_enable_cap = vt_vm_enable_cap,
 	.vm_init = vt_vm_init,
 	.vm_destroy = vmx_vm_destroy,
 

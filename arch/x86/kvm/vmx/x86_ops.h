@@ -137,10 +137,15 @@ void vmx_setup_mce(struct kvm_vcpu *vcpu);
 int __init tdx_hardware_setup(struct kvm_x86_ops *x86_ops);
 void tdx_hardware_unsetup(void);
 int tdx_vm_ioctl(struct kvm *kvm, void __user *argp);
+int tdx_vm_enable_cap(struct kvm *kvm, struct kvm_enable_cap *cap);
 #else
 static inline int tdx_hardware_setup(struct kvm_x86_ops *x86_ops) { return -EOPNOTSUPP; }
 static inline void tdx_hardware_unsetup(void) {}
 static inline int tdx_vm_ioctl(struct kvm *kvm, void __user *argp) { return -EOPNOTSUPP; }
+static inline int tdx_vm_enable_cap(struct kvm *kvm, struct kvm_enable_cap *cap)
+{
+	return -EINVAL;
+}
 #endif
 
 #endif /* __KVM_X86_VMX_X86_OPS_H */

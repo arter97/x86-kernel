@@ -3347,6 +3347,17 @@ static int kvm_handle_noslot_fault(struct kvm_vcpu *vcpu,
 
 static bool page_fault_can_be_fast(struct kvm *kvm, struct kvm_page_fault *fault)
 {
+
+	/*
+	 * TDX private mapping doesn't support fast page fault because the EPT
+	 * entry is read/written with TDX SEAMCALLs instead of direct memory
+	 * access.
+	 * For other VM type, kvm_is_private_gpa() is always false because
+	 * gfn_shared_mask is zero.
+	 */
+	if (kvm_is_private_gpa(kvm, fault->addr))
+		return false;
+
 	/*
 	 * Page faults with reserved bits set, i.e. faults on MMIO SPTEs, only
 	 * reach the common page fault handler if the SPTE has an invalid MMIO

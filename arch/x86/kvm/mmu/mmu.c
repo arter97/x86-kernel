@@ -1579,8 +1579,13 @@ bool kvm_unmap_gfn_range(struct kvm *kvm, struct kvm_gfn_range *range)
 						 range->start, range->end,
 						 range->may_block, flush);
 
-	if (tdp_mmu_enabled)
+	if (tdp_mmu_enabled) {
 		flush = kvm_tdp_mmu_unmap_gfn_range(kvm, range, flush);
+	} else {
+		/* TDX supports only TDP-MMU case. */
+		WARN_ON_ONCE(1);
+		flush = true;
+	}
 
 	if (kvm_x86_ops.set_apic_access_page_addr &&
 	    range->slot->id == APIC_ACCESS_PAGE_PRIVATE_MEMSLOT)
@@ -6592,7 +6597,7 @@ static void kvm_mmu_zap_all_fast(struct kvm *kvm)
 	 * e.g. before kvm_zap_obsolete_pages() could drop mmu_lock and yield.
 	 */
 	if (tdp_mmu_enabled)
-		kvm_tdp_mmu_invalidate_all_roots(kvm);
+		kvm_tdp_mmu_invalidate_all_roots(kvm, true);
 
 	/*
 	 * Notify all vcpus to reload its shadow page table and flush TLB.
@@ -6710,7 +6715,16 @@ void kvm_zap_gfn_range(struct kvm *kvm, gfn_t gfn_start, gfn_t gfn_end)
 	flush = kvm_rmap_zap_gfn_range(kvm, gfn_start, gfn_end);
 
 	if (tdp_mmu_enabled)
-		flush = kvm_tdp_mmu_zap_leafs(kvm, gfn_start, gfn_end, flush);
+		/*
+		 * zap_private = false. Zap only shared pages.
+		 *
+		 * kvm_zap_gfn_range() is used when MTRR or PAT memory
+		 * type was changed.  Later on the next kvm page fault,
+		 * populate it with updated spte entry.
+		 * Because only WB is supported for private pages, don't
+		 * care of private pages.
+		 */
+		flush = kvm_tdp_mmu_zap_leafs(kvm, gfn_start, gfn_end, flush, false);
 
 	if (flush)
 		kvm_flush_remote_tlbs_range(kvm, gfn_start, gfn_end - gfn_start);
@@ -7199,6 +7213,13 @@ static void kvm_mmu_zap_memslot(struct kvm *kvm,
 		.start = slot->base_gfn,
 		.end = slot->base_gfn + slot->npages,
 		.may_block = true,
+
+		/*
+		 * This handles both private gfn and shared gfn.
+		 * All private page should be zapped on memslot deletion.
+		 */
+		.only_private = true,
+		.only_shared = true,
 	};
 	bool flush;
 
@@ -7217,9 +7238,10 @@ static inline bool kvm_memslot_flush_zap_all(struct kvm *kvm)
 void kvm_arch_flush_shadow_memslot(struct kvm *kvm,
 				   struct kvm_memory_slot *slot)
 {
-	if (kvm_memslot_flush_zap_all(kvm))
+	/* TODO: I am not sure below logic is correct, need double check*/
+	if (kvm_memslot_flush_zap_all(kvm) && !kvm_gfn_shared_mask(kvm))
 		kvm_mmu_zap_all_fast(kvm);
-	else
+	else if (kvm_gfn_shared_mask(kvm))
 		kvm_mmu_zap_memslot(kvm, slot);
 }
 

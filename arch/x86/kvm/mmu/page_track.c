@@ -23,6 +23,10 @@
 static bool kvm_external_write_tracking_enabled(struct kvm *kvm)
 {
 #ifdef CONFIG_KVM_EXTERNAL_WRITE_TRACKING
+
+	if (kvm->arch.vm_type == KVM_X86_TDX_VM)
+		return false;
+
 	/*
 	 * Read external_write_tracking_enabled before related pointers.  Pairs
 	 * with the smp_store_release in kvm_page_track_write_tracking_enable().

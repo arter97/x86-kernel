@@ -4387,23 +4387,27 @@ static inline u8 kvm_max_level_for_order(int order)
 	return PG_LEVEL_4K;
 }
 
-static u8 kvm_max_private_mapping_level(struct kvm *kvm, kvm_pfn_t pfn,
-					u8 max_level, int gmem_order)
+static u8 kvm_max_private_mapping_level(struct kvm *kvm, kvm_pfn_t pfn, gfn_t gfn,
+					u8 max_level, int gmem_order, bool is_private)
 {
 	u8 req_max_level;
 
 	if (max_level == PG_LEVEL_4K)
 		return PG_LEVEL_4K;
 
-	max_level = min(kvm_max_level_for_order(gmem_order), max_level);
-	if (max_level == PG_LEVEL_4K)
+	req_max_level = min(kvm_max_level_for_order(gmem_order), max_level);
+	if (req_max_level == PG_LEVEL_4K)
 		return PG_LEVEL_4K;
 
-	req_max_level = kvm_x86_call(private_max_mapping_level)(kvm, pfn);
+	#if 0
+	req_max_level = kvm_x86_call(private_max_mapping_level)(kvm, pfn, gfn, is_private);
 	if (req_max_level)
 		max_level = min(max_level, req_max_level);
+	#else
+	kvm_x86_call(private_max_mapping_level)(kvm, pfn, gfn, is_private, &req_max_level);
+	#endif
 
-	return max_level;
+	return req_max_level;
 }
 
 static int kvm_faultin_pfn_private(struct kvm_vcpu *vcpu,
@@ -4425,7 +4429,8 @@ static int kvm_faultin_pfn_private(struct kvm_vcpu *vcpu,
 
 	fault->map_writable = !(fault->slot->flags & KVM_MEM_READONLY);
 	fault->max_level = kvm_max_private_mapping_level(vcpu->kvm, fault->pfn,
-							 fault->max_level, max_order);
+							 fault->gfn, fault->max_level, max_order,
+							 fault->is_private);
 
 	return RET_PF_CONTINUE;
 }

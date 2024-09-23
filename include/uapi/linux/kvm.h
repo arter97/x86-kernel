@@ -1663,6 +1663,8 @@ struct kvm_pre_fault_memory {
 	__u64 padding[5];
 };
 
+#define KVM_GUEST_MEMFD_ALLOW_HUGEPAGE		(1ULL << 0)
+
 #define KVM_MEMORY_MAPPING	_IOWR(KVMIO, 0xd5, struct kvm_memory_mapping)
 
 struct kvm_memory_mapping {

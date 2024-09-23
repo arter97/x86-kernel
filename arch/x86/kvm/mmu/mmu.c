@@ -4773,6 +4773,11 @@ bool kvm_mmu_may_ignore_guest_pat(void)
 
 int kvm_tdp_page_fault(struct kvm_vcpu *vcpu, struct kvm_page_fault *fault)
 {
+	u8 err_level = PFERR_LEVEL(fault->error_code);
+
+	if (err_level)
+		fault->max_level = min(fault->max_level, err_level);
+
 #ifdef CONFIG_X86_64
 	if (tdp_mmu_enabled)
 		return kvm_tdp_mmu_page_fault(vcpu, fault);

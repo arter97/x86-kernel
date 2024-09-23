@@ -123,6 +123,11 @@ int tdx_enable(void);
 const char *tdx_dump_mce_info(struct mce *m);
 void tdx_reset_memory(void);
 
+struct notifier_block;
+
+int tdx_register_memory_reset_notifier(struct notifier_block *nb);
+void tdx_unregister_memory_reset_notifier(struct notifier_block *nb);
+
 struct tdx_metadata_field_mapping {
 	u64 field_id;
 	int offset;
@@ -150,6 +155,15 @@ static inline int tdx_cpu_enable(void) { return -ENODEV; }
 static inline int tdx_enable(void)  { return -ENODEV; }
 static inline const char *tdx_dump_mce_info(struct mce *m) { return NULL; }
 static inline void tdx_reset_memory(void) { }
+
+struct notifier_block;
+
+static inline int tdx_register_memory_reset_notifier(struct notifier_block *nb)
+{
+	return -EOPNOTSUPP;
+}
+static inline void tdx_unregister_memory_reset_notifier(
+		struct notifier_block *nb) { }
 #endif	/* CONFIG_INTEL_TDX_HOST */
 
 #endif /* !__ASSEMBLY__ */

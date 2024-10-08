@@ -4720,6 +4720,17 @@ out_free1:
 		break;
 	}
 #endif
+	case KVM_MEMORY_MAPPING: {
+		struct kvm_memory_mapping mapping;
+
+		r = -EFAULT;
+		if (copy_from_user(&mapping, argp, sizeof(mapping)))
+			break;
+		r = kvm_vcpu_memory_mapping(vcpu, &mapping);
+		if (copy_to_user(argp, &mapping, sizeof(mapping)))
+			r = -EFAULT;
+		break;
+	}
 	default:
 		r = kvm_arch_vcpu_ioctl(filp, ioctl, arg);
 	}
@@ -4762,17 +4773,6 @@ static long kvm_vcpu_compat_ioctl(struct file *filp,
 			r = kvm_vcpu_ioctl_set_sigmask(vcpu, &sigset);
 		} else
 			r = kvm_vcpu_ioctl_set_sigmask(vcpu, NULL);
-		break;
-	}
-	case KVM_MEMORY_MAPPING: {
-		struct kvm_memory_mapping mapping;
-
-		r = -EFAULT;
-		if (copy_from_user(&mapping, argp, sizeof(mapping)))
-			break;
-		r = kvm_vcpu_memory_mapping(vcpu, &mapping);
-		if (copy_to_user(argp, &mapping, sizeof(mapping)))
-			r = -EFAULT;
 		break;
 	}
 	default:

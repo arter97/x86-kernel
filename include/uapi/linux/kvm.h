@@ -1654,7 +1654,8 @@ struct kvm_create_guest_memfd {
 	__u64 reserved[6];
 };
 
-#define KVM_PRE_FAULT_MEMORY	_IOWR(KVMIO, 0xd5, struct kvm_pre_fault_memory)
+/* Change from 0xd5 to 0xd6 to be compatible with older QEMU version */
+#define KVM_PRE_FAULT_MEMORY	_IOWR(KVMIO, 0xd6, struct kvm_pre_fault_memory)
 
 struct kvm_pre_fault_memory {
 	__u64 gpa;

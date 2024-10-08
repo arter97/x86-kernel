@@ -4427,6 +4427,7 @@ static int kvm_faultin_pfn_private(struct kvm_vcpu *vcpu,
 		return r;
 	}
 
+	fault->host_level = kvm_max_level_for_order(max_order);
 	fault->map_writable = !(fault->slot->flags & KVM_MEM_READONLY);
 	fault->max_level = kvm_max_private_mapping_level(vcpu->kvm, fault->pfn,
 							 fault->gfn, fault->max_level, max_order,

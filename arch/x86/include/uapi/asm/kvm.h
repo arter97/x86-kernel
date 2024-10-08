@@ -921,10 +921,10 @@ struct kvm_hyperv_eventfd {
 
 #define KVM_X86_DEFAULT_VM	0
 #define KVM_X86_SW_PROTECTED_VM	1
-#define KVM_X86_SEV_VM		2
+#define KVM_X86_SEV_VM		5
 #define KVM_X86_SEV_ES_VM	3
 #define KVM_X86_SNP_VM		4
-#define KVM_X86_TDX_VM          5
+#define KVM_X86_TDX_VM          2
 
 /* Trust Domain eXtension sub-ioctl() commands. */
 enum kvm_tdx_cmd_id {

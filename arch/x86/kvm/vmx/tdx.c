@@ -596,6 +596,8 @@ int tdx_vm_init(struct kvm *kvm)
 //	kvm_mmu_set_mmio_spte_value(kvm, 0);
 	kvm->arch.shadow_mmio_value = 0;
 
+	kvm->arch.has_private_mem = true;
+
 	/*
 	 * This function initializes only KVM software construct.  It doesn't
 	 * initialize TDX stuff, e.g. TDCS, TDR, TDCX, HKID etc.

@@ -605,6 +605,7 @@ void ipu6_isys_csi2_sof_event_by_stream(struct ipu6_isys_stream *stream)
 		.type = V4L2_EVENT_FRAME_SYNC,
 	};
 
+	ev.id = stream->vc;
 	ev.u.frame_sync.frame_sequence = atomic_fetch_inc(&stream->sequence);
 	v4l2_event_queue(vdev, &ev);
 

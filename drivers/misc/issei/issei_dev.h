@@ -152,4 +152,9 @@ struct issei_device {
 	char hw[] __aligned(sizeof(void *));
 };
 
+int issei_start(struct issei_device *idev);
+void issei_stop(struct issei_device *idev);
+
+bool issei_is_busy(struct issei_device *idev);
+
 #endif /* _ISSEI_DEV_H_ */

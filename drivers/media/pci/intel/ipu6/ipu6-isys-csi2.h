@@ -43,6 +43,9 @@ struct ipu6_isys_csi2 {
 	u32 receiver_errors;
 	unsigned int nlanes;
 	unsigned int port;
+#ifdef CONFIG_VIDEO_INTEL_IPU6_ISYS_RESET
+	bool is_multiple;
+#endif
 };
 
 struct ipu6_isys_csi2_timing {

@@ -602,6 +602,9 @@ int ipu6_isys_csi2_get_remote_desc(u32 source_stream,
 	unsigned int i;
 	int ret;
 
+#ifdef CONFIG_VIDEO_INTEL_IPU6_ISYS_RESET
+	csi2->is_multiple = false;
+#endif
 	source = media_entity_to_v4l2_subdev(source_entity);
 	if (!source)
 		return -EPIPE;
@@ -639,5 +642,9 @@ int ipu6_isys_csi2_get_remote_desc(u32 source_stream,
 
 	*entry = *desc_entry;
 
+#ifdef CONFIG_VIDEO_INTEL_IPU6_ISYS_RESET
+	csi2->is_multiple = true;
+	dev_dbg(dev, "set csi2->is_multiple is true.\n");
+#endif
 	return 0;
 }

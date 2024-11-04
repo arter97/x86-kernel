@@ -139,5 +139,8 @@ u32 ipu6_isys_get_data_size(struct ipu6_isys_video *av);
 u32 ipu6_isys_get_bytes_per_line(struct ipu6_isys_video *av);
 u32 ipu6_isys_get_frame_width(struct ipu6_isys_video *av);
 u32 ipu6_isys_get_frame_height(struct ipu6_isys_video *av);
+#ifdef CONFIG_VIDEO_INTEL_IPU6_ISYS_RESET
+bool is_support_vc(struct ipu6_isys_video *av);
+#endif
 
 #endif /* IPU6_ISYS_VIDEO_H */

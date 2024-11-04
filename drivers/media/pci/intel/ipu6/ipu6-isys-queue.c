@@ -895,7 +895,7 @@ static void stop_streaming(struct vb2_queue *q)
 	mutex_unlock(&av->isys->reset_mutex);
 
 	if (av->isys->need_reset) {
-		if (!stream->nr_streaming)
+		if (!stream->nr_streaming && !is_support_vc(av))
 			ipu_isys_reset(av, stream);
 		else
 			av->isys->need_reset = 0;

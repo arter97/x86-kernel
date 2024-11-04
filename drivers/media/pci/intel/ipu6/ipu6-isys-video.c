@@ -537,6 +537,21 @@ static int ipu6_isys_fw_pin_cfg(struct ipu6_isys_video *av,
 	return 0;
 }
 
+#ifdef CONFIG_VIDEO_INTEL_IPU6_ISYS_RESET
+bool is_support_vc(struct ipu6_isys_video *av)
+{
+	struct media_pad *remote_pad = media_pad_remote_pad_first(av->vdev.entity.pads);
+	struct v4l2_subdev *sd;
+	struct device *dev = &av->isys->adev->auxdev.dev;
+
+	sd = media_entity_to_v4l2_subdev(remote_pad->entity);
+	struct ipu6_isys_subdev *asd = to_ipu6_isys_subdev(sd);
+	struct ipu6_isys_csi2 *csi2 = to_ipu6_isys_csi2(asd);
+	dev_dbg(dev, "csi2->is_multiple = %d\n", csi2->is_multiple);
+	return csi2->is_multiple;
+}
+
+#endif
 static int start_stream_firmware(struct ipu6_isys_video *av,
 				 struct ipu6_isys_buffer_list *bl)
 {
@@ -618,11 +633,10 @@ static int start_stream_firmware(struct ipu6_isys_video *av,
 
 	reinit_completion(&stream->stream_start_completion);
 #ifdef CONFIG_VIDEO_INTEL_IPU6_ISYS_RESET
-	send_type = IPU6_FW_ISYS_SEND_TYPE_STREAM_START;
-	ret = ipu6_fw_isys_simple_cmd(av->isys, stream->stream_handle,
-					      send_type);
+	if (bl && is_support_vc(av)) {
 #else
 	if (bl) {
+#endif
 		send_type = IPU6_FW_ISYS_SEND_TYPE_STREAM_START_AND_CAPTURE;
 		ipu6_fw_isys_dump_frame_buff_set(dev, buf,
 						 stream_cfg->nof_output_pins);
@@ -634,7 +648,6 @@ static int start_stream_firmware(struct ipu6_isys_video *av,
 		ret = ipu6_fw_isys_simple_cmd(av->isys, stream->stream_handle,
 					      send_type);
 	}
-#endif
 
 	if (ret < 0) {
 		dev_err(dev, "can't start streaming (%d)\n", ret);
@@ -654,7 +667,7 @@ static int start_stream_firmware(struct ipu6_isys_video *av,
 		goto out_stream_close;
 	}
 #ifdef CONFIG_VIDEO_INTEL_IPU6_ISYS_RESET
-	if (bl) {
+	if (bl && !is_support_vc(av)) {
 		dev_dbg(dev, "start stream: capture\n");
 		send_type = IPU6_FW_ISYS_SEND_TYPE_STREAM_CAPTURE;
 		ipu6_fw_isys_dump_frame_buff_set(dev, buf, stream_cfg->nof_output_pins);
@@ -666,7 +679,8 @@ static int start_stream_firmware(struct ipu6_isys_video *av,
 			dev_err(dev, "can't queue buffers (%d)\n", ret);
 			goto out_stream_close;
 		}
-	}
+	} else
+		dev_dbg(dev, "start stream: complete\n");
 
 #else
 	dev_dbg(dev, "start stream: complete\n");

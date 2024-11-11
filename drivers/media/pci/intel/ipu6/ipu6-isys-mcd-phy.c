@@ -644,7 +644,8 @@ static int ipu6_isys_driver_port_to_phy_port(struct ipu6_isys_csi2_config *cfg)
 #if IS_ENABLED(CONFIG_VIDEO_INTEL_IPU_USE_PLATFORMDATA)
 static int ipu6_isys_mcd_phy_config(struct ipu6_isys *isys, struct ipu6_isys_csi2_config *cfg)
 {
-	unsigned int phy_port, phy_id;
+	unsigned int phy_id;
+	int phy_port;
 	void __iomem *phy_base;
 	struct ipu6_bus_device *adev = to_ipu6_bus_device(&isys->adev->auxdev.dev);
 	struct ipu6_device *isp = adev->isp;

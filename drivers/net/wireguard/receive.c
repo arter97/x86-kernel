@@ -16,6 +16,8 @@
 #include <linux/udp.h>
 #include <net/ip_tunnels.h>
 
+#include "zinc/chacha20.h"
+
 /* Must be called with bh disabled. */
 static void update_rx_stats(struct wg_peer *peer, size_t len)
 {
@@ -32,29 +34,52 @@ static void update_rx_stats(struct wg_peer *peer, size_t len)
 
 #define SKB_TYPE_LE32(skb) (((struct message_header *)(skb)->data)->type)
 
-static size_t validate_header_len(struct sk_buff *skb)
+static u32 wg_deobfuscate_len(u32 len) {
+	return min(len & 0xFFFFFFFC, (u32)NOISE_OBFUSCATE_LEN_MAX);
+}
+
+static void wg_deobfuscate_packet(const u8 obfuscator[NOISE_PUBLIC_KEY_LEN],
+		void *buf, u32 len)
 {
-	if (unlikely(skb->len < sizeof(struct message_header)))
+	simd_context_t simd_context;
+	struct chacha20_ctx state;
+	u32 decrypt_len = wg_deobfuscate_len(len) - sizeof(u32);
+
+	simd_get(&simd_context);
+	chacha20_init(&state, obfuscator, *(u32 *)((u8 *)buf + decrypt_len));
+	chacha20(&state, buf, buf, decrypt_len, &simd_context);
+	simd_put(&simd_context);
+}
+
+static size_t validate_header_len(const u8 obfuscator[NOISE_PUBLIC_KEY_LEN],
+		struct sk_buff *skb, bool *trim)
+{
+	*trim = false;
+	if (unlikely(skb->len < MESSAGE_MINIMUM_LENGTH))
 		return 0;
+	wg_deobfuscate_packet(obfuscator, skb->data, skb->len);
 	if (SKB_TYPE_LE32(skb) == cpu_to_le32(MESSAGE_DATA) &&
 	    skb->len >= MESSAGE_MINIMUM_LENGTH)
 		return sizeof(struct message_data);
+	*trim = true;
 	if (SKB_TYPE_LE32(skb) == cpu_to_le32(MESSAGE_HANDSHAKE_INITIATION) &&
-	    skb->len == sizeof(struct message_handshake_initiation))
+	    skb->len >= sizeof(struct message_handshake_initiation))
 		return sizeof(struct message_handshake_initiation);
 	if (SKB_TYPE_LE32(skb) == cpu_to_le32(MESSAGE_HANDSHAKE_RESPONSE) &&
-	    skb->len == sizeof(struct message_handshake_response))
+	    skb->len >= sizeof(struct message_handshake_response))
 		return sizeof(struct message_handshake_response);
 	if (SKB_TYPE_LE32(skb) == cpu_to_le32(MESSAGE_HANDSHAKE_COOKIE) &&
-	    skb->len == sizeof(struct message_handshake_cookie))
+	    skb->len >= sizeof(struct message_handshake_cookie))
 		return sizeof(struct message_handshake_cookie);
 	return 0;
 }
 
-static int prepare_skb_header(struct sk_buff *skb, struct wg_device *wg)
+static int prepare_skb_header(const u8 obfuscator[NOISE_PUBLIC_KEY_LEN],
+		struct sk_buff *skb, struct wg_device *wg)
 {
 	size_t data_offset, data_len, header_len;
 	struct udphdr *udp;
+	bool trim;
 
 	if (unlikely(!wg_check_packet_protocol(skb) ||
 		     skb_transport_header(skb) < skb->head ||
@@ -79,18 +104,22 @@ static int prepare_skb_header(struct sk_buff *skb, struct wg_device *wg)
 	data_len -= sizeof(struct udphdr);
 	data_offset = (u8 *)udp + sizeof(struct udphdr) - skb->data;
 	if (unlikely(!pskb_may_pull(skb,
-				data_offset + sizeof(struct message_header)) ||
-		     pskb_trim(skb, data_len + data_offset) < 0))
+				data_offset + wg_deobfuscate_len(data_len)) ||
+		     pskb_trim(skb, data_len + data_offset) < 0)) {
 		return -EINVAL;
+	}
 	skb_pull(skb, data_offset);
 	if (unlikely(skb->len != data_len))
 		/* Final len does not agree with calculated len */
 		return -EINVAL;
-	header_len = validate_header_len(skb);
+	header_len = validate_header_len(obfuscator, skb, &trim);
 	if (unlikely(!header_len))
 		return -EINVAL;
 	__skb_push(skb, data_offset);
 	if (unlikely(!pskb_may_pull(skb, data_offset + header_len)))
+		return -EINVAL;
+	/* Trim junk we added in wg_obfuscate_packet */
+	if (trim && pskb_trim(skb, data_offset + header_len) < 0)
 		return -EINVAL;
 	__skb_pull(skb, data_offset);
 	return 0;
@@ -145,9 +174,10 @@ static void wg_receive_handshake_packet(struct wg_device *wg,
 
 		if (packet_needs_cookie) {
 			wg_packet_send_handshake_cookie(wg, skb,
-							message->sender_index);
+							message->sender_index, message->obfuscator);
 			return;
 		}
+
 		peer = wg_noise_handshake_consume_initiation(message, wg);
 		if (unlikely(!peer)) {
 			net_dbg_skb_ratelimited("%s: Invalid handshake initiation from %pISpfsc\n",
@@ -166,8 +196,20 @@ static void wg_receive_handshake_packet(struct wg_device *wg,
 			(struct message_handshake_response *)skb->data;
 
 		if (packet_needs_cookie) {
-			wg_packet_send_handshake_cookie(wg, skb,
-							message->sender_index);
+			/* Here we make extra hash table lookup to find peer
+			 * obfuscation key. Hopefully we're not wasting CPU
+			 * resources that much.
+			 */
+			struct wg_peer *peer = NULL;
+			struct noise_handshake *handshake;
+			handshake = (struct noise_handshake *)wg_index_hashtable_lookup(
+					wg->index_hashtable, INDEX_HASHTABLE_HANDSHAKE,
+					message->receiver_index, &peer);
+
+			if (handshake)
+				wg_packet_send_handshake_cookie(wg, skb,
+							message->sender_index, handshake->obfuscator);
+			wg_peer_put(peer);
 			return;
 		}
 		peer = wg_noise_handshake_consume_response(message, wg);
@@ -548,7 +590,9 @@ err_keypair:
 
 void wg_packet_receive(struct wg_device *wg, struct sk_buff *skb)
 {
-	if (unlikely(prepare_skb_header(skb, wg) < 0))
+	if (unlikely(!wg->static_identity.has_identity))
+		goto err;
+	if (unlikely(prepare_skb_header(wg->static_identity.obfuscator, skb, wg) < 0))
 		goto err;
 	switch (SKB_TYPE_LE32(skb)) {
 	case cpu_to_le32(MESSAGE_HANDSHAKE_INITIATION):

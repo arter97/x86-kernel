@@ -56,6 +56,19 @@ void wg_noise_precompute_static_static(struct wg_peer *peer)
 	up_write(&peer->handshake.lock);
 }
 
+static void wg_noise_create_obfuscator(
+	const u8 pubkey[NOISE_PUBLIC_KEY_LEN],
+	u8 obfuscator[NOISE_PUBLIC_KEY_LEN])
+{
+	static const u8 obfs_label[] = "obfs----";
+	struct blake2s_state blake;
+
+	blake2s_init(&blake, NOISE_PUBLIC_KEY_LEN);
+	blake2s_update(&blake, obfs_label, sizeof(obfs_label));
+	blake2s_update(&blake, pubkey, NOISE_PUBLIC_KEY_LEN);
+	blake2s_final(&blake, obfuscator);
+}
+
 void wg_noise_handshake_init(struct noise_handshake *handshake,
 			     struct noise_static_identity *static_identity,
 			     const u8 peer_public_key[NOISE_PUBLIC_KEY_LEN],
@@ -73,6 +86,7 @@ void wg_noise_handshake_init(struct noise_handshake *handshake,
 	handshake->static_identity = static_identity;
 	handshake->state = HANDSHAKE_ZEROED;
 	wg_noise_precompute_static_static(peer);
+	wg_noise_create_obfuscator(peer_public_key, handshake->obfuscator);
 }
 
 static void handshake_zero(struct noise_handshake *handshake)
@@ -300,6 +314,9 @@ void wg_noise_set_static_identity_private_key(
 	curve25519_clamp_secret(static_identity->static_private);
 	static_identity->has_identity = curve25519_generate_public(
 		static_identity->static_public, private_key);
+	if (static_identity->has_identity)
+		wg_noise_create_obfuscator(static_identity->static_public,
+				static_identity->obfuscator);
 }
 
 static void hmac(u8 *out, const u8 *in, const u8 *key, const size_t inlen, const size_t keylen)
@@ -566,6 +583,13 @@ wg_noise_handshake_create_initiation(struct message_handshake_initiation *dst,
 	message_encrypt(dst->encrypted_timestamp, timestamp,
 			NOISE_TIMESTAMP_LEN, key, handshake->hash);
 
+	/*
+	 * We need to send obfuscator in this message, otherwise
+	 * server will not be able to obfuscate cookie message, if
+	 * it wants us to generate cookie.
+	 */
+	memcpy(dst->obfuscator, handshake->static_identity->obfuscator,
+			NOISE_PUBLIC_KEY_LEN);
 	dst->sender_index = wg_index_hashtable_insert(
 		handshake->entry.peer->device->index_hashtable,
 		&handshake->entry);

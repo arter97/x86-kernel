@@ -18,7 +18,7 @@
 #include <net/udp.h>
 #include <net/sock.h>
 
-#include "zinc/chacha20.h"
+#include <crypto/chacha.h>
 
 #define MSG_BUFFER(type, name) \
 	union { \
@@ -29,8 +29,7 @@
 static u32 wg_obfuscate_packet(const u8 obfuscator[NOISE_PUBLIC_KEY_LEN],
 		void *buf, u32 len, u32 max_len)
 {
-	simd_context_t simd_context;
-	struct chacha20_ctx state;
+	u32 state[CHACHA_STATE_WORDS];
 	u32 encrypt_len, n_words = (max_len - len) >> 2;
 
 	/* Add some junk to the end of the packet if needed. */
@@ -42,11 +41,9 @@ static u32 wg_obfuscate_packet(const u8 obfuscator[NOISE_PUBLIC_KEY_LEN],
 		len += junk_size;
 	}
 
-	encrypt_len = min(len & 0xFFFFFFFC, (u32)NOISE_OBFUSCATE_LEN_MAX) - sizeof(u32);
-	simd_get(&simd_context);
-	chacha20_init(&state, obfuscator, *(u32 *)((u8 *)buf + encrypt_len));
-	chacha20(&state, buf, buf, encrypt_len, &simd_context);
-	simd_put(&simd_context);
+	encrypt_len = min(len & 0xFFFFFFFC, (u32)NOISE_OBFUSCATE_LEN_MAX) - (sizeof(u32) * 4);
+	chacha_init(state, (u32 *)obfuscator, buf + encrypt_len);
+	chacha20_crypt(state, buf, buf, encrypt_len);
 
 	return len;
 }

@@ -16,7 +16,7 @@
 #include <linux/udp.h>
 #include <net/ip_tunnels.h>
 
-#include "zinc/chacha20.h"
+#include <crypto/chacha.h>
 
 /* Must be called with bh disabled. */
 static void update_rx_stats(struct wg_peer *peer, size_t len)
@@ -41,14 +41,11 @@ static u32 wg_deobfuscate_len(u32 len) {
 static void wg_deobfuscate_packet(const u8 obfuscator[NOISE_PUBLIC_KEY_LEN],
 		void *buf, u32 len)
 {
-	simd_context_t simd_context;
-	struct chacha20_ctx state;
-	u32 decrypt_len = wg_deobfuscate_len(len) - sizeof(u32);
+	u32 state[CHACHA_STATE_WORDS];
+	u32 decrypt_len = wg_deobfuscate_len(len) - (sizeof(u32) * 4);
 
-	simd_get(&simd_context);
-	chacha20_init(&state, obfuscator, *(u32 *)((u8 *)buf + decrypt_len));
-	chacha20(&state, buf, buf, decrypt_len, &simd_context);
-	simd_put(&simd_context);
+	chacha_init(state, (u32 *)obfuscator, buf + decrypt_len);
+	chacha20_crypt(state, buf, buf, decrypt_len);
 }
 
 static size_t validate_header_len(const u8 obfuscator[NOISE_PUBLIC_KEY_LEN],

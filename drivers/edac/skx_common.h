@@ -248,7 +248,10 @@ int skx_get_node_id(struct skx_dev *d, u8 *id);
 
 int skx_get_all_bus_mappings(struct res_config *cfg, struct list_head **list);
 
+struct list_head *skx_get_edac_list(void);
+
 int skx_get_hi_lo(unsigned int did, int off[], u64 *tolm, u64 *tohm);
+void skx_set_hi_lo(u64 tolm, u64 tohm);
 
 int skx_get_dimm_info(u32 mtr, u32 mcmtr, u32 amap, struct dimm_info *dimm,
 		      struct skx_imc *imc, int chan, int dimmno,
@@ -257,7 +260,7 @@ int skx_get_dimm_info(u32 mtr, u32 mcmtr, u32 amap, struct dimm_info *dimm,
 int skx_get_nvdimm_info(struct dimm_info *dimm, struct skx_imc *imc,
 			int chan, int dimmno, const char *mod_str);
 
-int skx_register_mci(struct skx_imc *imc, struct pci_dev *pdev,
+int skx_register_mci(struct skx_imc *imc, struct device *dev, const char *dev_name,
 		     const char *ctl_name, const char *mod_str,
 		     get_dimm_config_f get_dimm_config,
 		     struct res_config *cfg);

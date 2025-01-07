@@ -43,6 +43,7 @@ static struct static_key_false taprio_have_working_mqprio;
 #define TAPRIO_SUPPORTED_FLAGS \
 	(TCA_TAPRIO_ATTR_FLAG_TXTIME_ASSIST | TCA_TAPRIO_ATTR_FLAG_FULL_OFFLOAD)
 #define TAPRIO_FLAGS_INVALID U32_MAX
+#define CYCLE_TIME_CORRECTION_UNSPEC S64_MIN
 
 struct sched_entry {
 	/* Durations between this GCL entry and the GCL entry where the
@@ -62,6 +63,7 @@ struct sched_entry {
 	u32 gate_mask;
 	u32 interval;
 	u8 command;
+	bool correction_active;
 };
 
 struct sched_gate_list {
@@ -77,6 +79,7 @@ struct sched_gate_list {
 	ktime_t cycle_end_time;
 	s64 cycle_time;
 	s64 cycle_time_extension;
+	s64 cycle_time_correction;
 	s64 base_time;
 };
 
@@ -84,6 +87,7 @@ struct taprio_sched {
 	struct Qdisc **qdiscs;
 	struct Qdisc *root;
 	u32 flags;
+	u32 preemptible_tcs;
 	enum tk_offsets tk_offset;
 	int clockid;
 	bool offloaded;
@@ -215,6 +219,19 @@ static void switch_schedules(struct taprio_sched *q,
 	*admin = NULL;
 }
 
+static bool sched_switch_pending(const struct sched_gate_list *oper)
+{
+	return oper->cycle_time_correction != CYCLE_TIME_CORRECTION_UNSPEC;
+}
+
+static s64 get_cycle_time(const struct sched_gate_list *oper)
+{
+	if (sched_switch_pending(oper))
+		return oper->cycle_time + oper->cycle_time_correction;
+	else
+		return oper->cycle_time;
+}
+
 /* Get how much time has been already elapsed in the current cycle. */
 static s32 get_cycle_time_elapsed(struct sched_gate_list *sched, ktime_t time)
 {
@@ -222,9 +239,18 @@ static s32 get_cycle_time_elapsed(struct sched_gate_list *sched, ktime_t time)
 	s32 time_elapsed;
 
 	time_since_sched_start = ktime_sub(time, sched->base_time);
-	div_s64_rem(time_since_sched_start, sched->cycle_time, &time_elapsed);
+	div_s64_rem(time_since_sched_start, get_cycle_time(sched), &time_elapsed);
 
 	return time_elapsed;
+}
+
+static u32 get_interval(const struct sched_entry *entry,
+			const struct sched_gate_list *oper)
+{
+	if (entry->correction_active)
+		return entry->interval + oper->cycle_time_correction;
+	else
+		return entry->interval;
 }
 
 static ktime_t get_interval_end_time(struct sched_gate_list *sched,
@@ -235,8 +261,9 @@ static ktime_t get_interval_end_time(struct sched_gate_list *sched,
 	s32 cycle_elapsed = get_cycle_time_elapsed(sched, intv_start);
 	ktime_t intv_end, cycle_ext_end, cycle_end;
 
-	cycle_end = ktime_add_ns(intv_start, sched->cycle_time - cycle_elapsed);
-	intv_end = ktime_add_ns(intv_start, entry->interval);
+	cycle_end = ktime_add_ns(intv_start,
+				 get_cycle_time(sched) - cycle_elapsed);
+	intv_end = ktime_add_ns(intv_start, get_interval(entry, sched));
 	cycle_ext_end = ktime_add(cycle_end, sched->cycle_time_extension);
 
 	if (ktime_before(intv_end, cycle_end))
@@ -280,7 +307,8 @@ static void taprio_update_queue_max_sdu(struct taprio_sched *q,
 		/* TC gate never closes => keep the queueMaxSDU
 		 * selected by the user
 		 */
-		if (sched->max_open_gate_duration[tc] == sched->cycle_time) {
+		if (sched->max_open_gate_duration[tc] == sched->cycle_time &&
+		    !sched_switch_pending(sched)) {
 			max_sdu_dynamic = U32_MAX;
 		} else {
 			u32 max_frm_len;
@@ -342,7 +370,7 @@ static struct sched_entry *find_entry_to_transmit(struct sk_buff *skb,
 	if (!sched)
 		return NULL;
 
-	cycle = sched->cycle_time;
+	cycle = get_cycle_time(sched);
 	cycle_elapsed = get_cycle_time_elapsed(sched, time);
 	curr_intv_end = ktime_sub_ns(time, cycle_elapsed);
 	cycle_end = ktime_add_ns(curr_intv_end, cycle);
@@ -356,7 +384,7 @@ static struct sched_entry *find_entry_to_transmit(struct sk_buff *skb,
 			break;
 
 		if (!(entry->gate_mask & BIT(tc)) ||
-		    packet_transmit_time > entry->interval)
+		    packet_transmit_time > get_interval(entry, sched))
 			continue;
 
 		txtime = entry->next_txtime;
@@ -521,7 +549,8 @@ static long get_packet_txtime(struct sk_buff *skb, struct Qdisc *sch)
 		 * interval starts.
 		 */
 		if (ktime_after(transmit_end_time, interval_end))
-			entry->next_txtime = ktime_add(interval_start, sched->cycle_time);
+			entry->next_txtime =
+				ktime_add(interval_start, get_cycle_time(sched));
 	} while (sched_changed || ktime_after(transmit_end_time, interval_end));
 
 	entry->next_txtime = transmit_end_time;
@@ -663,7 +692,8 @@ static void taprio_set_budgets(struct taprio_sched *q,
 
 	for (tc = 0; tc < num_tc; tc++) {
 		/* Traffic classes which never close have infinite budget */
-		if (entry->gate_duration[tc] == sched->cycle_time)
+		if (entry->gate_duration[tc] == sched->cycle_time &&
+		    !sched_switch_pending(sched))
 			budget = INT_MAX;
 		else
 			budget = div64_u64((u64)entry->gate_duration[tc] * PSEC_PER_NSEC,
@@ -875,38 +905,77 @@ static bool should_restart_cycle(const struct sched_gate_list *oper,
 	return false;
 }
 
-static bool should_change_schedules(const struct sched_gate_list *admin,
-				    const struct sched_gate_list *oper,
-				    ktime_t end_time)
+/* Open gate duration were calculated at the beginning with consideration of
+ * multiple entries. If sched_switch_pending() is active, there's only a single
+ * remaining entry left from oper to run. Update open gate duration based
+ * on this last entry.
+ */
+static void update_open_gate_duration(struct sched_entry *entry,
+				      struct sched_gate_list *oper,
+				      int num_tc,
+				      u64 open_gate_duration)
 {
-	ktime_t next_base_time, extension_time;
+	int tc;
 
-	if (!admin)
-		return false;
+	for (tc = 0; tc < num_tc; tc++) {
+		if (entry->gate_mask & BIT(tc)) {
+			entry->gate_duration[tc] = open_gate_duration;
+			oper->max_open_gate_duration[tc] = open_gate_duration;
+		} else {
+			entry->gate_duration[tc] = 0;
+			oper->max_open_gate_duration[tc] = 0;
+		}
+	}
+}
 
-	next_base_time = sched_base_time(admin);
+static bool should_extend_cycle(const struct sched_gate_list *oper,
+				ktime_t new_base_time,
+				ktime_t next_entry_end_time,
+				const struct sched_entry *next_entry)
+{
+	ktime_t next_cycle_end_time = ktime_add_ns(oper->cycle_end_time,
+						   oper->cycle_time);
+	bool extension_supported = oper->cycle_time_extension > 0;
+	s64 extension_limit = oper->cycle_time_extension;
+	s64 extension_duration = ktime_sub(new_base_time, next_entry_end_time);
 
-	/* This is the simple case, the end_time would fall after
-	 * the next schedule base_time.
-	 */
-	if (ktime_compare(next_base_time, end_time) <= 0)
-		return true;
+	return extension_supported &&
+	       list_is_last(&next_entry->list, &oper->entries) &&
+	       ktime_before(new_base_time, next_cycle_end_time) &&
+	       extension_duration < extension_limit;
+}
 
-	/* This is the cycle_time_extension case, if the end_time
-	 * plus the amount that can be extended would fall after the
-	 * next schedule base_time, we can extend the current schedule
-	 * for that amount.
-	 */
-	extension_time = ktime_add_ns(end_time, oper->cycle_time_extension);
+static s64 get_cycle_time_correction(const struct sched_gate_list *oper,
+				     ktime_t new_base_time,
+				     ktime_t next_entry_end_time,
+				     const struct sched_entry *next_entry)
+{
+	s64 correction = CYCLE_TIME_CORRECTION_UNSPEC;
 
-	/* FIXME: the IEEE 802.1Q-2018 Specification isn't clear about
-	 * how precisely the extension should be made. So after
-	 * conformance testing, this logic may change.
-	 */
-	if (ktime_compare(next_base_time, extension_time) <= 0)
-		return true;
+	if (ktime_compare(new_base_time, next_entry_end_time) <= 0) {
+		/* Negative correction - The new admin base time starts earlier
+		 * than the next entry's end time.
+		 * Zero correction - The new admin base time aligns exactly
+		 * with the old cycle.
+		 */
+		correction = ktime_sub(new_base_time, next_entry_end_time);
 
-	return false;
+		/* Below is to hande potential issue where the negative correction
+		 * exceed the entry's interval. This typically shouldn't happen.
+		 * Setting to 0 enables schedule changes without altering cycle time.
+		 */
+		if (abs(correction) > next_entry->interval)
+			correction = 0;
+	} else if (ktime_after(new_base_time, next_entry_end_time) &&
+		   should_extend_cycle(oper, new_base_time,
+				       next_entry_end_time, next_entry)) {
+		/* Positive correction - The new admin base time starts after the
+		 * last entry end time and within the next cycle time of old oper.
+		 */
+		correction = ktime_sub(new_base_time, next_entry_end_time);
+	}
+
+	return correction;
 }
 
 static enum hrtimer_restart advance_sched(struct hrtimer *timer)
@@ -929,7 +998,7 @@ static enum hrtimer_restart advance_sched(struct hrtimer *timer)
 	admin = rcu_dereference_protected(q->admin_sched,
 					  lockdep_is_held(&q->current_entry_lock));
 
-	if (!oper)
+	if (!oper || sched_switch_pending(oper))
 		switch_schedules(q, &admin, &oper);
 
 	/* This can happen in two cases: 1. this is the very first run
@@ -957,20 +1026,42 @@ static enum hrtimer_restart advance_sched(struct hrtimer *timer)
 	end_time = ktime_add_ns(entry->end_time, next->interval);
 	end_time = min_t(ktime_t, end_time, oper->cycle_end_time);
 
+	if (admin) {
+		ktime_t new_base_time = sched_base_time(admin);
+
+		oper->cycle_time_correction =
+			get_cycle_time_correction(oper, new_base_time,
+						  end_time, next);
+
+		if (sched_switch_pending(oper)) {
+			/* The next entry is the last entry we will run from
+			 * oper, subsequent ones will take from the new admin
+			 */
+			u64 new_gate_duration =
+				next->interval + oper->cycle_time_correction;
+			struct qdisc_size_table *stab;
+
+			oper->cycle_end_time = new_base_time;
+			end_time = new_base_time;
+			next->correction_active = true;
+
+			update_open_gate_duration(next, oper, num_tc,
+						  new_gate_duration);
+			rcu_read_lock();
+			stab = rcu_dereference(q->root->stab);
+			taprio_update_queue_max_sdu(q, oper, stab);
+			rcu_read_unlock();
+		}
+	}
+
 	for (tc = 0; tc < num_tc; tc++) {
-		if (next->gate_duration[tc] == oper->cycle_time)
+		if (sched_switch_pending(oper) && (next->gate_mask & BIT(tc)))
+			next->gate_close_time[tc] = end_time;
+		else if (next->gate_duration[tc] == oper->cycle_time)
 			next->gate_close_time[tc] = KTIME_MAX;
 		else
 			next->gate_close_time[tc] = ktime_add_ns(entry->end_time,
 								 next->gate_duration[tc]);
-	}
-
-	if (should_change_schedules(admin, oper, end_time)) {
-		/* Set things so the next time this runs, the new
-		 * schedule runs.
-		 */
-		end_time = sched_base_time(admin);
-		switch_schedules(q, &admin, &oper);
 	}
 
 	next->end_time = end_time;
@@ -1025,6 +1116,7 @@ static const struct nla_policy taprio_policy[TCA_TAPRIO_ATTR_MAX + 1] = {
 		NLA_POLICY_MASK(NLA_U32, TAPRIO_SUPPORTED_FLAGS),
 	[TCA_TAPRIO_ATTR_TXTIME_DELAY]		     = { .type = NLA_U32 },
 	[TCA_TAPRIO_ATTR_TC_ENTRY]		     = { .type = NLA_NESTED },
+	[TCA_TAPRIO_ATTR_PREEMPT_TCS] = { .type = NLA_U32 },
 };
 
 static int fill_sched_entry(struct taprio_sched *q, struct nlattr **tb,
@@ -1055,6 +1147,7 @@ static int fill_sched_entry(struct taprio_sched *q, struct nlattr **tb,
 	}
 
 	entry->interval = interval;
+	entry->correction_active = false;
 
 	return 0;
 }
@@ -1165,6 +1258,7 @@ static int parse_taprio_schedule(struct taprio_sched *q, struct nlattr **tb,
 	}
 
 	taprio_calculate_gate_durations(q, new);
+	new->cycle_time_correction = CYCLE_TIME_CORRECTION_UNSPEC;
 
 	return 0;
 }
@@ -1418,25 +1512,6 @@ static void taprio_offload_config_changed(struct taprio_sched *q)
 	switch_schedules(q, &admin, &oper);
 }
 
-static u32 tc_map_to_queue_mask(struct net_device *dev, u32 tc_mask)
-{
-	u32 i, queue_mask = 0;
-
-	for (i = 0; i < dev->num_tc; i++) {
-		u32 offset, count;
-
-		if (!(tc_mask & BIT(i)))
-			continue;
-
-		offset = dev->tc_to_txq[i].offset;
-		count = dev->tc_to_txq[i].count;
-
-		queue_mask |= GENMASK(offset + count - 1, offset);
-	}
-
-	return queue_mask;
-}
-
 static void taprio_sched_to_offload(struct net_device *dev,
 				    struct sched_gate_list *sched,
 				    struct tc_taprio_qopt_offload *offload,
@@ -1454,9 +1529,10 @@ static void taprio_sched_to_offload(struct net_device *dev,
 
 		e->command = entry->command;
 		e->interval = entry->interval;
+
 		if (caps->gate_mask_per_txq)
-			e->gate_mask = tc_map_to_queue_mask(dev,
-							    entry->gate_mask);
+			e->gate_mask = netdev_tc_map_to_queue_mask(dev,
+							entry->gate_mask);
 		else
 			e->gate_mask = entry->gate_mask;
 
@@ -1565,6 +1641,7 @@ static int taprio_disable_offload(struct net_device *dev,
 				  struct netlink_ext_ack *extack)
 {
 	const struct net_device_ops *ops = dev->netdev_ops;
+	struct tc_preempt_qopt_offload preempt = { };
 	struct tc_taprio_qopt_offload *offload;
 	int err;
 
@@ -1580,15 +1657,17 @@ static int taprio_disable_offload(struct net_device *dev,
 	offload->cmd = TAPRIO_CMD_DESTROY;
 
 	err = ops->ndo_setup_tc(dev, TC_SETUP_QDISC_TAPRIO, offload);
-	if (err < 0) {
+	if (err < 0)
 		NL_SET_ERR_MSG(extack,
-			       "Device failed to disable offload");
-		goto out;
-	}
+			       "Device failed to disable taprio offload");
+
+	err = ops->ndo_setup_tc(dev, TC_SETUP_PREEMPT, &preempt);
+	if (err < 0)
+		NL_SET_ERR_MSG(extack,
+			       "Device failed to disable frame preemption offload");
 
 	q->offloaded = false;
 
-out:
 	taprio_offload_free(offload);
 
 	return err;
@@ -1909,6 +1988,30 @@ static int taprio_change(struct Qdisc *sch, struct nlattr *opt,
 
 	taprio_update_queue_max_sdu(q, new_admin, stab);
 
+	/* It's valid to enable frame preemption without any kind of
+	 * offloading being enabled, so keep it separated.
+	 */
+	if (tb[TCA_TAPRIO_ATTR_PREEMPT_TCS]) {
+		u32 preempt = nla_get_u32(tb[TCA_TAPRIO_ATTR_PREEMPT_TCS]);
+		struct tc_preempt_qopt_offload qopt = { };
+		u32 all_tcs_mask = GENMASK(dev->num_tc, 0);
+
+		if ((preempt & all_tcs_mask) == all_tcs_mask) {
+			NL_SET_ERR_MSG(extack, "At least one queue must be not be preemptible");
+			err = -EINVAL;
+			goto free_sched;
+		}
+
+		qopt.preemptible_queues = netdev_tc_map_to_queue_mask(dev, preempt);
+
+		err = dev->netdev_ops->ndo_setup_tc(dev, TC_SETUP_PREEMPT,
+						    &qopt);
+		if (err)
+			goto free_sched;
+
+		q->preemptible_tcs = preempt;
+	}
+
 	if (FULL_OFFLOAD_IS_ENABLED(q->flags))
 		err = taprio_enable_offload(dev, q, new_admin, extack);
 	else
@@ -2066,6 +2169,7 @@ static int taprio_init(struct Qdisc *sch, struct nlattr *opt,
 	 */
 	q->clockid = -1;
 	q->flags = TAPRIO_FLAGS_INVALID;
+	q->preemptible_tcs = U32_MAX;
 
 	list_add(&q->taprio_list, &taprio_list);
 
@@ -2388,6 +2492,10 @@ static int taprio_dump(struct Qdisc *sch, struct sk_buff *skb)
 		goto options_error;
 
 	if (q->flags && nla_put_u32(skb, TCA_TAPRIO_ATTR_FLAGS, q->flags))
+		goto options_error;
+
+	if (q->preemptible_tcs != U32_MAX &&
+	    nla_put_u32(skb, TCA_TAPRIO_ATTR_PREEMPT_TCS, q->preemptible_tcs))
 		goto options_error;
 
 	if (q->txtime_delay &&

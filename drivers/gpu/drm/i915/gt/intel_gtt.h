@@ -94,9 +94,29 @@ typedef u64 gen8_pte_t;
 #define GEN12_PPGTT_PTE_PAT1	BIT_ULL(4)
 #define GEN12_PPGTT_PTE_PAT0	BIT_ULL(3)
 
+/*
+ *  DOC: GEN12 GGTT Table Entry format
+ *
+ * +----------+---------+---------+-----------------+--------------+---------+
+ * |    63:46 |   45:12 |    11:5 |             4:2 |            1 |       0 |
+ * +==========+=========+=========+=================+==============+=========+
+ * |  Ignored | Address | Ignored | Function Number | Local Memory | Present |
+ * +----------+---------+---------+-----------------+--------------+---------+
+ *
+ * ADL-P/S:
+ * +----------+--------------+-------------------+---------+---------+----------+--------+---------+
+ * |    63:46 |        45:42 |             41:39 |   38:12 |   11:5  |      4:2 |      1 |       0 |
+ * +==========+==============+===================+=========+=========+==========+========+=========+
+ * |  Ignored | MKTME key ID | 2LM Far Memory    | Address | Ignored | Function | Local  | Present |
+ * |          |              | address extension |         |         | Number   | Memory |         |
+ * +----------+--------------+-------------------+---------+---------+----------+--------+---------+
+ *
+ */
+
 #define GEN12_GGTT_PTE_LM		BIT_ULL(1)
 #define MTL_GGTT_PTE_PAT0		BIT_ULL(52)
 #define MTL_GGTT_PTE_PAT1		BIT_ULL(53)
+#define TGL_GGTT_PTE_VFID_MASK		GENMASK_ULL(4, 2)
 #define GEN12_GGTT_PTE_ADDR_MASK	GENMASK_ULL(45, 12)
 #define MTL_GGTT_PTE_PAT_MASK		GENMASK_ULL(53, 52)
 
@@ -603,6 +623,28 @@ static inline bool i915_ggtt_has_aperture(const struct i915_ggtt *ggtt)
 	return ggtt->mappable_end > 0;
 }
 
+int i915_ggtt_balloon(struct i915_ggtt *ggtt, u64 start, u64 end,
+		      struct drm_mm_node *node);
+void i915_ggtt_deballoon(struct i915_ggtt *ggtt, struct drm_mm_node *node);
+
+int i915_ggtt_sgtable_update_ptes(struct i915_ggtt *ggtt, unsigned int vfid, u64 ggtt_addr,
+				  struct sg_table *st, u32 num_entries,
+				  const gen8_pte_t pte_pattern);
+gen8_pte_t i915_ggtt_prepare_vf_pte(u16 vfid);
+void i915_ggtt_set_space_owner(struct i915_ggtt *ggtt, u16 vfid,
+			       const struct drm_mm_node *node);
+
+#define I915_GGTT_SAVE_PTES_NO_VFID BIT(31)
+
+int i915_ggtt_save_ptes(struct i915_ggtt *ggtt, const struct drm_mm_node *node, void *buf,
+			unsigned int size, unsigned int flags);
+
+#define I915_GGTT_RESTORE_PTES_NEW_VFID  BIT(31)
+#define I915_GGTT_RESTORE_PTES_VFID_MASK GENMASK(19, 0)
+
+int i915_ggtt_restore_ptes(struct i915_ggtt *ggtt, const struct drm_mm_node *node, const void *buf,
+			   unsigned int size, unsigned int flags);
+
 int i915_ppgtt_init_hw(struct intel_gt *gt);
 
 struct i915_ppgtt *i915_ppgtt_create(struct intel_gt *gt,
@@ -638,6 +680,9 @@ void free_px(struct i915_address_space *vm,
 	     struct i915_page_table *pt, int lvl);
 #define free_pt(vm, px) free_px(vm, px, 0)
 #define free_pd(vm, px) free_px(vm, px_pt(px), 1)
+
+unsigned int ggtt_size_to_ptes_size(u64 ggtt_size);
+void ggtt_pte_clear_vfid(void *buf, u64 size);
 
 void
 __set_pd_entry(struct i915_page_directory * const pd,

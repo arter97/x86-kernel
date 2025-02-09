@@ -3359,6 +3359,7 @@ static int crypt_ctr(struct dm_target *ti, unsigned int argc, char **argv)
 
 	ret = -ENOMEM;
 	common_wq_flags = WQ_MEM_RECLAIM | WQ_SYSFS;
+	set_bit(DM_CRYPT_HIGH_PRIORITY, &cc->flags);
 	if (test_bit(DM_CRYPT_HIGH_PRIORITY, &cc->flags))
 		common_wq_flags |= WQ_HIGHPRI;
 

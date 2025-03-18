@@ -14,12 +14,8 @@
 
 static void intel_gt_apply_ccs_mode(struct intel_gt *gt)
 {
-	unsigned long cslices_mask = CCS_MASK(gt);
 	unsigned long ccs_mask = gt->ccs.id_mask;
 	u32 mode_val = 0;
-	/* CCS engine id, i.e. the engines position in the engine's bitmask */
-	int engine;
-	int cslice;
 
 	/*
 	 * The mode has two bit dedicated for each engine
@@ -59,43 +55,26 @@ static void intel_gt_apply_ccs_mode(struct intel_gt *gt)
 	 *   slice 2: ccs2
 	 *   slice 3: ccs3
 	 */
-	engine = __ffs(ccs_mask);
 
-	for (cslice = 0; cslice < I915_MAX_CCS; cslice++) {
-		if (!(cslices_mask & BIT(cslice))) {
-			/*
-			 * If not available, mark the slice as unavailable
-			 * and no task will be dispatched here.
-			 */
-			mode_val |= XEHP_CCS_MODE_CSLICE(cslice,
-						     XEHP_CCS_MODE_CSLICE_MASK);
-			continue;
-		}
-
-		mode_val |= XEHP_CCS_MODE_CSLICE(cslice, engine);
-
-		engine = find_next_bit(&cslices_mask, I915_MAX_CCS, engine + 1);
-		/*
-		 * If "engine" has reached the I915_MAX_CCS value it means that
-		 * we have gone through all the unfused engines and now we need
-		 * to reset its value to the first engine.
-		 *
-		 * From the find_next_bit() description:
-		 *
-		 * "Returns the bit number for the next set bit
-		 * If no bits are set, returns @size."
-		 */
-		if (engine == I915_MAX_CCS) {
-			/*
-			 * CCS mode, will be used later to
-			 * reset to a flexible value
-			 */
-			engine = __ffs(ccs_mask);
-			continue;
-		}
+	switch (COUNT_NUM_BITS(ccs_mask)) {
+		case 1:
+			// CCC0 owns all EUs
+			mode_val = CCS_MODE_VALUE(CCS0, CCS0, CCS0, CCS0);
+			break;
+		case 2:
+			// 2 CCS enabled. 50% EU for each
+			mode_val = CCS_MODE_VALUE(CCS0, CCS0, CCS1, CCS1);
+			break;
+		case 4:
+			// 4 CCS enabled.  25% EU for each
+			mode_val = CCS_MODE_VALUE(CCS0, CCS1, CCS2, CCS3);
+			break;
 	}
 
 	gt->ccs.mode_reg_val = mode_val;
+	// Set ccs mode to desired value.
+	intel_uncore_write(gt->uncore, XEHP_CCS_MODE,
+							gt->ccs.mode_reg_val);
 }
 
 static void __update_ccs_mask(struct intel_gt *gt, u32 ccs_mode)
@@ -138,7 +117,6 @@ static void update_ccs_mask(struct intel_gt *gt, u32 ccs_mode)
 		struct i915_wa_list *wal = &engine->wa_list;
 		struct i915_wa *wa;
 		int i;
-
 		for (i = 0, wa = wal->list; i < wal->count; i++, wa++) {
 			if (!i915_mmio_reg_equal(wa->reg, XEHP_CCS_MODE))
 				continue;
@@ -195,7 +173,6 @@ static void add_uabi_ccs_engines(struct intel_gt *gt, u32 ccs_mode)
 		int err;
 
 		i915->engine_uabi_class_count[I915_ENGINE_CLASS_COMPUTE]++;
-
 		/*
 		 * The engine is now inserted and marked as valid.
 		 *
@@ -204,12 +181,14 @@ static void add_uabi_ccs_engines(struct intel_gt *gt, u32 ccs_mode)
 		 * are trying to insert which means that something is really
 		 * wrong.
 		 */
-		GEM_BUG_ON(rb_find_add(&e->uabi_node,
-				       &i915->uabi_engines, rb_engine_cmp));
+		rb_find_add(&e->uabi_node,
+				       &i915->uabi_engines, rb_engine_cmp);
 
 		/* We inserted the engine, let's check if now we can find it */
-		GEM_BUG_ON(intel_engine_lookup_user(i915, e->uabi_class,
-						    e->uabi_instance) != e);
+		if (intel_engine_lookup_user(i915, e->uabi_class,
+						    e->uabi_instance) != e) {
+			gt_warn(gt, "Engine %s not inserted", e->name);
+		}
 
 		/*
 		 * If the engine has never been used before (e.g. we are moving

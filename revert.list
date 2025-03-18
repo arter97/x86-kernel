@@ -1,0 +1,16 @@
+84a6e475451df drm/i915: do not clean GT table on error path
+07e94f204f38b drm/i915: Fix potential spectre vulnerability
+9457636a49265 drm/i915: Bump GLK CDCLK frequency when driving multiple pipes
+55db76caa782b i915/perf: Fix NULL deref bugs with drm_dbg() calls
+9dc840b5d5baf drm/i915: Fix HPD polling, reenabling the output poll work as needed
+d3dffa363fd32 drm/i915: fix display probe for IVB Q and IVB D GT2 server
+0cb60271dcd00 drm/i915/guc/slpc: Restore efficient freq earlier
+c9950b59bb029 drm/i915/gvt: Fix bug in getting msg length in AUX CH registers handler
+32d604ea028d7 Revert "drm/i915: use localized __diag_ignore_all() instead of per file"
+53d57f796206a drm/i915/perf: add sentinel to xehp_oa_b_counters
+2de8da2539a8b drm/i915: Remove dead code from gen8_pte_encode
+69d16b3a8ba88 drm/i915/perf: Consider OA buffer boundary when zeroing out reports
+48c554733bbd2 drm/i915: use mock device info for creating mock device
+eded5f5261b8f drm/i915/pmu: Check if pmu is closed before stopping event
+add2eeda1d6e3 drm/i915: Retry gtt fault when out of fence registers
+

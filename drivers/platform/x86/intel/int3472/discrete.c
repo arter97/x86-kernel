@@ -192,7 +192,7 @@ static void int3472_get_func_and_polarity(struct acpi_device *adev, u8 *type,
 		break;
 	case INT3472_GPIO_TYPE_HANDSHAKE:
 		*func = "handshake";
-		*polarity = GPIO_ACTIVE_HIGH;
+		*gpio_flags = GPIO_ACTIVE_HIGH;
 		break;
 	case INT3472_GPIO_TYPE_READY_STAT:
 		*func = "readystat";

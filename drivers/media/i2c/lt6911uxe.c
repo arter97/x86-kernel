@@ -42,6 +42,8 @@
 
 static const struct v4l2_dv_timings_cap lt6911uxe_timings_cap_4kp30 = {
 	.type = V4L2_DV_BT_656_1120,
+	/* keep this initialization for compatibility with CLANG */
+	.reserved = { 0 },
 	/* Pixel clock from REF_01 p. 20. Min/max height/width are unknown */
 	V4L2_INIT_BT_TIMINGS(160, 3840,			/* min/max width */
 			     120, 2160,			/* min/max height */

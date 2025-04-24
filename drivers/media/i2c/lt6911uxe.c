@@ -106,10 +106,6 @@ static const struct v4l2_event lt6911uxe_ev_source_change = {
 	.u.src_change.changes = V4L2_EVENT_SRC_CH_RESOLUTION,
 };
 
-static const struct v4l2_event lt6911uxe_ev_stream_end = {
-	.type = V4L2_EVENT_EOS,
-};
-
 static inline struct lt6911uxe *to_lt6911uxe(struct v4l2_subdev *sd)
 {
 	return container_of(sd, struct lt6911uxe, sd);
@@ -153,12 +149,13 @@ static int lt6911uxe_s_dv_timings(struct v4l2_subdev *sd, unsigned int pad,
 	struct v4l2_subdev_state *state;
 
 	state = v4l2_subdev_lock_and_get_active_state(sd);
-	if (v4l2_match_dv_timings(&lt6911uxe->timings, timings, 0, false))
+	if (v4l2_match_dv_timings(&lt6911uxe->timings, timings, 0, false)) {
+		v4l2_subdev_unlock_state(state);
 		return 0;
+	}
 
 	if (!v4l2_valid_dv_timings(timings, &lt6911uxe_timings_cap_4kp30,
 				   NULL, NULL)) {
-		v4l2_warn(sd, "timings out of range\n");
 		v4l2_subdev_unlock_state(state);
 		return -ERANGE;
 	}
@@ -416,20 +413,6 @@ static int lt6911uxe_set_format(struct v4l2_subdev *sd,
 	return 0;
 }
 
-static int lt6911uxe_get_format(struct v4l2_subdev *sd,
-				struct v4l2_subdev_state *sd_state,
-				struct v4l2_subdev_format *fmt)
-{
-	struct lt6911uxe *lt6911uxe = to_lt6911uxe(sd);
-
-	if (fmt->which == V4L2_SUBDEV_FORMAT_TRY)
-		fmt->format = *v4l2_subdev_state_get_format(sd_state, fmt->pad);
-	else
-		lt6911uxe_update_pad_format(&lt6911uxe->cur_mode, &fmt->format);
-
-	return 0;
-}
-
 static int lt6911uxe_enum_mbus_code(struct v4l2_subdev *sd,
 				    struct v4l2_subdev_state *sd_state,
 				    struct v4l2_subdev_mbus_code_enum *code)
@@ -466,7 +449,7 @@ static const struct v4l2_subdev_video_ops lt6911uxe_video_ops = {
  */
 static const struct v4l2_subdev_pad_ops lt6911uxe_pad_ops = {
 	.set_fmt = lt6911uxe_set_format,
-	.get_fmt = lt6911uxe_get_format,
+	.get_fmt = v4l2_subdev_get_fmt,
 	.enable_streams = lt6911uxe_enable_streams,
 	.disable_streams = lt6911uxe_disable_streams,
 	.enum_mbus_code = lt6911uxe_enum_mbus_code,
@@ -563,9 +546,17 @@ static irqreturn_t lt6911uxe_threaded_irq_fn(int irq, void *dev_id)
 	struct v4l2_subdev *sd = dev_id;
 	struct lt6911uxe *lt6911uxe = to_lt6911uxe(sd);
 	struct v4l2_subdev_state *state;
+	struct v4l2_subdev_format fmt = {
+		.which = V4L2_SUBDEV_FORMAT_ACTIVE
+	};
 
-	state = v4l2_subdev_lock_and_get_active_state(sd);
 	lt6911uxe_status_update(lt6911uxe);
+	state = v4l2_subdev_lock_and_get_active_state(sd);
+	/*
+	 * As a HDMI to CSI2 bridge, it needs to update the format in time
+	 * when the HDMI source changes.
+	 */
+	lt6911uxe_set_format(sd, state, &fmt);
 	v4l2_subdev_unlock_state(state);
 
 	return IRQ_HANDLED;

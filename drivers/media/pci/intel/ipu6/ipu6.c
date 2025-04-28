@@ -391,7 +391,7 @@ ipu6_isys_init(struct pci_dev *pdev, struct device *parent,
 	       struct ipu6_buttress_ctrl *ctrl, void __iomem *base,
 	       const struct ipu6_isys_internal_pdata *ipdata,
 #if IS_ENABLED(CONFIG_VIDEO_INTEL_IPU_USE_PLATFORMDATA)
-	       struct ipu6_isys_subdev_pdata *spdata
+	       struct ipu_isys_subdev_pdata *spdata
 #endif
 			)
 {
@@ -399,7 +399,7 @@ ipu6_isys_init(struct pci_dev *pdev, struct device *parent,
 	struct ipu6_bus_device *isys_adev;
 	struct ipu6_isys_pdata *pdata;
 #if IS_ENABLED(CONFIG_INTEL_IPU_ACPI)
-	struct ipu6_isys_subdev_pdata *acpi_pdata;
+	struct ipu_isys_subdev_pdata *acpi_pdata;
 #endif
 	int ret;
 
@@ -557,7 +557,7 @@ static void ipu6_configure_vc_mechanism(struct ipu6_device *isp)
 
 #if IS_ENABLED(CONFIG_VIDEO_INTEL_IPU_USE_PLATFORMDATA)
 #if IS_ENABLED(CONFIG_VIDEO_INTEL_IPU_PDATA_DYNAMIC_LOADING)
-static inline int match_spdata(struct ipu6_isys_subdev_info *sd,
+static inline int match_spdata(struct ipu_isys_subdev_info *sd,
 			const struct ipu6_spdata_rep *rep)
 {
 	if (strcmp(sd->i2c.board_info.type, rep->name))
@@ -576,10 +576,10 @@ static inline int match_spdata(struct ipu6_isys_subdev_info *sd,
 }
 
 static void fixup_spdata(const void *spdata_rep,
-			 struct ipu6_isys_subdev_pdata *spdata)
+			 struct ipu_isys_subdev_pdata *spdata)
 {
 	const struct ipu6_spdata_rep *rep = spdata_rep;
-	struct ipu6_isys_subdev_info **subdevs, *sd_info;
+	struct ipu_isys_subdev_info **subdevs, *sd_info;
 
 	if (!spdata)
 		return;

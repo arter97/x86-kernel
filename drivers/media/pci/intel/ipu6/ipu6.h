@@ -334,7 +334,7 @@ struct ipu6_isys_pdata {
 	void __iomem *base;
 	const struct ipu6_isys_internal_pdata *ipdata;
 #if IS_ENABLED(CONFIG_VIDEO_INTEL_IPU_USE_PLATFORMDATA)
-	struct ipu6_isys_subdev_pdata *spdata;
+	struct ipu_isys_subdev_pdata *spdata;
 #endif
 };
 

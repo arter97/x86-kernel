@@ -651,8 +651,8 @@ static int ipu6_isys_mcd_phy_config(struct ipu6_isys *isys, struct ipu6_isys_csi
 	struct ipu6_device *isp = adev->isp;
 	void __iomem *isp_base = isp->base;
 	const struct phy_reg **phy_config_regs;
-	struct ipu6_isys_subdev_pdata *spdata = isys->pdata->spdata;
-	struct ipu6_isys_subdev_info **subdevs, *sd_info;
+	struct ipu_isys_subdev_pdata *spdata = isys->pdata->spdata;
+	struct ipu_isys_subdev_info **subdevs, *sd_info;
 	int i;
 
 	if (!spdata) {

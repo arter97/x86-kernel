@@ -64,10 +64,10 @@ struct ipu6_bus_device;
 #if (IS_ENABLED(CONFIG_VIDEO_INTEL_IPU_USE_PLATFORMDATA) \
 	&& IS_ENABLED(CONFIG_VIDEO_INTEL_IPU_PDATA_DYNAMIC_LOADING)) \
 	|| IS_ENABLED(CONFIG_INTEL_IPU_ACPI)
-#define IPU6_SPDATA_NAME_LEN	20
-#define IPU6_SPDATA_BDF_LEN	32
-#define IPU6_SPDATA_GPIO_NUM 	4
-#define IPU6_SPDATA_IRQ_PIN_NAME_LEN 16
+#define IPU_SPDATA_NAME_LEN	20
+#define IPU_SPDATA_BDF_LEN	32
+#define IPU_SPDATA_GPIO_NUM 	4
+#define IPU_SPDATA_IRQ_PIN_NAME_LEN 16
 #endif
 
 struct ltr_did {
@@ -201,10 +201,10 @@ struct ipu6_isys_subdev_i2c_info {
 #if (IS_ENABLED(CONFIG_VIDEO_INTEL_IPU_USE_PLATFORMDATA) \
 	&& IS_ENABLED(CONFIG_VIDEO_INTEL_IPU_PDATA_DYNAMIC_LOADING)) \
 	|| IS_ENABLED(CONFIG_INTEL_IPU_ACPI)
-#define IPU6_SPDATA_NAME_LEN	20
-#define IPU6_SPDATA_BDF_LEN	32
-#define IPU6_SPDATA_GPIO_NUM 	4
-#define IPU6_SPDATA_IRQ_PIN_NAME_LEN 16
+#define IPU_SPDATA_NAME_LEN	20
+#define IPU_SPDATA_BDF_LEN	32
+#define IPU_SPDATA_GPIO_NUM 	4
+#define IPU_SPDATA_IRQ_PIN_NAME_LEN 16
 #endif
 
 #if IS_ENABLED(CONFIG_VIDEO_INTEL_IPU_USE_PLATFORMDATA) \
@@ -243,7 +243,7 @@ struct ipu6_spdata_rep {
 };
 #endif
 
-struct ipu6_isys_subdev_info {
+struct ipu_isys_subdev_info {
 	struct ipu6_isys_csi2_config *csi2;
 	struct ipu6_isys_subdev_i2c_info i2c;
 #if IS_ENABLED(CONFIG_VIDEO_INTEL_IPU_USE_PLATFORMDATA) \
@@ -255,14 +255,14 @@ struct ipu6_isys_subdev_info {
 #endif
 };
 
-struct ipu6_isys_clk_mapping {
+struct ipu_isys_clk_mapping {
 	struct clk_lookup clkdev_data;
 	char *platform_clock_name;
 };
 
-struct ipu6_isys_subdev_pdata {
-	struct ipu6_isys_subdev_info **subdevs;
-	struct ipu6_isys_clk_mapping *clk_map;
+struct ipu_isys_subdev_pdata {
+	struct ipu_isys_subdev_info **subdevs;
+	struct ipu_isys_clk_mapping *clk_map;
 };
 
 struct isys_fw_msgs *ipu6_get_fw_msg_buf(struct ipu6_isys_stream *stream);

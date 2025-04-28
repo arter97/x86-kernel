@@ -140,7 +140,7 @@ static int isys_i2c_test(struct device *dev, void *priv)
 
 static struct
 i2c_client *isys_find_i2c_subdev(struct i2c_adapter *adapter,
-				 struct ipu6_isys_subdev_info *sd_info)
+				 struct ipu_isys_subdev_info *sd_info)
 {
 	struct i2c_board_info *info = &sd_info->i2c.board_info;
 	struct isys_i2c_test test = {
@@ -211,7 +211,7 @@ unregister_subdev:
 
 #if IS_ENABLED(CONFIG_VIDEO_INTEL_IPU_USE_PLATFORMDATA)
 static int isys_register_ext_subdev(struct ipu6_isys *isys,
-				    struct ipu6_isys_subdev_info *sd_info)
+				    struct ipu_isys_subdev_info *sd_info)
 {
 	struct i2c_adapter *adapter;
 	struct v4l2_subdev *sd;
@@ -285,7 +285,7 @@ skip_put_adapter:
 }
 
 static int isys_unregister_ext_subdev(struct ipu6_isys *isys,
-				      struct ipu6_isys_subdev_info *sd_info)
+				      struct ipu_isys_subdev_info *sd_info)
 {
 	struct i2c_adapter *adapter;
 	struct i2c_client *client;
@@ -332,8 +332,8 @@ skip_put_adapter:
 
 static void isys_register_ext_subdevs(struct ipu6_isys *isys)
 {
-	struct ipu6_isys_subdev_pdata *spdata = isys->pdata->spdata;
-	struct ipu6_isys_subdev_info **sd_info;
+	struct ipu_isys_subdev_pdata *spdata = isys->pdata->spdata;
+	struct ipu_isys_subdev_info **sd_info;
 
 	if (!spdata) {
 		dev_info(&isys->adev->auxdev.dev, "no subdevice info provided\n");
@@ -345,8 +345,8 @@ static void isys_register_ext_subdevs(struct ipu6_isys *isys)
 
 static void isys_unregister_ext_subdevs(struct ipu6_isys *isys)
 {
-	struct ipu6_isys_subdev_pdata *spdata = isys->pdata->spdata;
-	struct ipu6_isys_subdev_info **sd_info;
+	struct ipu_isys_subdev_pdata *spdata = isys->pdata->spdata;
+	struct ipu_isys_subdev_info **sd_info;
 
 	if (!spdata)
 		return;
@@ -388,8 +388,8 @@ static int isys_csi2_register_subdevices(struct ipu6_isys *isys)
 	const struct ipu6_isys_internal_csi2_pdata *csi2_pdata =
 		&isys->pdata->ipdata->csi2;
 #if IS_ENABLED(CONFIG_VIDEO_INTEL_IPU_USE_PLATFORMDATA)
-	struct ipu6_isys_subdev_pdata *spdata = isys->pdata->spdata;
-	struct ipu6_isys_subdev_info **sd_info;
+	struct ipu_isys_subdev_pdata *spdata = isys->pdata->spdata;
+	struct ipu_isys_subdev_info **sd_info;
 	DECLARE_BITMAP(csi2_enable, 32);
 #endif
 	unsigned int i;
@@ -448,8 +448,8 @@ static int isys_csi2_create_media_links(struct ipu6_isys *isys)
 		&isys->pdata->ipdata->csi2;
 	struct device *dev = &isys->adev->auxdev.dev;
 #if IS_ENABLED(CONFIG_VIDEO_INTEL_IPU_USE_PLATFORMDATA)
-	struct ipu6_isys_subdev_pdata *spdata = isys->pdata->spdata;
-	struct ipu6_isys_subdev_info **sd_info;
+	struct ipu_isys_subdev_pdata *spdata = isys->pdata->spdata;
+	struct ipu_isys_subdev_info **sd_info;
 	DECLARE_BITMAP(csi2_enable, 32);
 #endif
 	unsigned int i, j;
@@ -519,8 +519,8 @@ static int isys_register_video_devices(struct ipu6_isys *isys)
 	const struct ipu6_isys_internal_csi2_pdata *csi2_pdata =
 		&isys->pdata->ipdata->csi2;
 #if IS_ENABLED(CONFIG_VIDEO_INTEL_IPU_USE_PLATFORMDATA)
-	struct ipu6_isys_subdev_pdata *spdata = isys->pdata->spdata;
-	struct ipu6_isys_subdev_info **sd_info;
+	struct ipu_isys_subdev_pdata *spdata = isys->pdata->spdata;
+	struct ipu_isys_subdev_info **sd_info;
 	DECLARE_BITMAP(csi2_enable, 32);
 #endif
 	unsigned int i, j;

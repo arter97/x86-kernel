@@ -25,6 +25,8 @@
 #include <linux/sched/task.h>
 #include <linux/delayacct.h>
 #include <linux/zswap.h>
+#include <linux/kthread.h>
+#include <linux/freezer.h>
 #include "swap.h"
 
 static void __end_swap_bio_write(struct bio *bio)
@@ -233,6 +235,42 @@ static void swap_zeromap_folio_clear(struct folio *folio)
 	}
 }
 
+static bool swap_sched_async_compress(struct folio *folio)
+{
+	struct swap_info_struct *sis;
+	pg_data_t *pgdat = folio_pgdat(folio);
+	bool zswap_wb_enabled;
+
+	if (unlikely(!pgdat->kcompressd))
+		return false;
+
+	if (!current_is_kswapd())
+		return false;
+
+	if (!folio_test_anon(folio))
+		return false;
+	/*
+	 * This case needs to synchronously return AOP_WRITEPAGE_ACTIVATE
+	 */
+	rcu_read_lock();
+	zswap_wb_enabled = mem_cgroup_zswap_writeback_enabled(folio_memcg(folio));
+	rcu_read_unlock();
+	if (!zswap_wb_enabled)
+		return false;
+
+	sis = __swap_entry_to_info(folio->swap);
+
+	if (zswap_is_enabled() || data_race(sis->flags & SWP_SYNCHRONOUS_IO)) {
+		if (kfifo_avail(&pgdat->kcompress_fifo) >= sizeof(folio) &&
+			kfifo_in(&pgdat->kcompress_fifo, &folio, sizeof(folio))) {
+			wake_up_interruptible(&pgdat->kcompressd_wait);
+			return true;
+		}
+	}
+
+	return false;
+}
+
 /*
  * We may have stale swap cache pages in memory: notice
  * them here and get rid of the unnecessary final write.
@@ -272,6 +310,14 @@ int swap_writeout(struct folio *folio, struct swap_iocb **swap_plug)
 	 */
 	swap_zeromap_folio_clear(folio);
 
+	/*
+	 * Compression within zswap and zram might block rmap, unmap
+	 * of both file and anon pages, try to do compression async
+	 * if possible
+	 */
+	if (swap_sched_async_compress(folio))
+		return 0;
+
 	if (zswap_store(folio)) {
 		count_mthp_stat(folio_order(folio), MTHP_STAT_ZSWPOUT);
 		goto out_unlock;
@@ -290,6 +336,33 @@ int swap_writeout(struct folio *folio, struct swap_iocb **swap_plug)
 out_unlock:
 	folio_unlock(folio);
 	return ret;
+}
+
+int kcompressd(void *p)
+{
+	pg_data_t *pgdat = (pg_data_t *)p;
+	struct folio *folio;
+
+	current->flags |= PF_MEMALLOC | PF_KSWAPD;
+	set_freezable();
+
+	while (!kthread_should_stop()) {
+		wait_event_freezable(pgdat->kcompressd_wait,
+				!kfifo_is_empty(&pgdat->kcompress_fifo));
+
+		while (!kfifo_is_empty(&pgdat->kcompress_fifo)) {
+			if (kfifo_out(&pgdat->kcompress_fifo, &folio, sizeof(folio))) {
+				if (zswap_store(folio)) {
+					count_mthp_stat(folio_order(folio), MTHP_STAT_ZSWPOUT);
+					folio_unlock(folio);
+					continue;
+				}
+				__swap_writepage(folio, NULL);
+			}
+		}
+	}
+	current->flags &= ~(PF_MEMALLOC | PF_KSWAPD);
+	return 0;
 }
 
 static inline void count_swpout_vm_event(struct folio *folio)

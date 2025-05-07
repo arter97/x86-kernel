@@ -437,16 +437,17 @@ ipu6_isys_init(struct pci_dev *pdev, struct device *parent,
 #if IS_ENABLED(CONFIG_INTEL_IPU6_ACPI)
 	if (!spdata) {
 		dev_dbg(&pdev->dev, "No subdevice info provided");
-		ipu_get_acpi_devices(isys_adev, &isys_adev->auxdev.dev, &acpi_pdata, NULL,
+		ret = ipu_get_acpi_devices(isys_adev, &isys_adev->auxdev.dev, &acpi_pdata, NULL,
 				     isys_init_acpi_add_device);
 		pdata->spdata = acpi_pdata;
 	} else {
 		dev_dbg(&pdev->dev, "Subdevice info found");
-		ipu_get_acpi_devices(isys_adev, &isys_adev->auxdev.dev, &acpi_pdata, &spdata,
+		ret = ipu_get_acpi_devices(isys_adev, &isys_adev->auxdev.dev, &acpi_pdata, &spdata,
 				     isys_init_acpi_add_device);
 	}
+	if (ret)
+		return ERR_PTR(ret);
 #endif
-
 	isys_adev->mmu = ipu6_mmu_init(dev, base, ISYS_MMID,
 				       &ipdata->hw_variant);
 	if (IS_ERR(isys_adev->mmu)) {

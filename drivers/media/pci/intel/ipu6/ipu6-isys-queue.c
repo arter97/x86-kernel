@@ -520,19 +520,6 @@ static void return_buffers(struct ipu6_isys_queue *aq,
 	unsigned long flags;
 
 	spin_lock_irqsave(&aq->lock, flags);
-	while (!list_empty(&aq->incoming)) {
-		struct vb2_buffer *vb;
-
-		ib = list_first_entry(&aq->incoming, struct ipu6_isys_buffer,
-				      head);
-		vb = ipu6_isys_buffer_to_vb2_buffer(ib);
-		list_del(&ib->head);
-		spin_unlock_irqrestore(&aq->lock, flags);
-
-		vb2_buffer_done(vb, state);
-
-		spin_lock_irqsave(&aq->lock, flags);
-	}
 
 	/*
 	 * Something went wrong (FW crash / HW hang / not all buffers
@@ -542,8 +529,8 @@ static void return_buffers(struct ipu6_isys_queue *aq,
 	while (!list_empty(&aq->active)) {
 		struct vb2_buffer *vb;
 
-		ib = list_first_entry(&aq->active, struct ipu6_isys_buffer,
-				      head);
+		ib = list_last_entry(&aq->active, struct ipu6_isys_buffer,
+				     head);
 		vb = ipu6_isys_buffer_to_vb2_buffer(ib);
 
 		list_del(&ib->head);
@@ -553,6 +540,20 @@ static void return_buffers(struct ipu6_isys_queue *aq,
 
 		spin_lock_irqsave(&aq->lock, flags);
 		need_reset = true;
+	}
+
+	while (!list_empty(&aq->incoming)) {
+		struct vb2_buffer *vb;
+
+		ib = list_last_entry(&aq->incoming, struct ipu6_isys_buffer,
+				     head);
+		vb = ipu6_isys_buffer_to_vb2_buffer(ib);
+		list_del(&ib->head);
+		spin_unlock_irqrestore(&aq->lock, flags);
+
+		vb2_buffer_done(vb, state);
+
+		spin_lock_irqsave(&aq->lock, flags);
 	}
 
 	spin_unlock_irqrestore(&aq->lock, flags);
@@ -700,8 +701,8 @@ static int reset_start_streaming(struct ipu6_isys_video *av)
 
 	spin_lock_irqsave(&aq->lock, flags);
 	while (!list_empty(&aq->active)) {
-		struct ipu6_isys_buffer *ib = list_first_entry(&aq->active,
-			struct ipu6_isys_buffer, head);
+		struct ipu6_isys_buffer *ib = list_last_entry(&aq->active,
+							      struct ipu6_isys_buffer, head);
 
 		list_del(&ib->head);
 		list_add_tail(&ib->head, &aq->incoming);

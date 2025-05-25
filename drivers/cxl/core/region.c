@@ -1165,8 +1165,8 @@ static int cxl_port_attach_region(struct cxl_port *port,
 				dev_name(&cxld->dev), dev_name(&cxlmd->dev),
 				dev_name(&cxled->cxld.dev), pos,
 				cxlsd->nr_targets);
-			rc = -ENXIO;
-			goto out_erase;
+//			rc = -ENXIO;
+//			goto out_erase;
 		}
 	}
 
@@ -1288,8 +1288,8 @@ static int check_interleave_cap(struct cxl_decoder *cxld, int iw, int ig)
 	u16 eig;
 	int high_pos, low_pos;
 
-	if (!test_bit(iw, &cxlhdm->iw_cap_mask))
-		return -ENXIO;
+//	if (!test_bit(iw, &cxlhdm->iw_cap_mask))
+//		return -ENXIO;
 	/*
 	 * Per CXL specification r3.1(8.2.4.20.13 Decoder Protection),
 	 * if eiw < 8:
@@ -1317,8 +1317,8 @@ static int check_interleave_cap(struct cxl_decoder *cxld, int iw, int ig)
 		high_pos = eiw + eig + 7;
 	low_pos = eig + 8;
 	interleave_mask = GENMASK(high_pos, low_pos);
-	if (interleave_mask & ~cxlhdm->interleave_mask)
-		return -ENXIO;
+//	if (interleave_mask & ~cxlhdm->interleave_mask)
+//		return -ENXIO;
 
 	return 0;
 }

@@ -93,6 +93,39 @@
 #include "internal.h"
 #include "swap.h"
 
+/* mj */
+#include <linux/uaccess.h>
+#include <linux/module.h>
+#include <linux/fs.h>
+#include <linux/mman.h>
+#include <linux/ptrace.h>
+#include <linux/syscalls.h>
+#include <linux/moduleparam.h>
+
+#include "../drivers/misc/proc_fs.h"
+
+#define MJ_USER_PFN_PRINT
+#ifdef MJ_USER_PFN_PRINT
+
+#define VPMAP_ELEM_LIMIT	(32 * (1024*1024))
+static void __user *userspace_stack_buffer(const void *d, size_t len)
+{
+	/* To avoid having to mmap a page in userspace, just write below the stack pointer. */
+	char __user *p = (void __user *)current_user_stack_pointer() - len;
+
+	return copy_to_user(p, d, len) ? NULL : p; // boom in python
+}
+
+int target_count;
+int target_pid[16];
+module_param_array(target_pid, int, &target_count, 0644);
+#endif
+
+extern struct vpmap_elem *vpmap_buf;
+extern int vpmap_elem_cnt;
+
+//extern ssize_t vpmap_write(struct file *seq, const char *msg, size_t len, loff_t *off);
+
 #if defined(LAST_CPUPID_NOT_IN_PAGE_FLAGS) && !defined(CONFIG_COMPILE_TEST)
 #warning Unfortunate NUMA and NUMA Balancing config, growing page-frame for last_cpupid.
 #endif
@@ -2317,6 +2350,9 @@ static vm_fault_t insert_pfn(struct vm_area_struct *vma, unsigned long addr,
 	struct mm_struct *mm = vma->vm_mm;
 	pte_t *pte, entry;
 	spinlock_t *ptl;
+#ifdef MJ_USER_PFN_PRINT
+	struct timespec64 ts;
+#endif
 
 	pte = get_locked_pte(mm, addr, &ptl);
 	if (!pte)
@@ -2357,6 +2393,25 @@ static vm_fault_t insert_pfn(struct vm_area_struct *vma, unsigned long addr,
 		entry = maybe_mkwrite(pte_mkdirty(entry), vma);
 	}
 
+#ifdef MJ_USER_PFN_PRINT
+	pid_t curr_pid = current->pid;
+	int i;
+	for (i=0; i<target_count; i++) {
+		if (curr_pid == target_pid[i]) {
+			ktime_get_ts64(&ts);
+			if (vpmap_elem_cnt < VPMAP_ELEM_LIMIT) {
+				vpmap_buf[vpmap_elem_cnt].ftype = 'i';
+				vpmap_buf[vpmap_elem_cnt].pid = target_pid[0];
+				vpmap_buf[vpmap_elem_cnt].vpn = addr >> PAGE_SHIFT;
+				vpmap_buf[vpmap_elem_cnt].pfn = (((u64)entry.pte & (~((1ul<<PAGE_SHIFT)-1))) & ((1ul<<63)-1)) >> PAGE_SHIFT;
+				vpmap_buf[vpmap_elem_cnt].tv_sec = ts.tv_sec;
+				vpmap_buf[vpmap_elem_cnt].tv_nsec = ts.tv_nsec;
+				vpmap_elem_cnt++;
+			}
+			break;
+		}
+	}
+#endif
 	set_pte_at(mm, addr, pte, entry);
 	update_mmu_cache(vma, addr, pte); /* XXX: why not for insert_page? */
 
@@ -4830,6 +4885,27 @@ static vm_fault_t do_anonymous_page(struct vm_fault *vmf)
 	folio_add_new_anon_rmap(folio, vma, addr, RMAP_EXCLUSIVE);
 	folio_add_lru_vma(folio, vma);
 setpte:
+#ifdef MJ_USER_PFN_PRINT
+	struct timespec64 ts;
+	pid_t curr_pid = current->pid;
+	int i;
+	for (i=0; i<target_count; i++) {
+		if (curr_pid == target_pid[i]) {
+			ktime_get_ts64(&ts);
+			if (vpmap_elem_cnt < VPMAP_ELEM_LIMIT) {
+				vpmap_buf[vpmap_elem_cnt].ftype = 'a';
+				vpmap_buf[vpmap_elem_cnt].pid = target_pid[0];
+				vpmap_buf[vpmap_elem_cnt].vpn = vmf->address >> PAGE_SHIFT;
+				vpmap_buf[vpmap_elem_cnt].pfn = (((u64)entry.pte & (~((1ul<<PAGE_SHIFT)-1))) & ((1ul<<63)-1)) >> PAGE_SHIFT;
+				vpmap_buf[vpmap_elem_cnt].tv_sec = ts.tv_sec;
+				vpmap_buf[vpmap_elem_cnt].tv_nsec = ts.tv_nsec;
+				vpmap_elem_cnt++;
+			}
+			break;
+		}
+	}
+		// TODO: handle no space in vpmap
+#endif // ! MJ_USER_PFN_PRINT
 	if (vmf_orig_pte_uffd_wp(vmf))
 		entry = pte_mkuffd_wp(entry);
 	set_ptes(vma->vm_mm, addr, vmf->pte, entry, nr_pages);
@@ -5018,17 +5094,30 @@ void set_pte_range(struct vm_fault *vmf, struct folio *folio,
 	bool write = vmf->flags & FAULT_FLAG_WRITE;
 	bool prefault = !in_range(vmf->address, addr, nr * PAGE_SIZE);
 	pte_t entry;
+#ifdef MJ_USER_PFN_PRINT
+	struct timespec64 ts;
+#endif
 
 	flush_icache_pages(vma, page, nr);
 	entry = mk_pte(page, vma->vm_page_prot);
+	/* Sometimes, MSB of entry.pte is 1, but MSB of page_to_pfn(page) is 0.  why? */
+	//pr_info("MSB of entry (1): %lu (%lx)\n", (u64)entry.pte & (1ul<<63), ((u64)entry.pte & (~((1ul<<PAGE_SHIFT)-1))));
 
-	if (prefault && arch_wants_old_prefaulted_pte())
+	if (prefault && arch_wants_old_prefaulted_pte()) {
 		entry = pte_mkold(entry);
-	else
+		//pr_info("MSB of entry (2-1): %lu (%lx)\n", (u64)entry.pte & (1ul<<63), ((u64)entry.pte & (~((1ul<<PAGE_SHIFT)-1))));
+	}
+	else {
 		entry = pte_sw_mkyoung(entry);
+		//pr_info("MSB of entry (2-2): %lu (%lx)\n", (u64)entry.pte & (1ul<<63), ((u64)entry.pte & (~((1ul<<PAGE_SHIFT)-1))));
+	}
 
-	if (write)
+	if (write) {
 		entry = maybe_mkwrite(pte_mkdirty(entry), vma);
+		//pr_info("MSB of entry (3-1): %lu (%lx)\n", (u64)entry.pte & (1ul<<63), ((u64)entry.pte & (~((1ul<<PAGE_SHIFT)-1))));
+	} else {
+		//pr_info("MSB of entry (3-2): %lu (%lx)\n", (u64)entry.pte & (1ul<<63), ((u64)entry.pte & (~((1ul<<PAGE_SHIFT)-1))));
+	}
 	if (unlikely(vmf_orig_pte_uffd_wp(vmf)))
 		entry = pte_mkuffd_wp(entry);
 	/* copy-on-write page */
@@ -5039,6 +5128,25 @@ void set_pte_range(struct vm_fault *vmf, struct folio *folio,
 	} else {
 		folio_add_file_rmap_ptes(folio, page, nr, vma);
 	}
+#ifdef MJ_USER_PFN_PRINT
+	pid_t curr_pid = current->pid;
+	int i;
+	for (i=0; i<target_count; i++) {
+		if (curr_pid == target_pid[i]) {
+			ktime_get_ts64(&ts);
+			if (vpmap_elem_cnt < VPMAP_ELEM_LIMIT) {
+				vpmap_buf[vpmap_elem_cnt].ftype = 'd';
+				vpmap_buf[vpmap_elem_cnt].pid = target_pid[0];
+				vpmap_buf[vpmap_elem_cnt].vpn = addr >> PAGE_SHIFT;
+				vpmap_buf[vpmap_elem_cnt].pfn = (((u64)entry.pte & (~((1ul<<PAGE_SHIFT)-1))) & ((1ul<<63)-1)) >> PAGE_SHIFT;
+				vpmap_buf[vpmap_elem_cnt].tv_sec = ts.tv_sec;
+				vpmap_buf[vpmap_elem_cnt].tv_nsec = ts.tv_nsec;
+				vpmap_elem_cnt++;
+			}
+			break;
+		}
+	}
+#endif // ! MJ_USER_PFN_PRINT
 	set_ptes(vma->vm_mm, addr, vmf->pte, entry, nr);
 
 	/* no need to invalidate: a not-present page won't be cached */
@@ -5082,6 +5190,8 @@ vm_fault_t finish_fault(struct vm_fault *vmf)
 
 fallback:
 	addr = vmf->address;
+
+	//pr_info("### finish_fault - start ###\n");
 
 	/* Did we COW the page? */
 	if (is_cow)
@@ -5188,6 +5298,13 @@ fallback:
 
 unlock:
 	pte_unmap_unlock(vmf->pte, vmf->ptl);
+
+	/* VPN-PFN mapping */
+	///pr_info("[%d] (finish_fault) vpn: %lx, page_to_pfn(page): %lx,   faulting addr: %lx\n",
+			///current->pid, vmf->address >> PAGE_SHIFT, page_to_pfn(page), vmf->address);
+	//pr_info("### finish_fault - end ###\n");
+	//pr_info("#####################################\n\n");
+
 	return ret;
 }
 
@@ -5260,6 +5377,8 @@ static vm_fault_t do_fault_around(struct vm_fault *vmf)
 	pgoff_t from_pte, to_pte;
 	vm_fault_t ret;
 
+	//pr_info("[%d] do_fault_around called\n", current->pid);
+
 	/* The PTE offset of the start address, clamped to the VMA. */
 	from_pte = max(ALIGN_DOWN(pte_off, nr_pages),
 		       pte_off - min(pte_off, vma_off));
@@ -5269,10 +5388,28 @@ static vm_fault_t do_fault_around(struct vm_fault *vmf)
 		      pte_off + vma_pages(vmf->vma) - vma_off) - 1;
 
 	if (pmd_none(*vmf->pmd)) {
-		vmf->prealloc_pte = pte_alloc_one(vmf->vma->vm_mm);
+		vmf->prealloc_pte = pte_alloc_one(vmf->vma->vm_mm); // maybe here? or all pte_alloc_one() ?
 		if (!vmf->prealloc_pte)
 			return VM_FAULT_OOM;
 	}
+	/* minjae */
+#if 0
+	if (vmf->prealloc_pte) {
+		pr_info("(around) prealloc_pte: 0x%lx (ptr: %p)\n", vmf->prealloc_pte, vmf->prealloc_pte);
+		pr_info("(around) %d 0x%lx 0x%lx 0x%lx 0x%lx (pte-pfn: %p), cr2: 0x%lx (masked cr2: 0x%lx)\n",
+				current->pid,
+				vmf->address,
+				(u64)page_to_phys(vmf->prealloc_pte),
+				vmf->address >> PAGE_SHIFT,
+				(u64)page_to_pfn(vmf->prealloc_pte),
+				vmf->prealloc_pte - page_to_pfn(vmf->prealloc_pte),
+				read_cr2(),
+				read_cr2() & PAGE_MASK
+			   );
+	} else {
+		//pr_info("(around) NULL! pmd_none: %p\n", pmd_none(*vmf->pmd));
+	}
+#endif
 
 	rcu_read_lock();
 	ret = vmf->vma->vm_ops->map_pages(vmf,

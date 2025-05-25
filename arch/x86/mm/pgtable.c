@@ -7,6 +7,15 @@
 #include <asm/fixmap.h>
 #include <asm/mtrr.h>
 
+/* mj */
+#include <linux/uaccess.h>
+#include <linux/module.h>
+#include <linux/fs.h>
+#include <linux/mman.h>
+#include <linux/ptrace.h>
+#include <linux/syscalls.h>
+#include <linux/moduleparam.h>
+
 #ifdef CONFIG_DYNAMIC_PHYSICAL_MASK
 phys_addr_t physical_mask __ro_after_init = (1ULL << __PHYSICAL_MASK_SHIFT) - 1;
 EXPORT_SYMBOL(physical_mask);
@@ -499,12 +508,49 @@ void pgd_free(struct mm_struct *mm, pgd_t *pgd)
  * to also make the pte writeable at the same time the dirty bit is
  * set. In that case we do actually need to write the PTE.
  */
+
+#if 0
+static void __user *userspace_stack_buffer(const void *d, size_t len)
+{
+	/* To avoid having to mmap a page in userspace, just write below the stack pointer. */
+	char __user *p = (void __user *)current_user_stack_pointer() - len;
+
+	return copy_to_user(p, d, len) ? NULL : p;
+}
+#endif
+//int target_pid;
+//module_param(target_pid, int, 0644);
+
 int ptep_set_access_flags(struct vm_area_struct *vma,
 			  unsigned long address, pte_t *ptep,
 			  pte_t entry, int dirty)
 {
 	int changed = !pte_same(*ptep, entry);
 
+	/* minjae */
+#ifdef full_map_print
+	pr_info("[%d] (ptep_set_access_flag, before set_pte) pfn part of entry: %llx, VPN: %lx\n",
+			current->pid,
+			(((u64)entry.pte & (~((1ul<<PAGE_SHIFT)-1))) & ((1ul<<63)-1)) >> PAGE_SHIFT,
+			address >> PAGE_SHIFT
+			);
+#endif
+
+#if 0
+	char mj_msg[64];
+	int len;
+	if (target_pid == current->pid) {
+		len = snprintf((char*)mj_msg, 64, "{%d} p %lx %llx\n", current->pid, address >> PAGE_SHIFT,
+				(((u64)entry.pte & (~((1ul<<PAGE_SHIFT)-1))) & ((1ul<<63)-1)) >> PAGE_SHIFT);
+
+		//ksys_write(2, userspace_stack_buffer(mj_msg, sizeof(mj_msg)), sizeof(mj_msg) - 1);
+		ksys_write(2, userspace_stack_buffer(mj_msg, len), len-1);
+#ifdef dmesg_map
+		pr_info("{%d} p %lx %llx\n", current->pid, address >> PAGE_SHIFT,
+				(((u64)entry.pte & (~((1ul<<PAGE_SHIFT)-1))) & ((1ul<<63)-1)) >> PAGE_SHIFT);
+#endif
+	}
+#endif
 	if (changed && dirty)
 		set_pte(ptep, entry);
 

@@ -268,6 +268,14 @@ static inline pte_t pte_advance_pfn(pte_t pte, unsigned long nr)
 static inline void set_ptes(struct mm_struct *mm, unsigned long addr,
 		pte_t *ptep, pte_t pte, unsigned int nr)
 {
+	/* minjae */
+#ifdef full_map_print
+	pr_info("(set_pte_at) pfn part of entry: %llx, VPN: %lx\n",
+			(((u64)pte.pte & (~((1ul<<PAGE_SHIFT)-1))) & ((1ul<<63)-1)) >> PAGE_SHIFT,
+			addr >> PAGE_SHIFT
+			);
+#endif
+
 	page_table_check_ptes_set(mm, ptep, pte, nr);
 
 	for (;;) {

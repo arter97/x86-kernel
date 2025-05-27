@@ -276,7 +276,8 @@ static int isys_register_ext_subdev(struct ipu6_isys *isys,
 	if (!sd_info->csi2)
 		return 0;
 
-	return isys_complete_ext_device_registration(isys, sd, sd_info->csi2);
+	/* src_pad is useless for non MIPI split case. Set it to '-1'.*/
+	return isys_complete_ext_device_registration(isys, sd, -1, sd_info->csi2);
 
 skip_put_adapter:
 	i2c_put_adapter(adapter);

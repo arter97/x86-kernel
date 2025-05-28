@@ -2,7 +2,6 @@
 obj-$(CONFIG_VIDEO_PXA27x) += pxa_camera.o
 
 ccflags-y += -I$(src)/../../pci/intel/ipu6/
-obj-$(CONFIG_INTEL_IPU6_ADLRVP_PDATA) += ipu6-adlrvp-pdata.o
 obj-$(CONFIG_INTEL_IPU6_ACPI)         += ipu6-acpi.o \
                                          ipu6-acpi-pdata.o \
                                          ipu6-acpi-common.o

@@ -403,11 +403,11 @@ ipu6_isys_init(struct pci_dev *pdev, struct device *parent,
 #endif
 	int ret;
 
-	// ret = ipu_bridge_init(dev, ipu_bridge_parse_ssdb);
-	// if (ret) {
-	// 	dev_err_probe(dev, ret, "IPU6 bridge init failed\n");
-	// 	return ERR_PTR(ret);
-	// }
+	ret = ipu_bridge_init(dev, ipu_bridge_parse_ssdb);
+	if (ret) {
+		dev_err_probe(dev, ret, "IPU6 bridge init failed\n");
+		return ERR_PTR(ret);
+	}
 
 	pdata = kzalloc(sizeof(*pdata), GFP_KERNEL);
 	if (!pdata)
@@ -439,7 +439,9 @@ ipu6_isys_init(struct pci_dev *pdev, struct device *parent,
 		dev_dbg(&pdev->dev, "No subdevice info provided");
 		ret = ipu_get_acpi_devices(isys_adev, &isys_adev->auxdev.dev, (void **)&acpi_pdata, NULL,
 				     isys_init_acpi_add_device);
-		pdata->spdata = acpi_pdata;
+		if (acpi_pdata && (*acpi_pdata->subdevs)) {
+			pdata->spdata = acpi_pdata;
+		}
 	} else {
 		dev_dbg(&pdev->dev, "Subdevice info found");
 		ret = ipu_get_acpi_devices(isys_adev, &isys_adev->auxdev.dev, (void **)&acpi_pdata, (void **)&spdata,

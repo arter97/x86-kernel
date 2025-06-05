@@ -168,9 +168,7 @@ struct ipu6_isys {
 	spinlock_t listlock;	/* Protect framebuflist */
 	struct list_head framebuflist;
 	struct list_head framebuflist_fw;
-#if !IS_ENABLED(CONFIG_INTEL_IPU_ACPI)
 	struct v4l2_async_notifier notifier;
-#endif
 	struct isys_iwake_watermark iwake_watermark;
 #ifdef CONFIG_VIDEO_INTEL_IPU6_ISYS_RESET
 	struct mutex reset_mutex;
@@ -194,8 +192,6 @@ struct ipu6_isys_subdev_i2c_info {
 	int i2c_adapter_id;
 	char i2c_adapter_bdf[32];
 };
-#endif
-#if IS_ENABLED(CONFIG_INTEL_IPU_ACPI)
 #define IPU_SPDATA_GPIO_NUM 	4
 #define IPU_SPDATA_IRQ_PIN_NAME_LEN 16
 #endif

@@ -28,14 +28,12 @@
 #include <media/ipu-bridge.h>
 #include <media/media-device.h>
 #include <media/media-entity.h>
-#if !IS_ENABLED(CONFIG_INTEL_IPU6_ACPI)
 #include <media/v4l2-fwnode.h>
 #include <media/v4l2-ctrls.h>
 #include <media/v4l2-device.h>
 #include <media/v4l2-event.h>
 #include <media/v4l2-ioctl.h>
 #include <media/v4l2-async.h>
-#endif
 
 #include "ipu6-bus.h"
 #include "ipu6-cpd.h"
@@ -985,7 +983,6 @@ static void isys_iwake_watermark_cleanup(struct ipu6_isys *isys)
 	mutex_destroy(&iwake_watermark->mutex);
 }
 
-#if !IS_ENABLED(CONFIG_INTEL_IPU6_ACPI)
 /* The .bound() notifier callback when a match is found */
 static int isys_notifier_bound(struct v4l2_async_notifier *notifier,
 			       struct v4l2_subdev *sd,
@@ -1099,7 +1096,6 @@ static void isys_notifier_cleanup(struct ipu6_isys *isys)
 	v4l2_async_nf_unregister(&isys->notifier);
 	v4l2_async_nf_cleanup(&isys->notifier);
 }
-#endif
 
 static int isys_register_devices(struct ipu6_isys *isys)
 {
@@ -1137,17 +1133,19 @@ static int isys_register_devices(struct ipu6_isys *isys)
 	if (ret)
 		goto out_isys_unregister_subdevices;
 
-#if !IS_ENABLED(CONFIG_INTEL_IPU6_ACPI)
-	ret = isys_notifier_init(isys);
-	if (ret)
-		goto out_isys_unregister_subdevices;
-#else
-	isys_register_ext_subdevs(isys);
-#endif
 #if IS_ENABLED(CONFIG_INTEL_IPU6_ACPI)
-	ret = v4l2_device_register_subdev_nodes(&isys->v4l2_dev);
-	if (ret)
-		goto out_isys_unregister_ext_subdevs;
+	if (!isys->pdata->spdata) {
+#endif
+		ret = isys_notifier_init(isys);
+		if (ret)
+			goto out_isys_unregister_subdevices;
+#if IS_ENABLED(CONFIG_INTEL_IPU6_ACPI)
+	} else {
+		isys_register_ext_subdevs(isys);
+		ret = v4l2_device_register_subdev_nodes(&isys->v4l2_dev);
+		if (ret)
+			goto out_isys_unregister_ext_subdevs;
+	}
 #endif
 	return 0;
 #if IS_ENABLED(CONFIG_INTEL_IPU6_ACPI)
@@ -1177,7 +1175,8 @@ static void isys_unregister_devices(struct ipu6_isys *isys)
 	isys_unregister_video_devices(isys);
 	isys_csi2_unregister_subdevices(isys);
 #if IS_ENABLED(CONFIG_INTEL_IPU6_ACPI)
-	isys_unregister_ext_subdevs(isys);
+	if (isys->pdata->spdata)
+		isys_unregister_ext_subdevs(isys);
 #endif
 	v4l2_device_unregister(&isys->v4l2_dev);
 	media_device_unregister(&isys->media_dev);
@@ -1549,9 +1548,7 @@ static void isys_remove(struct auxiliary_device *auxdev)
 	free_fw_msg_bufs(isys);
 
 	isys_unregister_devices(isys);
-#if !IS_ENABLED(CONFIG_INTEL_IPU6_ACPI)
 	isys_notifier_cleanup(isys);
-#endif
 
 	cpu_latency_qos_remove_request(&isys->pm_qos);
 

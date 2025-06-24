@@ -41,6 +41,7 @@
 #include "ipu6-platform-buttress-regs.h"
 #include "ipu6-platform-isys-csi2-reg.h"
 #include "ipu6-platform-regs.h"
+#include "ipu6-trace.h"
 
 #define IPU6_BUTTRESS_FABIC_CONTROL		0x68
 #define GDA_ENABLE_IWAKE_INDEX			2
@@ -360,9 +361,11 @@ irqreturn_t isys_isr(struct ipu6_bus_device *adev)
 	u32 status_sw, status_csi;
 	u32 ctrl0_status, ctrl0_clear;
 
+	dev_dbg(&adev->auxdev.dev, "%s enter", __func__);
 	spin_lock(&isys->power_lock);
 	if (!isys->power) {
 		spin_unlock(&isys->power_lock);
+		dev_dbg(&adev->auxdev.dev, "%s exit, no power", __func__);
 		return IRQ_NONE;
 	}
 
@@ -411,6 +414,7 @@ irqreturn_t isys_isr(struct ipu6_bus_device *adev)
 
 	spin_unlock(&isys->power_lock);
 
+	dev_dbg(&adev->auxdev.dev, "%s exit", __func__);
 	return IRQ_HANDLED;
 }
 
@@ -1054,6 +1058,46 @@ void ipu6_put_fw_msg_buf(struct ipu6_isys *isys, u64 data)
 	spin_unlock_irqrestore(&isys->listlock, flags);
 }
 
+struct ipu_trace_block isys_trace_blocks[] = {
+	{
+		.offset = IPU_TRACE_REG_IS_TRACE_UNIT_BASE,
+		.type = IPU_TRACE_BLOCK_TUN,
+	},
+	{
+		.offset = IPU_TRACE_REG_IS_SP_EVQ_BASE,
+		.type = IPU_TRACE_BLOCK_TM,
+	},
+	{
+		.offset = IPU_TRACE_REG_IS_SP_GPC_BASE,
+		.type = IPU_TRACE_BLOCK_GPC,
+	},
+	{
+		.offset = IPU_TRACE_REG_IS_ISL_GPC_BASE,
+		.type = IPU_TRACE_BLOCK_GPC,
+	},
+	{
+		.offset = IPU_TRACE_REG_IS_MMU_GPC_BASE,
+		.type = IPU_TRACE_BLOCK_GPC,
+	},
+	{
+		/* Note! this covers all 8 blocks */
+		.offset = IPU_TRACE_REG_CSI2_TM_BASE(0),
+		.type = IPU_TRACE_CSI2,
+	},
+	{
+		/* Note! this covers all 11 blocks */
+		.offset = IPU_TRACE_REG_CSI2_PORT_SIG2SIO_GR_BASE(0),
+		.type = IPU_TRACE_SIG2CIOS,
+	},
+	{
+		.offset = IPU_TRACE_REG_IS_GPREG_TRACE_TIMER_RST_N,
+		.type = IPU_TRACE_TIMER_RST,
+	},
+	{
+		.type = IPU_TRACE_BLOCK_END,
+	}
+};
+
 static int isys_probe(struct auxiliary_device *auxdev,
 		      const struct auxiliary_device_id *auxdev_id)
 {
@@ -1125,6 +1169,8 @@ static int isys_probe(struct auxiliary_device *auxdev,
 			goto remove_shared_buffer;
 	}
 
+	ipu_trace_init(adev->isp, isys->pdata->base, &auxdev->dev,
+		       isys_trace_blocks);
 	cpu_latency_qos_add_request(&isys->pm_qos, PM_QOS_DEFAULT_VALUE);
 
 	ret = alloc_fw_msg_bufs(isys, 20);
@@ -1154,6 +1200,7 @@ static int isys_probe(struct auxiliary_device *auxdev,
 free_fw_msg_bufs:
 	free_fw_msg_bufs(isys);
 out_remove_pkg_dir_shared_buffer:
+	ipu_trace_uninit(&auxdev->dev);
 	cpu_latency_qos_remove_request(&isys->pm_qos);
 	if (!isp->secure_mode)
 		ipu6_cpd_free_pkg_dir(adev);
@@ -1199,6 +1246,7 @@ static void isys_remove(struct auxiliary_device *auxdev)
 		mutex_destroy(&isys->streams[i].mutex);
 
 	isys_iwake_watermark_cleanup(isys);
+	ipu_trace_uninit(&auxdev->dev);
 	mutex_destroy(&isys->stream_mutex);
 	mutex_destroy(&isys->mutex);
 #ifdef CONFIG_VIDEO_INTEL_IPU6_ISYS_RESET
@@ -1251,12 +1299,17 @@ static int isys_isr_one(struct ipu6_bus_device *adev)
 	u32 index;
 	u64 ts;
 
-	if (!isys->fwcom)
+	dev_dbg(&adev->auxdev.dev, "%s enter", __func__);
+	if (!isys->fwcom) {
+		dev_dbg(&adev->auxdev.dev, "%s exit, fwcom is null", __func__);
 		return 1;
+	}
 
 	resp = ipu6_fw_isys_get_resp(isys->fwcom, IPU6_BASE_MSG_RECV_QUEUES);
-	if (!resp)
+	if (!resp) {
+		dev_dbg(&adev->auxdev.dev, "%s exit, resp is null", __func__);
 		return 1;
+	}
 
 	ts = (u64)resp->timestamp[1] << 32 | resp->timestamp[0];
 
@@ -1365,6 +1418,7 @@ static int isys_isr_one(struct ipu6_bus_device *adev)
 	ipu6_isys_put_stream(stream);
 leave:
 	ipu6_fw_isys_put_resp(isys->fwcom, IPU6_BASE_MSG_RECV_QUEUES);
+	dev_dbg(&adev->auxdev.dev, "%s exit", __func__);
 	return 0;
 }
 

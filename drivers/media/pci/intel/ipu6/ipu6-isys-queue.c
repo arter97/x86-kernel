@@ -84,7 +84,9 @@ static int ipu6_isys_queue_setup(struct vb2_queue *q, unsigned int *num_buffers,
 static int ipu6_isys_buf_prepare(struct vb2_buffer *vb)
 {
 	struct ipu6_isys_queue *aq = vb2_queue_to_isys_queue(vb->vb2_queue);
+	struct ipu6_isys *isys = vb2_get_drv_priv(vb->vb2_queue);
 	struct ipu6_isys_video *av = ipu6_isys_queue_to_video(aq);
+	struct sg_table *sg = vb2_dma_sg_plane_desc(vb, 0);
 	struct device *dev = &av->isys->adev->auxdev.dev;
 	u32 bytesperline = ipu6_isys_get_bytes_per_line(av);
 	u32 height = ipu6_isys_get_frame_height(av);
@@ -97,6 +99,9 @@ static int ipu6_isys_buf_prepare(struct vb2_buffer *vb)
 		return -EINVAL;
 
 	vb2_set_plane_payload(vb, 0, bytesperline * height);
+
+	/* assume IPU is not DMA coherent */
+	ipu6_dma_sync_sgtable(isys->adev, sg);
 
 	return 0;
 }
@@ -514,19 +519,6 @@ static void return_buffers(struct ipu6_isys_queue *aq,
 	unsigned long flags;
 
 	spin_lock_irqsave(&aq->lock, flags);
-	while (!list_empty(&aq->incoming)) {
-		struct vb2_buffer *vb;
-
-		ib = list_first_entry(&aq->incoming, struct ipu6_isys_buffer,
-				      head);
-		vb = ipu6_isys_buffer_to_vb2_buffer(ib);
-		list_del(&ib->head);
-		spin_unlock_irqrestore(&aq->lock, flags);
-
-		vb2_buffer_done(vb, state);
-
-		spin_lock_irqsave(&aq->lock, flags);
-	}
 
 	/*
 	 * Something went wrong (FW crash / HW hang / not all buffers
@@ -536,8 +528,8 @@ static void return_buffers(struct ipu6_isys_queue *aq,
 	while (!list_empty(&aq->active)) {
 		struct vb2_buffer *vb;
 
-		ib = list_first_entry(&aq->active, struct ipu6_isys_buffer,
-				      head);
+		ib = list_last_entry(&aq->active, struct ipu6_isys_buffer,
+				     head);
 		vb = ipu6_isys_buffer_to_vb2_buffer(ib);
 
 		list_del(&ib->head);
@@ -547,6 +539,20 @@ static void return_buffers(struct ipu6_isys_queue *aq,
 
 		spin_lock_irqsave(&aq->lock, flags);
 		need_reset = true;
+	}
+
+	while (!list_empty(&aq->incoming)) {
+		struct vb2_buffer *vb;
+
+		ib = list_last_entry(&aq->incoming, struct ipu6_isys_buffer,
+				     head);
+		vb = ipu6_isys_buffer_to_vb2_buffer(ib);
+		list_del(&ib->head);
+		spin_unlock_irqrestore(&aq->lock, flags);
+
+		vb2_buffer_done(vb, state);
+
+		spin_lock_irqsave(&aq->lock, flags);
 	}
 
 	spin_unlock_irqrestore(&aq->lock, flags);
@@ -694,8 +700,8 @@ static int reset_start_streaming(struct ipu6_isys_video *av)
 
 	spin_lock_irqsave(&aq->lock, flags);
 	while (!list_empty(&aq->active)) {
-		struct ipu6_isys_buffer *ib = list_first_entry(&aq->active,
-			struct ipu6_isys_buffer, head);
+		struct ipu6_isys_buffer *ib = list_last_entry(&aq->active,
+							      struct ipu6_isys_buffer, head);
 
 		list_del(&ib->head);
 		list_add_tail(&ib->head, &aq->incoming);

@@ -553,7 +553,7 @@ static int lt6911uxc_identify_module(struct lt6911uxc *lt6911uxc,
 
 static int lt6911uxc_parse_gpio(struct lt6911uxc *lt6911uxc, struct device *dev)
 {
-	lt6911uxc->reset_gpio = devm_gpiod_get(dev, "reset", GPIOD_IN);
+	lt6911uxc->reset_gpio = devm_gpiod_get(dev, "reset", GPIOD_OUT_LOW);
 	if (IS_ERR(lt6911uxc->reset_gpio)) {
 		lt6911uxc->auxiliary_port = true;
 		return dev_err_probe(dev, PTR_ERR(lt6911uxc->reset_gpio),

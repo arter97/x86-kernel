@@ -14,6 +14,7 @@
 #include "ipu6-bus.h"
 #include "ipu6-dma.h"
 #include "ipu6-fw-com.h"
+#include "ipu6-trace.h"
 
 /*
  * FWCOM layer is a shared resource between FW and driver. It consist
@@ -265,8 +266,15 @@ EXPORT_SYMBOL_NS_GPL(ipu6_fw_com_prepare, INTEL_IPU6);
 
 int ipu6_fw_com_open(struct ipu6_fw_com_context *ctx)
 {
-	/* write magic pattern to disable the tunit trace */
-	writel(TUNIT_MAGIC_PATTERN, ctx->dmem_addr + TUNIT_CFG_DWR_REG * 4);
+	dma_addr_t trace_buff = TUNIT_MAGIC_PATTERN;
+
+	/*
+	 * Write trace buff start addr to tunit cfg reg.
+	 * This feature is used to enable tunit trace in secure mode.
+	 */
+	ipu_trace_buffer_dma_handle(&ctx->adev->auxdev.dev, &trace_buff);
+	writel(trace_buff, ctx->dmem_addr + TUNIT_CFG_DWR_REG * 4);
+
 	/* Check if SP is in valid state */
 	if (!ctx->cell_ready(ctx->adev))
 		return -EIO;

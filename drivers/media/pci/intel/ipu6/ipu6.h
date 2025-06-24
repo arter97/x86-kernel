@@ -82,10 +82,15 @@ struct ipu6_device {
 	u32 cpd_metadata_cmpnt_size;
 
 	void __iomem *base;
+#ifdef CONFIG_DEBUG_FS
+	struct dentry *ipu_dir;
+#endif
 	bool need_ipc_reset;
 	bool secure_mode;
 	u8 hw_ver;
 	bool bus_ready_to_probe;
+
+	struct ipu_trace *trace;
 };
 
 #define IPU6_ISYS_NAME "isys"

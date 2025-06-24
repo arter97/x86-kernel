@@ -32,6 +32,7 @@
 #include "ipu6-platform-buttress-regs.h"
 #include "ipu6-platform-isys-csi2-reg.h"
 #include "ipu6-platform-regs.h"
+#include "ipu6-trace.h"
 
 static unsigned int isys_freq_override;
 module_param(isys_freq_override, uint, 0660);
@@ -507,6 +508,37 @@ static int ipu6_pci_config_setup(struct pci_dev *dev, u8 hw_ver)
 	return 0;
 }
 
+#ifdef CONFIG_DEBUG_FS
+static int ipu_init_debugfs(struct ipu6_device *isp)
+{
+	struct dentry *dir;
+
+	dir = debugfs_create_dir(IPU6_NAME, NULL);
+	if (!dir)
+		return -ENOMEM;
+
+	if (ipu_trace_debugfs_add(isp, dir))
+		goto err;
+
+	isp->ipu_dir = dir;
+
+	return 0;
+err:
+	debugfs_remove_recursive(dir);
+	return -ENOMEM;
+}
+
+static void ipu_remove_debugfs(struct ipu6_device *isp)
+{
+	/*
+	 * Since isys and psys debugfs dir will be created under ipu root dir,
+	 * mark its dentry to NULL to avoid duplicate removal.
+	 */
+	debugfs_remove_recursive(isp->ipu_dir);
+	isp->ipu_dir = NULL;
+}
+#endif /* CONFIG_DEBUG_FS */
+
 static void ipu6_configure_vc_mechanism(struct ipu6_device *isp)
 {
 	u32 val = readl(isp->base + BUTTRESS_REG_BTRS_CTRL);
@@ -615,6 +647,10 @@ static int ipu6_pci_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 		goto buttress_exit;
 	}
 
+	ret = ipu_trace_add(isp);
+	if (ret)
+		dev_err(&isp->pdev->dev, "Trace support not available\n");
+
 	ret = ipu6_cpd_validate_cpd_file(isp, isp->cpd_fw->data,
 					 isp->cpd_fw->size);
 	if (ret) {
@@ -694,6 +730,13 @@ static int ipu6_pci_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 	ipu6_mmu_hw_cleanup(isp->psys->mmu);
 	pm_runtime_put(&isp->psys->auxdev.dev);
 
+#ifdef CONFIG_DEBUG_FS
+	ret = ipu_init_debugfs(isp);
+	if (ret)
+		dev_err(&isp->pdev->dev, "Failed to initialize debugfs");
+
+#endif
+
 	/* Configure the arbitration mechanisms for VC requests */
 	ipu6_configure_vc_mechanism(isp);
 
@@ -734,6 +777,11 @@ static void ipu6_pci_remove(struct pci_dev *pdev)
 	struct ipu6_device *isp = pci_get_drvdata(pdev);
 	struct ipu6_mmu *isys_mmu = isp->isys->mmu;
 	struct ipu6_mmu *psys_mmu = isp->psys->mmu;
+
+#ifdef CONFIG_DEBUG_FS
+	ipu_remove_debugfs(isp);
+#endif
+	ipu_trace_release(isp);
 
 	devm_free_irq(&pdev->dev, pdev->irq, isp);
 	ipu6_cpd_free_pkg_dir(isp->psys);

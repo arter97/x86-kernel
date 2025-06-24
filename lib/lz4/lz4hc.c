@@ -110,9 +110,11 @@ static const cParams_t k_clTable[LZ4HC_CLEVEL_MAX+1] = {
     { lz4hc,    64, 16,  0, 4 KB },  /* 7 */
     { lz4hc,   128, 16,  0, 4 KB },  /* 8 */
     { lz4hc,   256, 16,  0, 4 KB },  /* 9 */
+#ifndef __KERNEL__
     { lz4opt,   96, 64,  1, 4 KB },  /*10==LZ4HC_CLEVEL_OPT_MIN*/
     { lz4opt,  512,128,  2, 2 KB },  /*11 */
     { lz4opt,16384,LZ4_OPT_NUM, 64, 1 KB },  /* 12==LZ4HC_CLEVEL_MAX */
+#endif
 };
 
 static cParams_t LZ4HC_getCLevelParams(int cLevel)
@@ -1439,6 +1441,7 @@ _dest_overflow:
 }
 
 
+#ifndef __KERNEL__
 static int LZ4HC_compress_optimal( LZ4HC_CCtx_internal* ctx,
     const char* const source, char* dst,
     int* srcSizePtr, int dstCapacity,
@@ -1446,6 +1449,7 @@ static int LZ4HC_compress_optimal( LZ4HC_CCtx_internal* ctx,
     const limitedOutput_directive limit,
     const dictCtx_directive dict,
     const HCfavor_e favorDecSpeed);
+#endif
 
 static int
 LZ4HC_compress_generic_internal (
@@ -1471,7 +1475,6 @@ LZ4HC_compress_generic_internal (
 
     ctx->end += *srcSizePtr;
     {   cParams_t const cParam = LZ4HC_getCLevelParams(cLevel);
-        HCfavor_e const favor = ctx->favorDecSpeed ? favorDecompressionSpeed : favorCompressionRatio;
         int const srcSize = *srcSizePtr;
         int result;
 
@@ -1479,16 +1482,24 @@ LZ4HC_compress_generic_internal (
             result = LZ4MID_compress(ctx,
                                 src, dst, srcSizePtr, dstCapacity,
                                 limit, dict);
+#ifndef __KERNEL__
         } else if (cParam.strat == lz4hc) {
+#else
+	} else {
+            assert(cParam.strat == lz4hc);
+#endif
             result = LZ4HC_compress_hashChain(ctx,
                                 src, dst, srcSizePtr, dstCapacity,
                                 cParam.nbSearches, limit, dict);
+#ifndef __KERNEL__
         } else {
+            HCfavor_e const favor = ctx->favorDecSpeed ? favorDecompressionSpeed : favorCompressionRatio;
             assert(cParam.strat == lz4opt);
             result = LZ4HC_compress_optimal(ctx,
                                 src, dst, srcSizePtr, dstCapacity,
                                 cParam.nbSearches, cParam.nbSearchesSeq, (int)cParam.targetLength, limit,
                                 dict, favor);
+#endif
         }
         if ((limit == fillOutput) && (result > 0) && (*srcSizePtr < srcSize)) {
             /* fillOutput : compression stopped before the end of input.
@@ -2165,6 +2176,8 @@ _last_literals:
     return (int) ((char*)op-dst);
 }
 
+/* TODO: LZ4HC_optimal_t opt[] is too big. If there's a demand, we should move it to the user. */
+#ifndef __KERNEL__
 static int LZ4HC_compress_optimal ( LZ4HC_CCtx_internal* ctx,
                                     const char* const source,
                                     char* dst,
@@ -2199,6 +2212,7 @@ static int LZ4HC_compress_optimal ( LZ4HC_CCtx_internal* ctx,
 #endif
   }
 }
+#endif /* __KERNEL__ */
 
 
 #if 0

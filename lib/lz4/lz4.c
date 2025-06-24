@@ -1656,6 +1656,7 @@ int LZ4_compress_fast_continue (LZ4_stream_t* LZ4_stream,
         return result;
     }
 }
+EXPORT_SYMBOL(LZ4_compress_fast_continue);
 
 
 /* Hidden debug function, to force-test external dictionary mode */
@@ -2330,6 +2331,7 @@ int LZ4_decompress_safe(const char* source, char* dest, int compressedSize, int 
                                   decode_full_block, noDict,
                                   (BYTE*)dest, NULL, 0);
 }
+EXPORT_SYMBOL(LZ4_decompress_safe);
 
 LZ4_FORCE_O2
 int LZ4_decompress_safe_partial(const char* src, char* dst, int compressedSize, int targetOutputSize, int dstCapacity)
@@ -2339,6 +2341,7 @@ int LZ4_decompress_safe_partial(const char* src, char* dst, int compressedSize, 
                                   partial_decode,
                                   noDict, (BYTE*)dst, NULL, 0);
 }
+EXPORT_SYMBOL(LZ4_decompress_safe_partial);
 
 LZ4_FORCE_O2
 int LZ4_decompress_fast(const char* source, char* dest, int originalSize)
@@ -2476,6 +2479,7 @@ int LZ4_setStreamDecode (LZ4_streamDecode_t* LZ4_streamDecode, const char* dicti
     lz4sd->extDictSize  = 0;
     return 1;
 }
+EXPORT_SYMBOL(LZ4_setStreamDecode);
 
 /*! LZ4_decoderRingBufferSize() :
  *  when setting a ring buffer for streaming decompression (optional scenario),
@@ -2542,6 +2546,7 @@ int LZ4_decompress_safe_continue (LZ4_streamDecode_t* LZ4_streamDecode, const ch
 
     return result;
 }
+EXPORT_SYMBOL(LZ4_decompress_safe_continue);
 
 LZ4_FORCE_O2 int
 LZ4_decompress_fast_continue (LZ4_streamDecode_t* LZ4_streamDecode,
@@ -2583,6 +2588,7 @@ LZ4_decompress_fast_continue (LZ4_streamDecode_t* LZ4_streamDecode,
 
     return result;
 }
+EXPORT_SYMBOL(LZ4_decompress_fast_continue);
 
 
 /*

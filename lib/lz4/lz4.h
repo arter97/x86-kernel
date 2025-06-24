@@ -299,7 +299,14 @@ LZ4LIB_API int LZ4_compress_fast_extState (void* state, const char* src, char* d
  *        a dstCapacity which is > decompressedSize, by at least 1 byte.
  *        See https://github.com/lz4/lz4/issues/859 for details
  */
-LZ4LIB_API int LZ4_compress_destSize(const char* src, char* dst, int* srcSizePtr, int targetDstSize);
+#define LZ4_compress_destSize(src, dst, srcSizePtr, targetDstSize, wrkmem) \
+	LZ4_compress_destSize_extState(wrkmem, src, dst, srcSizePtr, targetDstSize, 1)
+
+/*! LZ4_compress_destSize_extState() : introduced in v1.10.0
+ *  Same as LZ4_compress_destSize(), but using an externally allocated state.
+ *  Also: exposes @acceleration
+ */
+int LZ4_compress_destSize_extState(void* state, const char* src, char* dst, int* srcSizePtr, int targetDstSize, int acceleration);
 
 /*! LZ4_decompress_safe_partial() :
  *  Decompress an LZ4 compressed block, of size 'srcSize' at position 'src',
@@ -639,12 +646,6 @@ LZ4_decompress_safe_partial_usingDict(const char* src, char* dst,
  *  while LZ4_compress_fast_extState() starts with a call to LZ4_resetStream().
  */
 LZ4LIB_STATIC_API int LZ4_compress_fast_extState_fastReset (void* state, const char* src, char* dst, int srcSize, int dstCapacity, int acceleration);
-
-/*! LZ4_compress_destSize_extState() : introduced in v1.10.0
- *  Same as LZ4_compress_destSize(), but using an externally allocated state.
- *  Also: exposes @acceleration
- */
-int LZ4_compress_destSize_extState(void* state, const char* src, char* dst, int* srcSizePtr, int targetDstSize, int acceleration);
 
 /*! In-place compression and decompression
  *

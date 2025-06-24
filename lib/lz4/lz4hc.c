@@ -99,9 +99,11 @@ static const cParams_t k_clTable[LZ4HC_CLEVEL_MAX+1] = {
     { lz4hc,    64, 16 },  /* 7 */
     { lz4hc,   128, 16 },  /* 8 */
     { lz4hc,   256, 16 },  /* 9 */
+#ifndef __KERNEL__
     { lz4opt,   96, 64 },  /*10==LZ4HC_CLEVEL_OPT_MIN*/
     { lz4opt,  512,128 },  /*11 */
     { lz4opt,16384,LZ4_OPT_NUM },  /* 12==LZ4HC_CLEVEL_MAX */
+#endif
 };
 
 static cParams_t LZ4HC_getCLevelParams(int cLevel)
@@ -1361,6 +1363,7 @@ _dest_overflow:
 }
 
 
+#ifndef __KERNEL__
 static int LZ4HC_compress_optimal( LZ4HC_CCtx_internal* ctx,
     const char* const source, char* dst,
     int* srcSizePtr, int dstCapacity,
@@ -1368,6 +1371,7 @@ static int LZ4HC_compress_optimal( LZ4HC_CCtx_internal* ctx,
     const limitedOutput_directive limit, int const fullUpdate,
     const dictCtx_directive dict,
     const HCfavor_e favorDecSpeed);
+#endif
 
 LZ4_FORCE_INLINE int
 LZ4HC_compress_generic_internal (
@@ -1389,24 +1393,31 @@ LZ4HC_compress_generic_internal (
 
     ctx->end += *srcSizePtr;
     {   cParams_t const cParam = LZ4HC_getCLevelParams(cLevel);
-        HCfavor_e const favor = ctx->favorDecSpeed ? favorDecompressionSpeed : favorCompressionRatio;
         int result;
 
         if (cParam.strat == lz4mid) {
             result = LZ4MID_compress(ctx,
                                 src, dst, srcSizePtr, dstCapacity,
                                 limit, dict);
+#ifndef __KERNEL__
         } else if (cParam.strat == lz4hc) {
+#else
+	} else {
+            assert(cParam.strat == lz4hc);
+#endif
             result = LZ4HC_compress_hashChain(ctx,
                                 src, dst, srcSizePtr, dstCapacity,
                                 cParam.nbSearches, limit, dict);
+#ifndef __KERNEL__
         } else {
+            HCfavor_e const favor = ctx->favorDecSpeed ? favorDecompressionSpeed : favorCompressionRatio;
             assert(cParam.strat == lz4opt);
             result = LZ4HC_compress_optimal(ctx,
                                 src, dst, srcSizePtr, dstCapacity,
                                 cParam.nbSearches, cParam.targetLength, limit,
                                 cLevel >= LZ4HC_CLEVEL_MAX,   /* ultra mode */
                                 dict, favor);
+#endif
         }
         if (result <= 0) ctx->dirty = 1;
         return result;
@@ -1808,6 +1819,8 @@ LZ4HC_FindLongerMatch(LZ4HC_CCtx_internal* const ctx,
 }
 
 
+/* TODO: LZ4HC_optimal_t opt[] is too big. If there's a demand, we should move it to the user. */
+#ifndef __KERNEL__
 static int LZ4HC_compress_optimal ( LZ4HC_CCtx_internal* ctx,
                                     const char* const source,
                                     char* dst,
@@ -2109,6 +2122,7 @@ _return_label:
 #endif
      return retval;
 }
+#endif /* __KERNEL__ */
 
 
 /* state is presumed correctly sized, aka >= sizeof(LZ4_streamHC_t)

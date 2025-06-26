@@ -7,7 +7,8 @@
 
 #ifdef STATIC
 #define PREBOOT
-#include "lz4/lz4_decompress.c"
+#define LZ4_FREESTANDING 1
+#include "lz4/lz4.c"
 #else
 #include <linux/decompress/unlz4.h>
 #endif

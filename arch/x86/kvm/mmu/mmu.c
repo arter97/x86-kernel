@@ -7258,11 +7258,19 @@ static inline bool kvm_memslot_flush_zap_all(struct kvm *kvm)
 void kvm_arch_flush_shadow_memslot(struct kvm *kvm,
 				   struct kvm_memory_slot *slot)
 {
-	/* TODO: I am not sure below logic is correct, need double check*/
-	if (kvm_memslot_flush_zap_all(kvm) && !kvm_gfn_shared_mask(kvm))
+	if (kvm_memslot_flush_zap_all(kvm)) {
 		kvm_mmu_zap_all_fast(kvm);
-	else if (kvm_gfn_shared_mask(kvm))
-		kvm_mmu_zap_memslot(kvm, slot);
+	} else {
+		if (kvm_gfn_shared_mask(kvm))
+				/*
+				 * Secure-EPT requires to release PTs from the leaf.  The
+				 * optimization to zap root PT first with child PT doesn't
+				 * work.
+				 */
+			kvm_mmu_zap_memslot(kvm, slot);
+		else
+			kvm_mmu_zap_all_fast(kvm);
+	}
 }
 
 void kvm_mmu_invalidate_mmio_sptes(struct kvm *kvm, u64 gen)

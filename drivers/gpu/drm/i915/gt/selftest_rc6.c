@@ -165,7 +165,7 @@ randomised_engines(struct intel_gt *gt,
 	int n;
 
 	n = 0;
-	for_each_engine(engine, gt, id)
+	for_each_enabled_engine(engine, gt, id)
 		n++;
 	if (!n)
 		return NULL;
@@ -175,7 +175,7 @@ randomised_engines(struct intel_gt *gt,
 		return NULL;
 
 	n = 0;
-	for_each_engine(engine, gt, id)
+	for_each_enabled_engine(engine, gt, id)
 		engines[n++] = engine;
 
 	i915_prandom_shuffle(engines, sizeof(*engines), n, prng);

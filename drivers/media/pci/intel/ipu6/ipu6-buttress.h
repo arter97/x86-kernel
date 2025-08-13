@@ -83,4 +83,7 @@ void ipu6_buttress_exit(struct ipu6_device *isp);
 void ipu6_buttress_csi_port_config(struct ipu6_device *isp,
 				   u32 legacy, u32 combo);
 void ipu6_buttress_restore(struct ipu6_device *isp);
+#if IS_ENABLED(CONFIG_INTEL_IPU6_ACPI)
+int ipu6_get_i2c_bus_id(int adapter_id, char *adapter_bdf, int bdf_len);
+#endif
 #endif /* IPU6_BUTTRESS_H */

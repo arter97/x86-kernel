@@ -21,7 +21,9 @@
 #include <linux/scatterlist.h>
 #include <linux/slab.h>
 #include <linux/time64.h>
-
+#if IS_ENABLED(CONFIG_INTEL_IPU6_ACPI)
+#include <linux/i2c.h>
+#endif
 #include "ipu6.h"
 #include "ipu6-bus.h"
 #include "ipu6-dma.h"
@@ -775,7 +777,48 @@ int ipu6_buttress_start_tsc_sync(struct ipu6_device *isp)
 	return -ETIMEDOUT;
 }
 EXPORT_SYMBOL_NS_GPL(ipu6_buttress_start_tsc_sync, INTEL_IPU6);
+#if IS_ENABLED(CONFIG_INTEL_IPU6_ACPI)
+/*
+ * The dev_id was hard code in platform data, as i2c bus number
+ * may change dynamiclly, we need to update this bus id
+ * accordingly.
+ *
+ * @adapter_id: hardware i2c adapter id, this was fixed in platform data
+ * return: i2c bus id registered in system
+ */
+int ipu6_get_i2c_bus_id(int adapter_id, char *adapter_bdf, int bdf_len)
+{
+	struct i2c_adapter *adapter;
+	char name[32];
+	int i = 0;
 
+	if (adapter_bdf) {
+		while ((adapter = i2c_get_adapter(i)) != NULL) {
+			struct device *parent = adapter->dev.parent;
+			struct device *pp = parent->parent;
+
+			if (pp && !strncmp(adapter_bdf, dev_name(pp), bdf_len))
+				return i;
+			i++;
+		}
+	}
+
+	i = 0;
+	snprintf(name, sizeof(name), "i2c_designware.%d", adapter_id);
+	while ((adapter = i2c_get_adapter(i)) != NULL) {
+		struct device *parent = adapter->dev.parent;
+
+		if (parent && !strncmp(name, dev_name(parent), sizeof(name)))
+			return i;
+		i++;
+	}
+
+	/* Not found, should never happen! */
+	WARN_ON_ONCE(1);
+	return -1;
+}
+EXPORT_SYMBOL_NS_GPL(ipu6_get_i2c_bus_id, INTEL_IPU6);
+#endif
 void ipu6_buttress_tsc_read(struct ipu6_device *isp, u64 *val)
 {
 	u32 tsc_hi_1, tsc_hi_2, tsc_lo;

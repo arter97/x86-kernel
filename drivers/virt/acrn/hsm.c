@@ -115,6 +115,9 @@ static long acrn_dev_ioctl(struct file *filp, unsigned int cmd,
 	struct acrn_ioeventfd ioeventfd;
 	struct acrn_vm_memmap memmap;
 	struct acrn_mmiodev *mmiodev;
+	struct acrn_piodev *piodev;
+	struct acrn_msrlist *msrlist;
+	struct acrn_msrentry *msrentry;
 	struct acrn_msi_entry *msi;
 	struct acrn_pcidev *pcidev;
 	struct acrn_irqfd irqfd;
@@ -123,11 +126,13 @@ static long acrn_dev_ioctl(struct file *filp, unsigned int cmd,
 	u64 cstate_cmd;
 	int i, ret = 0;
 
-	if (vm->vmid == ACRN_INVALID_VMID && cmd != ACRN_IOCTL_CREATE_VM) {
+	if (vm->vmid == ACRN_INVALID_VMID && cmd != ACRN_IOCTL_CREATE_VM &&
+			cmd != ACRN_IOCTL_MSR_ACCESS) {
 		dev_dbg(acrn_dev.this_device,
 			"ioctl 0x%x: Invalid VM state!\n", cmd);
 		return -EINVAL;
 	}
+
 
 	switch (cmd) {
 	case ACRN_IOCTL_CREATE_VM:
@@ -323,6 +328,52 @@ static long acrn_dev_ioctl(struct file *filp, unsigned int cmd,
 			dev_dbg(acrn_dev.this_device,
 				"Failed to reset intr for ptdev!\n");
 		kfree(irq_info);
+		break;
+	case ACRN_IOCTL_ASSIGN_PIODEV:
+		piodev = memdup_user((void __user *)ioctl_param,
+				       sizeof(struct acrn_piodev));
+		if (IS_ERR(piodev))
+			return PTR_ERR(piodev);
+
+		ret = hcall_assign_piodev(vm->vmid, virt_to_phys(piodev));
+		if (ret < 0)
+			dev_dbg(acrn_dev.this_device,
+				"Failed to assign PIO resource!\n");
+		kfree(piodev);
+		break;
+	case ACRN_IOCTL_DEASSIGN_PIODEV:
+		piodev = memdup_user((void __user *)ioctl_param,
+				       sizeof(struct acrn_piodev));
+		if (IS_ERR(piodev))
+			return PTR_ERR(piodev);
+
+		ret = hcall_deassign_piodev(vm->vmid, virt_to_phys(piodev));
+		if (ret < 0)
+			dev_dbg(acrn_dev.this_device,
+				"Failed to deassign PIO resource!\n");
+		kfree(piodev);
+		break;
+	case ACRN_IOCTL_MSR_ACCESS:
+		msrlist = memdup_user((void __user *)ioctl_param,
+				       sizeof(struct acrn_msrlist));
+		if (IS_ERR(msrlist))
+			return PTR_ERR(msrlist);
+
+		msrentry = memdup_user((void __user *)msrlist->entry_addr,
+				msrlist->entry_num*sizeof(struct acrn_msrentry));
+		if (IS_ERR(msrentry))
+			return PTR_ERR(msrentry);
+
+		ret = hcall_msr_access(msrlist->entry_num, virt_to_phys(msrentry));
+		if (ret < 0)
+			dev_dbg(acrn_dev.this_device,
+				"Failed to read MSR register!\n");
+		else
+			ret = __copy_to_user((void __user *)msrlist->entry_addr, msrentry,
+					msrlist->entry_num*sizeof(struct acrn_msrentry));
+
+		kfree(msrentry);
+		kfree(msrlist);
 		break;
 	case ACRN_IOCTL_SET_IRQLINE:
 		ret = hcall_set_irqline(vm->vmid, ioctl_param);

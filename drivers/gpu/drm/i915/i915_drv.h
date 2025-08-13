@@ -246,6 +246,10 @@ struct drm_i915_private {
 		struct rb_root uabi_engines;
 	};
 	unsigned int engine_uabi_class_count[I915_LAST_UABI_ENGINE_CLASS + 1];
+	/*
+	 * Protect access to the uabi_engines list.
+	 */
+	struct mutex uabi_engines_mutex;
 
 	/* protects the irq masks */
 	spinlock_t irq_lock;
@@ -335,6 +339,7 @@ struct drm_i915_private {
 	struct intel_gt *gt[I915_MAX_GT];
 
 	struct kobject *sysfs_gt;
+	struct kobject *sysfs_engine;
 
 	/* Quick lookup of media GT (current platforms only have one) */
 	struct intel_gt *media_gt;

@@ -10,7 +10,9 @@
 #include <linux/pm_qos.h>
 #include <linux/spinlock_types.h>
 #include <linux/types.h>
-
+#if IS_ENABLED(CONFIG_INTEL_IPU6_ACPI)
+#include <linux/clkdev.h>
+#endif
 #include <media/media-device.h>
 #include <media/v4l2-async.h>
 #include <media/v4l2-device.h>
@@ -61,6 +63,11 @@ struct ipu6_bus_device;
 #define IPU6EP_MIN_MEMOPEN_TH			0x4
 #define IPU6EP_MTL_LTR_VALUE			1023
 #define IPU6EP_MTL_MIN_MEMOPEN_TH		0xc
+
+#if IS_ENABLED(CONFIG_INTEL_IPU6_ACPI)
+#define IPU_SPDATA_GPIO_NUM 	4
+#define IPU_SPDATA_IRQ_PIN_NAME_LEN 16
+#endif
 
 struct ltr_did {
 	union {
@@ -182,6 +189,33 @@ struct isys_fw_msgs {
 	} fw_msg;
 	struct list_head head;
 	dma_addr_t dma_addr;
+};
+#if IS_ENABLED(CONFIG_INTEL_IPU6_ACPI)
+struct ipu6_isys_subdev_i2c_info {
+	struct i2c_board_info board_info;
+	int i2c_adapter_id;
+	char i2c_adapter_bdf[32];
+};
+#define IPU_SPDATA_GPIO_NUM 	4
+#define IPU_SPDATA_IRQ_PIN_NAME_LEN 16
+#endif
+
+struct ipu_isys_subdev_info {
+	struct ipu6_isys_csi2_config *csi2;
+#if IS_ENABLED(CONFIG_INTEL_IPU6_ACPI)
+	struct ipu6_isys_subdev_i2c_info i2c;
+	char *acpi_hid;
+#endif
+};
+
+struct ipu_isys_clk_mapping {
+	struct clk_lookup clkdev_data;
+	char *platform_clock_name;
+};
+
+struct ipu_isys_subdev_pdata {
+	struct ipu_isys_subdev_info **subdevs;
+	struct ipu_isys_clk_mapping *clk_map;
 };
 
 struct isys_fw_msgs *ipu6_get_fw_msg_buf(struct ipu6_isys_stream *stream);

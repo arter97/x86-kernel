@@ -55,7 +55,7 @@ __igt_reset_stolen(struct intel_gt *gt,
 	if (err)
 		goto err_lock;
 
-	for_each_engine(engine, gt, id) {
+	for_each_enabled_engine(engine, gt, id) {
 		struct intel_context *ce;
 		struct i915_request *rq;
 
@@ -113,7 +113,7 @@ __igt_reset_stolen(struct intel_gt *gt,
 	if (mask == ALL_ENGINES) {
 		intel_gt_reset(gt, mask, NULL);
 	} else {
-		for_each_engine(engine, gt, id) {
+		for_each_enabled_engine(engine, gt, id) {
 			if (mask & engine->mask)
 				intel_engine_reset(engine, NULL);
 		}
@@ -197,7 +197,7 @@ static int igt_reset_engines_stolen(void *arg)
 	if (!intel_has_reset_engine(gt))
 		return 0;
 
-	for_each_engine(engine, gt, id) {
+	for_each_enabled_engine(engine, gt, id) {
 		err = __igt_reset_stolen(gt, engine->mask, engine->name);
 		if (err)
 			return err;
@@ -326,7 +326,7 @@ static int igt_atomic_engine_reset(void *arg)
 	if (!igt_force_reset(gt))
 		goto out_unlock;
 
-	for_each_engine(engine, gt, id) {
+	for_each_enabled_engine(engine, gt, id) {
 		struct tasklet_struct *t = &engine->sched_engine->tasklet;
 
 		if (t->func)

@@ -160,3 +160,6 @@ obj-$(CONFIG_VIDEO_VP27SMPX) += vp27smpx.o
 obj-$(CONFIG_VIDEO_VPX3220) += vpx3220.o
 obj-$(CONFIG_VIDEO_WM8739) += wm8739.o
 obj-$(CONFIG_VIDEO_WM8775) += wm8775.o
+
+obj-$(CONFIG_VIDEO_MAX9X) += max9x/
+obj-$(CONFIG_VIDEO_ISX031) += isx031.o

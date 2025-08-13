@@ -12,3 +12,13 @@ config VIDEO_PXA27x
 	select V4L2_FWNODE
 	help
 	  This is a v4l2 driver for the PXA27x Quick Capture Interface
+
+config INTEL_IPU6_ACPI
+        tristate "Enable IPU ACPI driver"
+        depends on I2C
+        depends on ACPI
+        depends on INTEL_SKL_INT3472
+        help
+        Driver to read ACPI data from BIOS
+
+        This driver is used to read ACPI data from BIOS

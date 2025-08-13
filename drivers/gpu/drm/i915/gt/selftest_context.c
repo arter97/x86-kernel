@@ -157,7 +157,7 @@ static int live_context_size(void *arg)
 	 * HW tries to write past the end of one.
 	 */
 
-	for_each_engine(engine, gt, id) {
+	for_each_enabled_engine(engine, gt, id) {
 		struct file *saved;
 
 		if (!engine->context_size)
@@ -311,7 +311,7 @@ static int live_active_context(void *arg)
 	enum intel_engine_id id;
 	int err = 0;
 
-	for_each_engine(engine, gt, id) {
+	for_each_enabled_engine(engine, gt, id) {
 		err = __live_active_context(engine);
 		if (err)
 			break;
@@ -424,7 +424,7 @@ static int live_remote_context(void *arg)
 	enum intel_engine_id id;
 	int err = 0;
 
-	for_each_engine(engine, gt, id) {
+	for_each_enabled_engine(engine, gt, id) {
 		err = __live_remote_context(engine);
 		if (err)
 			break;

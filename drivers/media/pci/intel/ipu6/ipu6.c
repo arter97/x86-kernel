@@ -34,6 +34,19 @@
 #include "ipu6-platform-regs.h"
 #include "ipu6-trace.h"
 
+#if IS_ENABLED(CONFIG_INTEL_IPU6_ACPI)
+#include <media/ipu-acpi.h>
+#endif
+
+#if IS_ENABLED(CONFIG_INTEL_IPU6_ACPI)
+static int isys_init_acpi_add_device(struct device *dev, void *priv,
+				     struct ipu6_isys_csi2_config *csi2,
+				     bool reprobe)
+{
+       return 0;
+}
+#endif
+
 static unsigned int isys_freq_override;
 module_param(isys_freq_override, uint, 0660);
 MODULE_PARM_DESC(isys_freq_override, "Override ISYS freq(mhz)");
@@ -376,11 +389,18 @@ static void ipu6_internal_pdata_init(struct ipu6_device *isp)
 static struct ipu6_bus_device *
 ipu6_isys_init(struct pci_dev *pdev, struct device *parent,
 	       struct ipu6_buttress_ctrl *ctrl, void __iomem *base,
-	       const struct ipu6_isys_internal_pdata *ipdata)
+	       const struct ipu6_isys_internal_pdata *ipdata,
+#if IS_ENABLED(CONFIG_INTEL_IPU6_ACPI)
+	       struct ipu_isys_subdev_pdata *spdata
+#endif
+			)
 {
 	struct device *dev = &pdev->dev;
 	struct ipu6_bus_device *isys_adev;
 	struct ipu6_isys_pdata *pdata;
+#if IS_ENABLED(CONFIG_INTEL_IPU6_ACPI)
+	struct ipu_isys_subdev_pdata *acpi_pdata;
+#endif
 	int ret;
 
 	ret = ipu_bridge_init(dev, ipu_bridge_parse_ssdb);
@@ -395,7 +415,9 @@ ipu6_isys_init(struct pci_dev *pdev, struct device *parent,
 
 	pdata->base = base;
 	pdata->ipdata = ipdata;
-
+#if IS_ENABLED(CONFIG_INTEL_IPU6_ACPI)
+	pdata->spdata = spdata;
+#endif
 	/* Override the isys freq */
 	if (isys_freq_override >= BUTTRESS_MIN_FORCE_IS_FREQ &&
 	    isys_freq_override <= BUTTRESS_MAX_FORCE_IS_FREQ) {
@@ -412,6 +434,22 @@ ipu6_isys_init(struct pci_dev *pdev, struct device *parent,
 				"ipu6_bus_initialize_device isys failed\n");
 	}
 
+#if IS_ENABLED(CONFIG_INTEL_IPU6_ACPI)
+	if (!spdata) {
+		dev_dbg(&pdev->dev, "No subdevice info provided");
+		ret = ipu_get_acpi_devices(isys_adev, &isys_adev->auxdev.dev, &acpi_pdata, NULL,
+				     isys_init_acpi_add_device);
+		if (acpi_pdata && (*acpi_pdata->subdevs)) {
+			pdata->spdata = acpi_pdata;
+		}
+	} else {
+		dev_dbg(&pdev->dev, "Subdevice info found");
+		ret = ipu_get_acpi_devices(isys_adev, &isys_adev->auxdev.dev, &acpi_pdata, &spdata,
+				     isys_init_acpi_add_device);
+	}
+	if (ret)
+		return ERR_PTR(ret);
+#endif
 	isys_adev->mmu = ipu6_mmu_init(dev, base, ISYS_MMID,
 				       &ipdata->hw_variant);
 	if (IS_ERR(isys_adev->mmu)) {
@@ -662,7 +700,11 @@ static int ipu6_pci_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 	}
 
 	isp->isys = ipu6_isys_init(pdev, dev, isys_ctrl, isys_base,
-				   &isys_ipdata);
+				   &isys_ipdata,
+#if IS_ENABLED(CONFIG_INTEL_IPU6_ACPI)
+				  pdev->dev.platform_data
+#endif
+					);
 	if (IS_ERR(isp->isys)) {
 		ret = PTR_ERR(isp->isys);
 		goto out_ipu6_bus_del_devices;

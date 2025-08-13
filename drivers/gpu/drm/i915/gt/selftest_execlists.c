@@ -120,7 +120,7 @@ static int live_sanitycheck(void *arg)
 	if (igt_spinner_init(&spin, gt))
 		return -ENOMEM;
 
-	for_each_engine(engine, gt, id) {
+	for_each_enabled_engine(engine, gt, id) {
 		struct intel_context *ce;
 		struct i915_request *rq;
 
@@ -177,7 +177,7 @@ static int live_unlite_restore(struct intel_gt *gt, int prio)
 		return err;
 
 	err = 0;
-	for_each_engine(engine, gt, id) {
+	for_each_enabled_engine(engine, gt, id) {
 		struct intel_context *ce[2] = {};
 		struct i915_request *rq[2];
 		struct igt_live_test t;
@@ -339,7 +339,7 @@ static int live_unlite_ring(void *arg)
 	if (igt_spinner_init(&spin, gt))
 		return -ENOMEM;
 
-	for_each_engine(engine, gt, id) {
+	for_each_enabled_engine(engine, gt, id) {
 		struct intel_context *ce[2] = {};
 		struct i915_request *rq;
 		struct igt_live_test t;
@@ -488,7 +488,7 @@ static int live_pin_rewind(void *arg)
 	 * To simulate this, let's apply a bit of deliberate sabotague.
 	 */
 
-	for_each_engine(engine, gt, id) {
+	for_each_enabled_engine(engine, gt, id) {
 		struct intel_context *ce;
 		struct i915_request *rq;
 		struct intel_ring *ring;
@@ -596,7 +596,7 @@ static int live_hold_reset(void *arg)
 	if (igt_spinner_init(&spin, gt))
 		return -ENOMEM;
 
-	for_each_engine(engine, gt, id) {
+	for_each_enabled_engine(engine, gt, id) {
 		struct intel_context *ce;
 		struct i915_request *rq;
 
@@ -703,7 +703,7 @@ static int live_error_interrupt(void *arg)
 	if (!intel_has_reset_engine(gt))
 		return 0;
 
-	for_each_engine(engine, gt, id) {
+	for_each_enabled_engine(engine, gt, id) {
 		const struct error_phase *p;
 		int err = 0;
 
@@ -939,7 +939,7 @@ slice_semaphore_queue(struct intel_engine_cs *outer,
 	if (IS_ERR(head))
 		return PTR_ERR(head);
 
-	for_each_engine(engine, outer->gt, id) {
+	for_each_enabled_engine(engine, outer->gt, id) {
 		if (!intel_engine_has_preemption(engine))
 			continue;
 
@@ -1019,7 +1019,7 @@ static int live_timeslice_preempt(void *arg)
 	if (err)
 		goto err_pin;
 
-	for_each_engine(engine, gt, id) {
+	for_each_enabled_engine(engine, gt, id) {
 		if (!intel_engine_has_preemption(engine))
 			continue;
 
@@ -1125,7 +1125,7 @@ static int live_timeslice_rewind(void *arg)
 	if (!CONFIG_DRM_I915_TIMESLICE_DURATION)
 		return 0;
 
-	for_each_engine(engine, gt, id) {
+	for_each_enabled_engine(engine, gt, id) {
 		enum { A1, A2, B1 };
 		enum { X = 1, Z, Y };
 		struct i915_request *rq[3] = {};
@@ -1326,7 +1326,7 @@ static int live_timeslice_queue(void *arg)
 	if (err)
 		goto err_pin;
 
-	for_each_engine(engine, gt, id) {
+	for_each_enabled_engine(engine, gt, id) {
 		struct i915_sched_attr attr = { .priority = I915_PRIORITY_MAX };
 		struct i915_request *rq, *nop;
 
@@ -1426,7 +1426,7 @@ static int live_timeslice_nopreempt(void *arg)
 	if (igt_spinner_init(&spin, gt))
 		return -ENOMEM;
 
-	for_each_engine(engine, gt, id) {
+	for_each_enabled_engine(engine, gt, id) {
 		struct intel_context *ce;
 		struct i915_request *rq;
 		unsigned long timeslice;
@@ -1579,7 +1579,7 @@ static int live_busywait_preempt(void *arg)
 	if (err)
 		goto err_vma;
 
-	for_each_engine(engine, gt, id) {
+	for_each_enabled_engine(engine, gt, id) {
 		struct i915_request *lo, *hi;
 		struct igt_live_test t;
 		u32 *cs;
@@ -1755,7 +1755,7 @@ static int live_preempt(void *arg)
 	if (igt_spinner_init(&spin_lo, gt))
 		goto err_spin_hi;
 
-	for_each_engine(engine, gt, id) {
+	for_each_enabled_engine(engine, gt, id) {
 		struct igt_live_test t;
 		struct i915_request *rq;
 
@@ -1848,7 +1848,7 @@ static int live_late_preempt(void *arg)
 	/* Make sure ctx_lo stays before ctx_hi until we trigger preemption. */
 	ctx_lo->sched.priority = 1;
 
-	for_each_engine(engine, gt, id) {
+	for_each_enabled_engine(engine, gt, id) {
 		struct igt_live_test t;
 		struct i915_request *rq;
 
@@ -1970,7 +1970,7 @@ static int live_nopreempt(void *arg)
 		goto err_client_a;
 	b.ctx->sched.priority = I915_PRIORITY_MAX;
 
-	for_each_engine(engine, gt, id) {
+	for_each_enabled_engine(engine, gt, id) {
 		struct i915_request *rq_a, *rq_b;
 
 		if (!intel_engine_has_preemption(engine))
@@ -2397,7 +2397,7 @@ static int live_preempt_cancel(void *arg)
 	if (preempt_client_init(gt, &data.b))
 		goto err_client_a;
 
-	for_each_engine(data.engine, gt, id) {
+	for_each_enabled_engine(data.engine, gt, id) {
 		if (!intel_engine_has_preemption(data.engine))
 			continue;
 
@@ -2464,7 +2464,7 @@ static int live_suppress_self_preempt(void *arg)
 	if (preempt_client_init(gt, &b))
 		goto err_client_a;
 
-	for_each_engine(engine, gt, id) {
+	for_each_enabled_engine(engine, gt, id) {
 		struct i915_request *rq_a, *rq_b;
 		int depth;
 
@@ -2571,7 +2571,7 @@ static int live_chain_preempt(void *arg)
 	if (preempt_client_init(gt, &lo))
 		goto err_client_hi;
 
-	for_each_engine(engine, gt, id) {
+	for_each_enabled_engine(engine, gt, id) {
 		struct i915_sched_attr attr = { .priority = I915_PRIORITY_MAX };
 		struct igt_live_test t;
 		struct i915_request *rq;
@@ -2929,7 +2929,7 @@ static int live_preempt_ring(void *arg)
 	if (igt_spinner_init(&spin, gt))
 		return -ENOMEM;
 
-	for_each_engine(engine, gt, id) {
+	for_each_enabled_engine(engine, gt, id) {
 		int n;
 
 		if (!intel_engine_has_preemption(engine))
@@ -2972,7 +2972,7 @@ static int live_preempt_gang(void *arg)
 	 * high priority levels into execution order.
 	 */
 
-	for_each_engine(engine, gt, id) {
+	for_each_enabled_engine(engine, gt, id) {
 		struct i915_request *rq = NULL;
 		struct igt_live_test t;
 		IGT_TIMEOUT(end_time);
@@ -3278,7 +3278,7 @@ static int live_preempt_user(void *arg)
 		return PTR_ERR(result);
 	}
 
-	for_each_engine(engine, gt, id) {
+	for_each_enabled_engine(engine, gt, id) {
 		struct i915_request *client[3] = {};
 		struct igt_live_test t;
 		int i;
@@ -3394,7 +3394,7 @@ static int live_preempt_timeout(void *arg)
 	if (igt_spinner_init(&spin_lo, gt))
 		goto err_ctx_lo;
 
-	for_each_engine(engine, gt, id) {
+	for_each_enabled_engine(engine, gt, id) {
 		unsigned long saved_timeout;
 		struct i915_request *rq;
 
@@ -3568,7 +3568,7 @@ static int smoke_crescendo(struct preempt_smoke *smoke, unsigned int flags)
 
 	memset(arg, 0, I915_NUM_ENGINES * sizeof(*arg));
 
-	for_each_engine(engine, smoke->gt, id) {
+	for_each_enabled_engine(engine, smoke->gt, id) {
 		arg[id] = *smoke;
 		arg[id].engine = engine;
 		if (!(flags & BATCH))
@@ -3586,7 +3586,7 @@ static int smoke_crescendo(struct preempt_smoke *smoke, unsigned int flags)
 	}
 
 	count = 0;
-	for_each_engine(engine, smoke->gt, id) {
+	for_each_enabled_engine(engine, smoke->gt, id) {
 		if (IS_ERR_OR_NULL(worker[id]))
 			continue;
 
@@ -3614,7 +3614,7 @@ static int smoke_random(struct preempt_smoke *smoke, unsigned int flags)
 
 	count = 0;
 	do {
-		for_each_engine(smoke->engine, smoke->gt, id) {
+		for_each_enabled_engine(smoke->engine, smoke->gt, id) {
 			struct i915_gem_context *ctx = smoke_context(smoke);
 			int err;
 
@@ -3877,7 +3877,7 @@ static int live_virtual_engine(void *arg)
 	if (intel_uc_uses_guc_submission(&gt->uc))
 		return 0;
 
-	for_each_engine(engine, gt, id) {
+	for_each_enabled_engine(engine, gt, id) {
 		err = nop_virtual_engine(gt, &engine, 1, 1, 0);
 		if (err) {
 			pr_err("Failed to wrap engine %s: err=%d\n",

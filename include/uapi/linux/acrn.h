@@ -441,6 +441,49 @@ struct acrn_mmiodev {
 };
 
 /**
+ * struct acrn_piodev - Info for assigning or de-assigning a PIO device
+ * @name:			Name of the PIO device.
+ * @res[].port_address:		Physical address of PIO device region.
+ * @res[].size:	Size of the PIO region for the PIO device.
+ *
+ * This structure will be passed to hypervisor directly.
+ */
+struct acrn_piodev {
+	__u8	name[8];
+	struct {
+		__u16 port_address;
+		__u16 size;
+	} res;
+};
+
+/**
+ * struct acrn_msrlist - Info for msr access structure
+ * @entry_num:			Number of entry in structure.
+ * @entry_addr:			Physical address of MSR entry structure
+ *
+ * This structure will not be passed to hypervisor directly.
+ */
+struct acrn_msrlist {
+	__u32   entry_num;
+	__u32   reserved;
+	__u64   entry_addr;
+};
+
+/**
+ * struct acrn_msrentry - Info for msr access entry
+ * @lapic_id:			Lapic id of msr to access
+ * @msr_addr:			Msr address to access
+ * @val:			Msr value
+ *
+ * This structure will not be passed to hypervisor directly.
+ */
+struct acrn_msrentry {
+	__u32 lapic_id;
+	__u32 msr_addr;
+	__u64 val;
+};
+
+/**
  * struct acrn_vdev - Info for creating or destroying a virtual device
  * @id:				Union of identifier of the virtual device
  * @id.value:			Raw data of the identifier
@@ -637,6 +680,12 @@ struct acrn_irqfd {
 	_IOW(ACRN_IOCTL_TYPE, 0x59, struct acrn_vdev)
 #define ACRN_IOCTL_DESTROY_VDEV	\
 	_IOW(ACRN_IOCTL_TYPE, 0x5A, struct acrn_vdev)
+#define ACRN_IOCTL_ASSIGN_PIODEV	\
+	_IOW(ACRN_IOCTL_TYPE, 0x5B, struct acrn_piodev)
+#define ACRN_IOCTL_DEASSIGN_PIODEV	\
+	_IOW(ACRN_IOCTL_TYPE, 0x5C, struct acrn_piodev)
+#define ACRN_IOCTL_MSR_ACCESS		\
+	_IOWR(ACRN_IOCTL_TYPE, 0x5D, struct acrn_msrlist)
 
 #define ACRN_IOCTL_PM_GET_CPU_STATE	\
 	_IOWR(ACRN_IOCTL_TYPE, 0x60, __u64)

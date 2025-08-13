@@ -198,6 +198,7 @@ struct page *kvm_pfn_to_refcounted_page(kvm_pfn_t pfn)
 
 	return NULL;
 }
+EXPORT_SYMBOL_GPL(kvm_pfn_to_refcounted_page);
 
 /*
  * Switches to specified vcpu, until a matching vcpu_put()
@@ -636,7 +637,8 @@ static __always_inline kvm_mn_ret_t __kvm_handle_hva_range(struct kvm *kvm,
 			 * HVA-based notifications aren't relevant to private
 			 * mappings as they don't have a userspace mapping.
 			 */
-			gfn_range.attr_filter = KVM_FILTER_SHARED;
+			gfn_range.only_private = false;
+			gfn_range.only_shared = true;
 
 			/*
 			 * {gfn(page) | page intersects with [hva_start, hva_end)} =
@@ -2461,11 +2463,13 @@ static __always_inline void kvm_handle_gfn_range(struct kvm *kvm,
 
 	/*
 	 * If/when KVM supports more attributes beyond private .vs shared, this
-	 * _could_ set KVM_FILTER_{SHARED,PRIVATE} appropriately if the entire target
+	 * _could_ set only_{private,shared} appropriately if the entire target
 	 * range already has the desired private vs. shared state (it's unclear
 	 * if that is a net win).  For now, KVM reaches this point if and only
 	 * if the private flag is being toggled, i.e. all mappings are in play.
 	 */
+	gfn_range.only_private = false;
+	gfn_range.only_shared = false;
 
 	for (i = 0; i < kvm_arch_nr_memslot_as_ids(kvm); i++) {
 		slots = __kvm_memslots(kvm, i);
@@ -2557,6 +2561,8 @@ static int kvm_vm_set_mem_attributes(struct kvm *kvm, gfn_t start, gfn_t end,
 		r = xa_reserve(&kvm->mem_attr_array, i, GFP_KERNEL_ACCOUNT);
 		if (r)
 			goto out_unlock;
+
+		cond_resched();
 	}
 
 	kvm_handle_gfn_range(kvm, &pre_set_range);
@@ -2565,6 +2571,7 @@ static int kvm_vm_set_mem_attributes(struct kvm *kvm, gfn_t start, gfn_t end,
 		r = xa_err(xa_store(&kvm->mem_attr_array, i, entry,
 				    GFP_KERNEL_ACCOUNT));
 		KVM_BUG_ON(r, kvm);
+		cond_resched();
 	}
 
 	kvm_handle_gfn_range(kvm, &post_set_range);
@@ -2641,6 +2648,7 @@ struct kvm_memory_slot *kvm_vcpu_gfn_to_memslot(struct kvm_vcpu *vcpu, gfn_t gfn
 
 	return NULL;
 }
+EXPORT_SYMBOL_GPL(kvm_vcpu_gfn_to_memslot);
 
 bool kvm_is_visible_gfn(struct kvm *kvm, gfn_t gfn)
 {
@@ -4439,6 +4447,62 @@ static int kvm_vcpu_pre_fault_memory(struct kvm_vcpu *vcpu,
 }
 #endif
 
+__weak void kvm_arch_vcpu_pre_memory_mapping(struct kvm_vcpu *vcpu)
+{
+}
+
+__weak int kvm_arch_vcpu_memory_mapping(struct kvm_vcpu *vcpu,
+					struct kvm_memory_mapping *mapping)
+{
+	return -EOPNOTSUPP;
+}
+
+static int kvm_vcpu_memory_mapping(struct kvm_vcpu *vcpu,
+				   struct kvm_memory_mapping *mapping)
+{
+	bool added = false;
+	int idx, r = 0;
+
+	/* flags isn't used yet. */
+	if (mapping->flags)
+		return -EINVAL;
+
+	/* Sanity check */
+	if (!IS_ALIGNED(mapping->source, PAGE_SIZE) ||
+	    !mapping->nr_pages ||
+	    mapping->nr_pages & GENMASK_ULL(63, 63 - PAGE_SHIFT) ||
+	    mapping->base_gfn + mapping->nr_pages <= mapping->base_gfn)
+		return -EINVAL;
+
+	vcpu_load(vcpu);
+	idx = srcu_read_lock(&vcpu->kvm->srcu);
+	kvm_arch_vcpu_pre_memory_mapping(vcpu);
+
+	while (mapping->nr_pages) {
+		if (signal_pending(current)) {
+			r = -EINTR;
+			break;
+		}
+
+		if (need_resched())
+			cond_resched();
+
+		r = kvm_arch_vcpu_memory_mapping(vcpu, mapping);
+		if (r)
+			break;
+
+		added = true;
+	}
+
+	srcu_read_unlock(&vcpu->kvm->srcu, idx);
+	vcpu_put(vcpu);
+
+	if (added && mapping->nr_pages > 0)
+		r = -EAGAIN;
+
+	return r;
+}
+
 static long kvm_vcpu_ioctl(struct file *filp,
 			   unsigned int ioctl, unsigned long arg)
 {
@@ -4656,6 +4720,17 @@ out_free1:
 		break;
 	}
 #endif
+	case KVM_MEMORY_MAPPING: {
+		struct kvm_memory_mapping mapping;
+
+		r = -EFAULT;
+		if (copy_from_user(&mapping, argp, sizeof(mapping)))
+			break;
+		r = kvm_vcpu_memory_mapping(vcpu, &mapping);
+		if (copy_to_user(argp, &mapping, sizeof(mapping)))
+			r = -EFAULT;
+		break;
+	}
 	default:
 		r = kvm_arch_vcpu_ioctl(filp, ioctl, arg);
 	}
@@ -5632,10 +5707,18 @@ static void kvm_disable_virtualization_cpu(void *ign)
 	__this_cpu_write(virtualization_enabled, false);
 }
 
+__weak int kvm_arch_offline_cpu(unsigned int cpu)
+{
+	return 0;
+}
+
 static int kvm_offline_cpu(unsigned int cpu)
 {
-	kvm_disable_virtualization_cpu(NULL);
-	return 0;
+	int r = 0;
+	r = kvm_arch_offline_cpu(cpu);
+	if (!r)
+		kvm_disable_virtualization_cpu(NULL);
+	return r;
 }
 
 static void kvm_shutdown(void)
@@ -5962,6 +6045,7 @@ int kvm_io_bus_read(struct kvm_vcpu *vcpu, enum kvm_bus bus_idx, gpa_t addr,
 	r = __kvm_io_bus_read(vcpu, bus, &range, val);
 	return r < 0 ? r : 0;
 }
+EXPORT_SYMBOL_GPL(kvm_io_bus_read);
 
 int kvm_io_bus_register_dev(struct kvm *kvm, enum kvm_bus bus_idx, gpa_t addr,
 			    int len, struct kvm_io_device *dev)

@@ -160,7 +160,7 @@ static int live_idle_flush(void *arg)
 
 	/* Check that we can flush the idle barriers */
 
-	for_each_engine(engine, gt, id) {
+	for_each_enabled_engine(engine, gt, id) {
 		st_engine_heartbeat_disable(engine);
 		err = __live_idle_pulse(engine, intel_engine_flush_barriers);
 		st_engine_heartbeat_enable(engine);
@@ -180,7 +180,7 @@ static int live_idle_pulse(void *arg)
 
 	/* Check that heartbeat pulses flush the idle barriers */
 
-	for_each_engine(engine, gt, id) {
+	for_each_enabled_engine(engine, gt, id) {
 		st_engine_heartbeat_disable(engine);
 		err = __live_idle_pulse(engine, intel_engine_pulse);
 		st_engine_heartbeat_enable(engine);
@@ -246,7 +246,7 @@ static int live_heartbeat_off(void *arg)
 	if (!CONFIG_DRM_I915_HEARTBEAT_INTERVAL)
 		return 0;
 
-	for_each_engine(engine, gt, id) {
+	for_each_enabled_engine(engine, gt, id) {
 		if (!intel_engine_has_preemption(engine))
 			continue;
 

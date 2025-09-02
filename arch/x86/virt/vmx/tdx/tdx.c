@@ -38,14 +38,9 @@
 #include <asm/mce.h>
 #include "tdx.h"
 
-u32 tdx_global_keyid __ro_after_init;
-EXPORT_SYMBOL_GPL(tdx_global_keyid);
-
-u32 tdx_guest_keyid_start __ro_after_init;
-EXPORT_SYMBOL_GPL(tdx_guest_keyid_start);
-
-u32 tdx_nr_guest_keyids __ro_after_init;
-EXPORT_SYMBOL_GPL(tdx_nr_guest_keyids);
+static u32 tdx_global_keyid __ro_after_init;
+static u32 tdx_guest_keyid_start __ro_after_init;
+static u32 tdx_nr_guest_keyids __ro_after_init;
 
 static DEFINE_PER_CPU(bool, tdx_lp_initialized);
 

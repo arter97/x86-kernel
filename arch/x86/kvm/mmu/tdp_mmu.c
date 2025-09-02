@@ -2191,7 +2191,7 @@ retry:
 			continue;
 
 		max_mapping_level = kvm_mmu_max_mapping_level(kvm, slot,
-							      iter.gfn, PG_LEVEL_NUM, false);
+							      iter.gfn, PG_LEVEL_NUM);
 		if (max_mapping_level < iter.level)
 			continue;
 

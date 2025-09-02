@@ -4403,18 +4403,8 @@ static int kvm_faultin_pfn_private(struct kvm_vcpu *vcpu,
 static int __kvm_faultin_pfn(struct kvm_vcpu *vcpu, struct kvm_page_fault *fault)
 {
 	bool async;
-	bool force_mmio;
 
-	/*
-	 * !fault->slot means MMIO for SNP and TDX.  Don't require explicit GPA
-	 * conversion for MMIO because MMIO is assigned at the boot time.  Fall
-	 * to !is_private case to get pfn = KVM_PFN_NOSLOT.
-	 */
-	force_mmio = !fault->slot &&
-		vcpu->kvm->arch.vm_type != KVM_X86_DEFAULT_VM &&
-		vcpu->kvm->arch.vm_type != KVM_X86_SW_PROTECTED_VM;
-
-	if (!force_mmio && fault->is_private)
+	if (fault->is_private)
 		return kvm_faultin_pfn_private(vcpu, fault);
 
 	async = false;

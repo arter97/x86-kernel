@@ -356,36 +356,12 @@ static bool vt_apic_init_signal_blocked(struct kvm_vcpu *vcpu)
 	return vmx_apic_init_signal_blocked(vcpu);
 }
 
-static void vt_set_virtual_apic_mode(struct kvm_vcpu *vcpu)
-{
-	if (is_td_vcpu(vcpu))
-		return tdx_set_virtual_apic_mode(vcpu);
-
-	return vmx_set_virtual_apic_mode(vcpu);
-}
-
 static void vt_apicv_pre_state_restore(struct kvm_vcpu *vcpu)
 {
 	struct pi_desc *pi = vcpu_to_pi_desc(vcpu);
 
 	pi_clear_on(pi);
 	memset(pi->pir, 0, sizeof(pi->pir));
-}
-
-static void vt_hwapic_irr_update(struct kvm_vcpu *vcpu, int max_irr)
-{
-	if (is_td_vcpu(vcpu))
-		return;
-
-	return vmx_hwapic_irr_update(vcpu, max_irr);
-}
-
-static void vt_hwapic_isr_update(struct kvm_vcpu *vcpu, int max_isr)
-{
-	if (is_td_vcpu(kvm_get_running_vcpu()))
-		return;
-
-	return vmx_hwapic_isr_update(vcpu, max_isr);
 }
 
 static int vt_sync_pir_to_irr(struct kvm_vcpu *vcpu)
@@ -833,22 +809,6 @@ static void vt_update_cr8_intercept(struct kvm_vcpu *vcpu, int tpr, int irr)
 	vmx_update_cr8_intercept(vcpu, tpr, irr);
 }
 
-static void vt_set_apic_access_page_addr(struct kvm_vcpu *vcpu)
-{
-	if (is_td_vcpu(vcpu))
-		return;
-
-	vmx_set_apic_access_page_addr(vcpu);
-}
-
-static void vt_refresh_apicv_exec_ctrl(struct kvm_vcpu *vcpu)
-{
-	if (WARN_ON_ONCE(is_td_vcpu(vcpu)))
-		return;
-
-	vmx_refresh_apicv_exec_ctrl(vcpu);
-}
-
 static void vt_load_eoi_exitmap(struct kvm_vcpu *vcpu, u64 *eoi_exit_bitmap)
 {
 	if (is_td_vcpu(vcpu))
@@ -1093,14 +1053,14 @@ struct kvm_x86_ops vt_x86_ops __initdata = {
 	.update_cr8_intercept = vt_update_cr8_intercept,
 
 	.x2apic_icr_is_split = false,
-	.set_virtual_apic_mode = vt_set_virtual_apic_mode,
-	.set_apic_access_page_addr = vt_set_apic_access_page_addr,
-	.refresh_apicv_exec_ctrl = vt_refresh_apicv_exec_ctrl,
+	.set_virtual_apic_mode = vmx_set_virtual_apic_mode,
+	.set_apic_access_page_addr = vmx_set_apic_access_page_addr,
+	.refresh_apicv_exec_ctrl = vmx_refresh_apicv_exec_ctrl,
 	.load_eoi_exitmap = vt_load_eoi_exitmap,
 	.apicv_pre_state_restore = vt_apicv_pre_state_restore,
 	.required_apicv_inhibits = VMX_REQUIRED_APICV_INHIBITS,
-	.hwapic_irr_update = vt_hwapic_irr_update,
-	.hwapic_isr_update = vt_hwapic_isr_update,
+	.hwapic_irr_update = vmx_hwapic_irr_update,
+	.hwapic_isr_update = vmx_hwapic_isr_update,
 	.sync_pir_to_irr = vt_sync_pir_to_irr,
 	.deliver_interrupt = vt_deliver_interrupt,
 	.dy_apicv_has_pending_interrupt = pi_has_pending_interrupt,

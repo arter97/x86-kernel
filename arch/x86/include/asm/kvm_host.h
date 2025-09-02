@@ -16,7 +16,6 @@
 #include <linux/irq_work.h>
 #include <linux/irq.h>
 #include <linux/workqueue.h>
-#include <linux/vmalloc.h>
 
 #include <linux/kvm.h>
 #include <linux/kvm_para.h>

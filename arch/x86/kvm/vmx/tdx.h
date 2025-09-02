@@ -21,10 +21,6 @@ struct kvm_tdx {
 	atomic_t tdh_mem_track;
 
 	u64 tsc_offset;
-
-	/* For KVM_MEMORY_MAPPING */
-	struct mutex source_lock;
-	struct page *source_page;
 };
 
 struct vcpu_tdx {

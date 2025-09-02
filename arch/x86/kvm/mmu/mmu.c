@@ -4848,7 +4848,7 @@ long kvm_arch_vcpu_pre_fault_memory(struct kvm_vcpu *vcpu,
 
 	if (kvm_arch_has_private_mem(vcpu->kvm) &&
 	    kvm_mem_is_private(vcpu->kvm, gpa_to_gfn(range->gpa)))
-		error_code |= PFERR_GUEST_ENC_MASK;
+		error_code |= PFERR_PRIVATE_ACCESS;
 
 	/*
 	 * Shadow paging uses GVA for kvm page fault, so restrict to

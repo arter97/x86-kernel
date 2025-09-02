@@ -1708,22 +1708,15 @@ retry:
 			KVM_BUG_ON(kvm_mmu_page_role_is_private(role) !=
 				   is_private_sptep(iter.sptep), kvm);
 			/* TODO: Large page isn't supported for private SPTE yet. */
-			//KVM_BUG_ON(kvm_mmu_page_role_is_private(role), kvm);
+			KVM_BUG_ON(kvm_mmu_page_role_is_private(role), kvm);
 			sp = tdp_mmu_alloc_sp_for_split();
-
-			if (kvm_mmu_page_role_is_private(role)) {
-				if (kvm_alloc_private_spt_for_split(sp, GFP_KERNEL)) {
-					free_page((unsigned long)sp->spt);
-					sp->spt = NULL;
-				}
-			}
 
 			if (shared)
 				read_lock(&kvm->mmu_lock);
 			else
 				write_lock(&kvm->mmu_lock);
 
-			if (!sp || !sp->spt) {
+			if (!sp) {
 				trace_kvm_mmu_split_huge_page(iter.gfn,
 							      iter.old_spte,
 							      iter.level, -ENOMEM);

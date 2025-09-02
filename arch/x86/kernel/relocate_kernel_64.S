@@ -53,7 +53,7 @@ SYM_CODE_START_NOALIGN(relocate_kernel)
 	 * %rsi page_list
 	 * %rdx start address
 	 * %rcx preserve_context
-	 * %r8  bare_metal
+	 * %r8  host_mem_enc_active
 	 */
 
 	/* Save the CPU context, used for jumping back */
@@ -81,7 +81,7 @@ SYM_CODE_START_NOALIGN(relocate_kernel)
 	pushq $0
 	popfq
 
-	/* Save the bare_metal flag */
+	/* Save SME active flag */
 	movq	%r8, %r12
 
 	/*
@@ -162,20 +162,9 @@ SYM_CODE_START_LOCAL_NOALIGN(identity_mapped)
 	movq	%r9, %cr3
 
 	/*
-	 * The kernel could leave caches in incoherent state on SME/TDX
-	 * capable platforms.  Just do unconditional WBINVD to avoid
-	 * silent memory corruption to the new kernel for these platforms.
-	 *
-	 * For SME, need to flush cache here before copying the kernel.
-	 * When it is active, there could be old encrypted cache line
+	 * If SME is active, there could be old encrypted cache line
 	 * entries that will conflict with the now unencrypted memory
-	 * used by kexec.
-	 *
-	 * Do WBINVD for bare-metal only to cover both SME and TDX.  It
-	 * isn't necessary to perform a WBINVD in a guest and performing
-	 * one could result in an exception (#VE or #VC) for a TDX or
-	 * SEV-ES/SEV-SNP guest that can crash the guest since, at this
-	 * stage, the kernel has torn down the IDT.
+	 * used by kexec. Flush the caches before copying the kernel.
 	 */
 	testq	%r12, %r12
 	jz .Lsme_off

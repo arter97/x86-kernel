@@ -193,6 +193,8 @@ static struct kvm_mmu_page *tdp_mmu_alloc_sp(struct kvm_vcpu *vcpu,
 	sp = kvm_mmu_memory_cache_alloc(&vcpu->arch.mmu_page_header_cache);
 	sp->spt = kvm_mmu_memory_cache_alloc(&vcpu->arch.mmu_shadow_page_cache);
 	sp->role = role;
+	/* TODO: large page support for private GPA. */
+	WARN_ON_ONCE(kvm_mmu_page_role_is_private(role));
 
 	if (kvm_mmu_page_role_is_private(role))
 		kvm_mmu_alloc_private_spt(vcpu, sp);
@@ -236,8 +238,7 @@ int kvm_tdp_mmu_alloc_root(struct kvm_vcpu *vcpu, bool private)
 	read_lock(&kvm->mmu_lock);
 
 	for_each_valid_tdp_mmu_root_yield_safe(kvm, root, as_id) {
-		if (root->role.word == role.word &&
-		    kvm_mmu_page_role_is_private(root->role) == private)
+		if (root->role.word == role.word)
 			goto out_read_unlock;
 	}
 
@@ -255,7 +256,6 @@ int kvm_tdp_mmu_alloc_root(struct kvm_vcpu *vcpu, bool private)
 	 */
 	list_for_each_entry(root, &kvm->arch.tdp_mmu_roots, link) {
 		if (root->role.word == role.word &&
-		    kvm_mmu_page_role_is_private(root->role) == private &&
 		    !WARN_ON_ONCE(!kvm_tdp_mmu_get_root(root)))
 			goto out_spin_unlock;
 	}

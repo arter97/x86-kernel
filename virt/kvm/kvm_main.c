@@ -5705,18 +5705,10 @@ static void kvm_disable_virtualization_cpu(void *ign)
 	__this_cpu_write(virtualization_enabled, false);
 }
 
-__weak int kvm_arch_offline_cpu(unsigned int cpu)
-{
-	return 0;
-}
-
 static int kvm_offline_cpu(unsigned int cpu)
 {
-	int r = 0;
-	r = kvm_arch_offline_cpu(cpu);
-	if (!r)
-		kvm_disable_virtualization_cpu(NULL);
-	return r;
+	kvm_disable_virtualization_cpu(NULL);
+	return 0;
 }
 
 static void kvm_shutdown(void)

@@ -114,7 +114,6 @@ struct kvm_x86_ops vt_x86_ops __initdata = {
 	.check_processor_compatibility = vmx_check_processor_compat,
 
 	.hardware_unsetup = vt_hardware_unsetup,
-	.offline_cpu = tdx_offline_cpu,
 
 	/* TDX cpu enablement is done by tdx_hardware_setup(). */
 	.enable_virtualization_cpu = vmx_enable_virtualization_cpu,

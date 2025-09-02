@@ -2548,4 +2548,3 @@ void perf_restore_debug_store(void)
 
 	wrmsrl(MSR_IA32_DS_AREA, (unsigned long)ds);
 }
-EXPORT_SYMBOL_GPL(perf_restore_debug_store);

@@ -1,6 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0 */
 #include <linux/linkage.h>
-#include <linux/export.h>
 #include <asm/frame.h>
 
 #include "tdxcall.S"
@@ -22,7 +21,6 @@
 SYM_FUNC_START(__seamcall)
 	TDX_MODULE_CALL host=1
 SYM_FUNC_END(__seamcall)
-EXPORT_SYMBOL_GPL(__seamcall);
 
 /*
  * __seamcall_ret() - Host-side interface functions to SEAM software
@@ -42,7 +40,6 @@ EXPORT_SYMBOL_GPL(__seamcall);
 SYM_FUNC_START(__seamcall_ret)
 	TDX_MODULE_CALL host=1 ret=1
 SYM_FUNC_END(__seamcall_ret)
-EXPORT_SYMBOL_GPL(__seamcall_ret);
 
 /*
  * __seamcall_saved_ret() - Host-side interface functions to SEAM software
@@ -62,4 +59,3 @@ EXPORT_SYMBOL_GPL(__seamcall_ret);
 SYM_FUNC_START(__seamcall_saved_ret)
 	TDX_MODULE_CALL host=1 ret=1 saved=1
 SYM_FUNC_END(__seamcall_saved_ret)
-EXPORT_SYMBOL_GPL(__seamcall_saved_ret);

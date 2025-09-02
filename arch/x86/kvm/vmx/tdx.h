@@ -4,7 +4,6 @@
 
 #ifdef CONFIG_INTEL_TDX_HOST
 
-#include "pmu_intel.h"
 #include "tdx_ops.h"
 
 struct kvm_tdx {
@@ -22,12 +21,7 @@ struct kvm_tdx {
 
 struct vcpu_tdx {
 	struct kvm_vcpu	vcpu;
-
-	/*
-	 * Dummy to make pmu_intel not corrupt memory.
-	 * TODO: Support PMU for TDX.  Future work.
-	 */
-	struct lbr_desc lbr_desc;
+	/* TDX specific members follow. */
 };
 
 static inline bool is_td(struct kvm *kvm)

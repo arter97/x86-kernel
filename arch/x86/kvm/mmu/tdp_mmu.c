@@ -37,7 +37,7 @@ void kvm_mmu_uninit_tdp_mmu(struct kvm *kvm)
 	 * for zapping and thus puts the TDP MMU's reference to each root, i.e.
 	 * ultimately frees all roots.
 	 */
-	kvm_tdp_mmu_invalidate_all_roots(kvm, false);
+	kvm_tdp_mmu_invalidate_all_roots(kvm);
 	kvm_tdp_mmu_zap_invalidated_roots(kvm);
 
 	WARN_ON(atomic64_read(&kvm->arch.tdp_mmu_pages));
@@ -839,18 +839,13 @@ bool kvm_tdp_mmu_zap_sp(struct kvm *kvm, struct kvm_mmu_page *sp)
  * operation can cause a soft lockup.
  */
 static bool tdp_mmu_zap_leafs(struct kvm *kvm, struct kvm_mmu_page *root,
-			      gfn_t start, gfn_t end, bool can_yield, bool flush,
-			      bool zap_private)
+			      gfn_t start, gfn_t end, bool can_yield, bool flush)
 {
 	struct tdp_iter iter;
 
 	end = min(end, tdp_mmu_max_gfn_exclusive());
 
 	lockdep_assert_held_write(&kvm->mmu_lock);
-
-	WARN_ON_ONCE(zap_private && !is_private_sp(root));
-	if (!zap_private && is_private_sp(root))
-		return false;
 
 	rcu_read_lock();
 
@@ -889,15 +884,13 @@ static bool tdp_mmu_zap_leafs(struct kvm *kvm, struct kvm_mmu_page *root,
  * Returns true if a TLB flush is needed before releasing the MMU lock, i.e. if
  * one or more SPTEs were zapped since the MMU lock was last acquired.
  */
-bool kvm_tdp_mmu_zap_leafs(struct kvm *kvm, gfn_t start, gfn_t end, bool flush,
-			   bool zap_private)
+bool kvm_tdp_mmu_zap_leafs(struct kvm *kvm, gfn_t start, gfn_t end, bool flush)
 {
 	struct kvm_mmu_page *root;
 
 	lockdep_assert_held_write(&kvm->mmu_lock);
 	for_each_valid_tdp_mmu_root_yield_safe(kvm, root, -1)
-		flush = tdp_mmu_zap_leafs(kvm, root, start, end, true, flush,
-					  zap_private && is_private_sp(root));
+		flush = tdp_mmu_zap_leafs(kvm, root, start, end, true, flush);
 
 	return flush;
 }
@@ -972,7 +965,7 @@ void kvm_tdp_mmu_zap_invalidated_roots(struct kvm *kvm)
  * Note, kvm_tdp_mmu_zap_invalidated_roots() is gifted the TDP MMU's reference.
  * See kvm_tdp_mmu_alloc_root().
  */
-void kvm_tdp_mmu_invalidate_all_roots(struct kvm *kvm, bool skip_private)
+void kvm_tdp_mmu_invalidate_all_roots(struct kvm *kvm)
 {
 	struct kvm_mmu_page *root;
 
@@ -997,12 +990,6 @@ void kvm_tdp_mmu_invalidate_all_roots(struct kvm *kvm, bool skip_private)
 	 * or get/put references to roots.
 	 */
 	list_for_each_entry(root, &kvm->arch.tdp_mmu_roots, link) {
-		/*
-		 * Skip private root since private page table
-		 * is only torn down when VM is destroyed.
-		 */
-		if (skip_private && is_private_sp(root))
-			continue;
 		/*
 		 * Note, invalid roots can outlive a memslot update!  Invalid
 		 * roots must be *zapped* before the memslot update completes,
@@ -1189,26 +1176,14 @@ retry:
 	return ret;
 }
 
-/* Used by mmu notifier via kvm_unmap_gfn_range() */
 bool kvm_tdp_mmu_unmap_gfn_range(struct kvm *kvm, struct kvm_gfn_range *range,
 				 bool flush)
 {
 	struct kvm_mmu_page *root;
-	bool zap_private = false;
-
-	if (kvm_gfn_shared_mask(kvm)) {
-		if (!range->only_private && !range->only_shared)
-			/* attributes change */
-			zap_private = !(range->arg.attributes &
-					KVM_MEMORY_ATTRIBUTE_PRIVATE);
-		else
-			zap_private = range->only_private;
-	}
 
 	__for_each_tdp_mmu_root_yield_safe(kvm, root, range->slot->as_id, false)
 		flush = tdp_mmu_zap_leafs(kvm, root, range->start, range->end,
-					  range->may_block, flush,
-					  zap_private && is_private_sp(root));
+					  range->may_block, flush);
 
 	return flush;
 }

@@ -3756,14 +3756,8 @@ static int mmu_alloc_direct_roots(struct kvm_vcpu *vcpu)
 	unsigned i;
 	int r;
 
-	if (tdp_mmu_enabled) {
-		if (kvm_gfn_shared_mask(vcpu->kvm) &&
-		    !VALID_PAGE(mmu->private_root_hpa))
-			kvm_tdp_mmu_alloc_root(vcpu, true);
-
-		kvm_tdp_mmu_alloc_root(vcpu, false);
-		return 0;
-	}
+	if (tdp_mmu_enabled)
+		return kvm_tdp_mmu_alloc_root(vcpu);
 
 	write_lock(&vcpu->kvm->mmu_lock);
 	r = make_mmu_pages_available(vcpu);
@@ -4873,7 +4867,6 @@ int kvm_mmu_map_tdp_page(struct kvm_vcpu *vcpu, gpa_t gpa, u64 error_code,
 	};
 
 	WARN_ON_ONCE(!vcpu->arch.mmu->root_role.direct);
-	fault.gfn = gpa_to_gfn(fault.addr) & ~kvm_gfn_shared_mask(vcpu->kvm);
 	fault.slot = kvm_vcpu_gfn_to_memslot(vcpu, fault.gfn);
 
 	r = mmu_topup_memory_caches(vcpu, false);
@@ -6437,7 +6430,6 @@ static int __kvm_mmu_create(struct kvm_vcpu *vcpu, struct kvm_mmu *mmu)
 
 	mmu->root.hpa = INVALID_PAGE;
 	mmu->root.pgd = 0;
-	mmu->private_root_hpa = INVALID_PAGE;
 	for (i = 0; i < KVM_MMU_NUM_PREV_ROOTS; i++)
 		mmu->prev_roots[i] = KVM_MMU_ROOT_INFO_INVALID;
 
@@ -7508,12 +7500,6 @@ out:
 void kvm_mmu_destroy(struct kvm_vcpu *vcpu)
 {
 	kvm_mmu_unload(vcpu);
-	if (tdp_mmu_enabled) {
-		write_lock(&vcpu->kvm->mmu_lock);
-		mmu_free_root_page(vcpu->kvm, &vcpu->arch.mmu->private_root_hpa,
-				NULL);
-		write_unlock(&vcpu->kvm->mmu_lock);
-	}
 	free_mmu_pages(&vcpu->arch.root_mmu);
 	free_mmu_pages(&vcpu->arch.guest_mmu);
 	mmu_free_memory_caches(vcpu);

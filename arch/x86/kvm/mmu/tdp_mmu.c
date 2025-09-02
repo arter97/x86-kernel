@@ -184,35 +184,43 @@ static struct kvm_mmu_page *tdp_mmu_next_root(struct kvm *kvm,
 #define for_each_valid_tdp_mmu_root(_kvm, _root, _as_id)		\
 	__for_each_tdp_mmu_root(_kvm, _root, _as_id, true)
 
-static struct kvm_mmu_page *tdp_mmu_alloc_sp(struct kvm_vcpu *vcpu,
-					     union kvm_mmu_page_role role)
+static struct kvm_mmu_page *tdp_mmu_alloc_sp(struct kvm_vcpu *vcpu)
 {
 	struct kvm_mmu_page *sp;
 
 	sp = kvm_mmu_memory_cache_alloc(&vcpu->arch.mmu_page_header_cache);
 	sp->spt = kvm_mmu_memory_cache_alloc(&vcpu->arch.mmu_shadow_page_cache);
-	sp->role = role;
 
 	return sp;
 }
 
 static void tdp_mmu_init_sp(struct kvm_mmu_page *sp, tdp_ptep_t sptep,
-			    gfn_t gfn)
+			    gfn_t gfn, union kvm_mmu_page_role role)
 {
 	INIT_LIST_HEAD(&sp->possible_nx_huge_page_link);
 
 	set_page_private(virt_to_page(sp->spt), (unsigned long)sp);
 
-	/*
-	 * role must be set before calling this function.  At least role.level
-	 * is not 0 (PG_LEVEL_NONE).
-	 */
-	WARN_ON_ONCE(!sp->role.word);
+	sp->role = role;
 	sp->gfn = gfn;
 	sp->ptep = sptep;
 	sp->tdp_mmu_page = true;
 
 	trace_kvm_mmu_get_page(sp, true);
+}
+
+static void tdp_mmu_init_child_sp(struct kvm_mmu_page *child_sp,
+				  struct tdp_iter *iter)
+{
+	struct kvm_mmu_page *parent_sp;
+	union kvm_mmu_page_role role;
+
+	parent_sp = sptep_to_sp(rcu_dereference(iter->sptep));
+
+	role = parent_sp->role;
+	role.level--;
+
+	tdp_mmu_init_sp(child_sp, iter->sptep, iter->gfn, role);
 }
 
 int kvm_tdp_mmu_alloc_root(struct kvm_vcpu *vcpu)
@@ -252,8 +260,8 @@ int kvm_tdp_mmu_alloc_root(struct kvm_vcpu *vcpu)
 			goto out_spin_unlock;
 	}
 
-	root = tdp_mmu_alloc_sp(vcpu, role);
-	tdp_mmu_init_sp(root, NULL, 0);
+	root = tdp_mmu_alloc_sp(vcpu);
+	tdp_mmu_init_sp(root, NULL, 0, role);
 
 	/*
 	 * TDP MMU roots are kept until they are explicitly invalidated, either
@@ -1132,8 +1140,8 @@ int kvm_tdp_mmu_map(struct kvm_vcpu *vcpu, struct kvm_page_fault *fault)
 		 * The SPTE is either non-present or points to a huge page that
 		 * needs to be split.
 		 */
-		sp = tdp_mmu_alloc_sp(vcpu, tdp_iter_child_role(&iter));
-		tdp_mmu_init_sp(sp, iter.sptep, iter.gfn);
+		sp = tdp_mmu_alloc_sp(vcpu);
+		tdp_mmu_init_child_sp(sp, &iter);
 
 		sp->nx_huge_page_disallowed = fault->huge_page_disallowed;
 
@@ -1443,8 +1451,7 @@ retry:
 			continue;
 		}
 
-		sp->role = tdp_iter_child_role(&iter);
-		tdp_mmu_init_sp(sp, iter.sptep, iter.gfn);
+		tdp_mmu_init_child_sp(sp, &iter);
 
 		if (tdp_mmu_split_huge_page(kvm, &iter, sp, shared))
 			goto retry;

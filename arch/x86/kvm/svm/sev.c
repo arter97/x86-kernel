@@ -4949,20 +4949,17 @@ next_pfn:
 	}
 }
 
-int sev_private_max_mapping_level(struct kvm *kvm, kvm_pfn_t pfn, gfn_t gfn,
-				  bool is_private, u8 *max_level)
+int sev_private_max_mapping_level(struct kvm *kvm, kvm_pfn_t pfn)
 {
 	int level, rc;
 	bool assigned;
 
 	if (!sev_snp_guest(kvm))
-		*max_level = 0;
+		return 0;
 
 	rc = snp_lookup_rmpentry(pfn, &assigned, &level);
 	if (rc || !assigned)
-		*max_level = PG_LEVEL_4K;
-	else
-		*max_level = level;
+		return PG_LEVEL_4K;
 
-	return 0;
+	return level;
 }

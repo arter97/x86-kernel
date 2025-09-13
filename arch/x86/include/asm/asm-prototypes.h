@@ -15,7 +15,6 @@
 #include <asm/fred.h>
 #include <asm/gsseg.h>
 #include <asm/nospec-branch.h>
-#include <asm/tdx.h>
 
 #ifndef CONFIG_X86_CMPXCHG64
 extern void cmpxchg8b_emu(void);

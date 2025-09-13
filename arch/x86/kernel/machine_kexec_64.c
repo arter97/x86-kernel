@@ -29,7 +29,6 @@
 #include <asm/set_memory.h>
 #include <asm/cpu.h>
 #include <asm/efi.h>
-#include <asm/tdx.h>
 
 #ifdef CONFIG_ACPI
 /*
@@ -321,14 +320,6 @@ void machine_kexec_cleanup(struct kimage *image)
 	free_transition_pgtable(image);
 }
 
-static void kexec_save_processor_start(struct kimage *image)
-{
-#ifdef CONFIG_KEXEC_JUMP
-	if (image->preserve_context)
-		save_processor_state();
-#endif
-}
-
 /*
  * Do not allocate memory (or fail in any way) in machine_kexec().
  * We are past the point of no return, committed to rebooting now.
@@ -346,20 +337,10 @@ void machine_kexec(struct kimage *image)
 	 */
 	host_mem_enc_active = cc_platform_has(CC_ATTR_HOST_MEM_ENCRYPT);
 
-	kexec_save_processor_start(image);
-
-	/*
-	 * Convert TDX private memory back to normal (when needed) to
-	 * avoid the second kernel potentially seeing unexpected machine
-	 * check.
-	 *
-	 * However skip this when preserve_context is on.  By reaching
-	 * here, TDX (if ever got enabled by the kernel) has survived
-	 * from the suspend when preserve_context is on, and it can
-	 * continue to work after jumping back from the second kernel.
-	 */
-	if (!image->preserve_context)
-		tdx_reset_memory();
+#ifdef CONFIG_KEXEC_JUMP
+	if (image->preserve_context)
+		save_processor_state();
+#endif
 
 	save_ftrace_enabled = __ftrace_enabled_save();
 
@@ -415,7 +396,7 @@ void machine_kexec(struct kimage *image)
 				       (unsigned long)page_list,
 				       image->start,
 				       image->preserve_context,
-				       !boot_cpu_has(X86_FEATURE_HYPERVISOR));
+				       host_mem_enc_active);
 
 #ifdef CONFIG_KEXEC_JUMP
 	if (image->preserve_context)

@@ -157,7 +157,6 @@ static int kvm_check_cpuid(struct kvm_vcpu *vcpu,
 {
 	struct kvm_cpuid_entry2 *best;
 	u64 xfeatures;
-	int r;
 
 	/*
 	 * The existing code assumes virtual address is 48-bit or 57-bit in the
@@ -177,18 +176,15 @@ static int kvm_check_cpuid(struct kvm_vcpu *vcpu,
 	 * enabling in the FPU, e.g. to expand the guest XSAVE state size.
 	 */
 	best = cpuid_entry2_find(entries, nent, 0xd, 0);
-	if (best) {
-		xfeatures = best->eax | ((u64)best->edx << 32);
-		xfeatures &= XFEATURE_MASK_USER_DYNAMIC;
-		if (xfeatures) {
-			r = fpu_enable_guest_xfd_features(&vcpu->arch.guest_fpu,
-							  xfeatures);
-			if (r)
-				return r;
-		}
-	}
+	if (!best)
+		return 0;
 
-	return static_call(kvm_x86_vcpu_check_cpuid)(vcpu, entries, nent);
+	xfeatures = best->eax | ((u64)best->edx << 32);
+	xfeatures &= XFEATURE_MASK_USER_DYNAMIC;
+	if (!xfeatures)
+		return 0;
+
+	return fpu_enable_guest_xfd_features(&vcpu->arch.guest_fpu, xfeatures);
 }
 
 /* Check whether the supplied CPUID data is equal to what is already set for the vCPU. */
@@ -1545,13 +1541,6 @@ out_free:
 	kvfree(array.entries);
 	return r;
 }
-
-struct kvm_cpuid_entry2 *kvm_find_cpuid_entry2(
-	struct kvm_cpuid_entry2 *entries, int nent, u32 function, u64 index)
-{
-	return cpuid_entry2_find(entries, nent, function, index);
-}
-EXPORT_SYMBOL_GPL(kvm_find_cpuid_entry2);
 
 struct kvm_cpuid_entry2 *kvm_find_cpuid_entry_index(struct kvm_vcpu *vcpu,
 						    u32 function, u32 index)

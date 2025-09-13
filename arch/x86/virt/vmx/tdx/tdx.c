@@ -27,9 +27,6 @@
 #include <linux/log2.h>
 #include <linux/acpi.h>
 #include <linux/suspend.h>
-#include <linux/slab.h>
-#include <linux/math.h>
-#include <linux/notifier.h>
 #include <asm/page.h>
 #include <asm/special_insns.h>
 #include <asm/msr-index.h>
@@ -41,14 +38,9 @@
 #include <asm/mce.h>
 #include "tdx.h"
 
-u32 tdx_global_keyid __ro_after_init;
-EXPORT_SYMBOL_GPL(tdx_global_keyid);
-
-u32 tdx_guest_keyid_start __ro_after_init;
-EXPORT_SYMBOL_GPL(tdx_guest_keyid_start);
-
-u32 tdx_nr_guest_keyids __ro_after_init;
-EXPORT_SYMBOL_GPL(tdx_nr_guest_keyids);
+static u32 tdx_global_keyid __ro_after_init;
+static u32 tdx_guest_keyid_start __ro_after_init;
+static u32 tdx_nr_guest_keyids __ro_after_init;
 
 static DEFINE_PER_CPU(bool, tdx_lp_initialized);
 
@@ -59,10 +51,6 @@ static DEFINE_MUTEX(tdx_module_lock);
 
 /* All TDX-usable memory regions.  Protected by mem_hotplug_lock. */
 static LIST_HEAD(tdx_memlist);
-
-static bool tdx_may_have_private_memory __read_mostly;
-
-static BLOCKING_NOTIFIER_HEAD(tdx_memory_reset_chain);
 
 typedef void (*sc_err_func_t)(u64 fn, u64 err, struct tdx_module_args *args);
 
@@ -189,60 +177,6 @@ int tdx_cpu_enable(void)
 }
 EXPORT_SYMBOL_GPL(tdx_cpu_enable);
 
-static void print_cmrs(struct cmr_info *cmr_array, int nr_cmrs)
-{
-	int i;
-
-	for (i = 0; i < nr_cmrs; i++) {
-		struct cmr_info *cmr = &cmr_array[i];
-
-		/*
-		 * The array of CMRs reported via TDH.SYS.INFO can
-		 * contain tail empty CMRs.  Don't print them.
-		 */
-		if (!cmr->size)
-			break;
-
-		pr_info("CMR: [0x%llx, 0x%llx)\n", cmr->base,
-				cmr->base + cmr->size);
-	}
-}
-
-static int get_tdx_sysinfo(struct tdsysinfo_struct *tdsysinfo,
-			struct cmr_info *cmr_array)
-{
-	struct tdx_module_args args = {};
-	int ret;
-
-	/*
-	 * TDH.SYS.INFO writes the TDSYSINFO_STRUCT and the CMR array
-	 * to the buffers provided by the kernel (via RCX and R8
-	 * respectively).  The buffer size of the TDSYSINFO_STRUCT
-	 * (via RDX) and the maximum entries of the CMR array (via R9)
-	 * passed to this SEAMCALL must be at least the size of
-	 * TDSYSINFO_STRUCT and MAX_CMRS respectively.
-	 *
-	 * Upon a successful return, R9 contains the actual entries
-	 * written to the CMR array.
-	 */
-	args.rcx = __pa(tdsysinfo);
-	args.rdx = TDSYSINFO_STRUCT_SIZE;
-	args.r8 = __pa(cmr_array);
-	args.r9 = MAX_CMRS;
-	ret = seamcall_prerr_ret(TDH_SYS_INFO, &args);
-	if (ret)
-		return ret;
-
-	pr_info("TDX module: attributes 0x%x, vendor_id 0x%x, major_version %u, minor_version %u, build_date %u, build_num %u",
-		tdsysinfo->attributes,    tdsysinfo->vendor_id,
-		tdsysinfo->major_version, tdsysinfo->minor_version,
-		tdsysinfo->build_date,    tdsysinfo->build_num);
-
-	print_cmrs(cmr_array, args.r9);
-
-	return 0;
-}
-
 /*
  * Add a memory region as a TDX memory block.  The caller must make sure
  * all memory regions are added in address ascending order and don't
@@ -317,7 +251,7 @@ err:
 	return ret;
 }
 
-int tdx_sys_metadata_field_read(u64 field_id, u64 *data)
+static int read_sys_metadata_field(u64 field_id, u64 *data)
 {
 	struct tdx_module_args args = {};
 	int ret;
@@ -336,75 +270,61 @@ int tdx_sys_metadata_field_read(u64 field_id, u64 *data)
 
 	return 0;
 }
-EXPORT_SYMBOL_GPL(tdx_sys_metadata_field_read);
 
-/* Return the metadata field element size in bytes */
-static int get_metadata_field_bytes(u64 field_id)
+static int read_sys_metadata_field16(u64 field_id,
+				     int offset,
+				     struct tdx_tdmr_sysinfo *ts)
 {
-	/*
-	 * TDX supports 8/16/32/64 bits metadata field element sizes.
-	 * TDX module determines the metadata element size based on the
-	 * "element size code" encoded in the field ID (see the comment
-	 * of MD_FIELD_ID_ELE_SIZE_CODE macro for specific encodings).
-	 */
-	return 1 << MD_FIELD_ID_ELE_SIZE_CODE(field_id);
-}
-
-static int stbuf_read_sys_metadata_field(u64 field_id,
-					 int offset,
-					 int bytes,
-					 void *stbuf)
-{
-	void *st_member = stbuf + offset;
+	u16 *ts_member = ((void *)ts) + offset;
 	u64 tmp;
 	int ret;
 
-	if (WARN_ON_ONCE(get_metadata_field_bytes(field_id) != bytes))
+	if (WARN_ON_ONCE(MD_FIELD_ID_ELE_SIZE_CODE(field_id) !=
+			MD_FIELD_ID_ELE_SIZE_16BIT))
 		return -EINVAL;
 
-	ret = tdx_sys_metadata_field_read(field_id, &tmp);
+	ret = read_sys_metadata_field(field_id, &tmp);
 	if (ret)
 		return ret;
 
-	memcpy(st_member, &tmp, bytes);
+	*ts_member = tmp;
 
 	return 0;
 }
 
-int tdx_sys_metadata_read(const struct tdx_metadata_field_mapping *fields,
-			  int nr_fields, void *stbuf)
-{
-	int i, ret;
+struct field_mapping {
+	u64 field_id;
+	int offset;
+};
 
-	for (i = 0; i < nr_fields; i++) {
-		ret = stbuf_read_sys_metadata_field(fields[i].field_id,
-				      fields[i].offset,
-				      fields[i].size,
-				      stbuf);
+#define TD_SYSINFO_MAP(_field_id, _offset) \
+	{ .field_id = MD_FIELD_ID_##_field_id,	   \
+	  .offset   = offsetof(struct tdx_tdmr_sysinfo, _offset) }
+
+/* Map TD_SYSINFO fields into 'struct tdx_tdmr_sysinfo': */
+static const struct field_mapping fields[] = {
+	TD_SYSINFO_MAP(MAX_TDMRS,	      max_tdmrs),
+	TD_SYSINFO_MAP(MAX_RESERVED_PER_TDMR, max_reserved_per_tdmr),
+	TD_SYSINFO_MAP(PAMT_4K_ENTRY_SIZE,    pamt_entry_size[TDX_PS_4K]),
+	TD_SYSINFO_MAP(PAMT_2M_ENTRY_SIZE,    pamt_entry_size[TDX_PS_2M]),
+	TD_SYSINFO_MAP(PAMT_1G_ENTRY_SIZE,    pamt_entry_size[TDX_PS_1G]),
+};
+
+static int get_tdx_tdmr_sysinfo(struct tdx_tdmr_sysinfo *tdmr_sysinfo)
+{
+	int ret;
+	int i;
+
+	/* Populate 'tdmr_sysinfo' fields using the mapping structure above: */
+	for (i = 0; i < ARRAY_SIZE(fields); i++) {
+		ret = read_sys_metadata_field16(fields[i].field_id,
+						fields[i].offset,
+						tdmr_sysinfo);
 		if (ret)
 			return ret;
 	}
 
 	return 0;
-}
-EXPORT_SYMBOL_GPL(tdx_sys_metadata_read);
-
-#define TD_SYSINFO_MAP_TDMR_INFO(_field_id, _member)	\
-	TD_SYSINFO_MAP(_field_id, struct tdx_tdmr_sysinfo, _member)
-
-static int get_tdx_tdmr_sysinfo(struct tdx_tdmr_sysinfo *tdmr_sysinfo)
-{
-	/* Map TD_SYSINFO fields into 'struct tdx_tdmr_sysinfo': */
-	const struct tdx_metadata_field_mapping fields[] = {
-		TD_SYSINFO_MAP_TDMR_INFO(MAX_TDMRS,		max_tdmrs),
-		TD_SYSINFO_MAP_TDMR_INFO(MAX_RESERVED_PER_TDMR, max_reserved_per_tdmr),
-		TD_SYSINFO_MAP_TDMR_INFO(PAMT_4K_ENTRY_SIZE,    pamt_entry_size[TDX_PS_4K]),
-		TD_SYSINFO_MAP_TDMR_INFO(PAMT_2M_ENTRY_SIZE,    pamt_entry_size[TDX_PS_2M]),
-		TD_SYSINFO_MAP_TDMR_INFO(PAMT_1G_ENTRY_SIZE,    pamt_entry_size[TDX_PS_1G]),
-	};
-
-	/* Populate 'tdmr_sysinfo' fields using the mapping structure above: */
-	return tdx_sys_metadata_read(fields, ARRAY_SIZE(fields), tdmr_sysinfo);
 }
 
 /* Calculate the actual TDMR size */
@@ -827,24 +747,6 @@ static int tdmr_add_rsvd_area(struct tdmr_info *tdmr, int *p_idx, u64 addr,
 	return 0;
 }
 
-/* Return whether a given region [start, end) is a sub-region of any CMR */
-static bool is_cmr_subregion(struct cmr_info *cmr_array, u64 start,
-			    u64 end)
-{
-	int i;
-
-	for (i = 0; i < MAX_CMRS; i++) {
-		struct cmr_info *cmr = &cmr_array[i];
-		u64 cmr_base = cmr->base;
-		u64 cmr_size = cmr->size;
-
-		if (start >= cmr_base && end <= (cmr_base + cmr_size))
-			return true;
-	}
-
-	return false;
-}
-
 /*
  * Go through @tmb_list to find holes between memory areas.  If any of
  * those holes fall within @tdmr, set up a TDMR reserved area to cover
@@ -853,8 +755,7 @@ static bool is_cmr_subregion(struct cmr_info *cmr_array, u64 start,
 static int tdmr_populate_rsvd_holes(struct list_head *tmb_list,
 				    struct tdmr_info *tdmr,
 				    int *rsvd_idx,
-				    u16 max_reserved_per_tdmr,
-				    struct cmr_info *cmr_array)
+				    u16 max_reserved_per_tdmr)
 {
 	struct tdx_memblock *tmb;
 	u64 prev_end;
@@ -883,16 +784,10 @@ static int tdmr_populate_rsvd_holes(struct list_head *tmb_list,
 		 * Skip over memory areas that
 		 * have already been dealt with.
 		 */
-		if (start <= prev_end)
-			goto next_tmb;
-
-		/*
-		 * Found the hole [prev_end, start) before this region.
-		 * Skip the hole if it is within any CMR to reduce the
-		 * consumption of reserved areas.
-		 */
-		if (is_cmr_subregion(cmr_array, prev_end, start))
-			goto next_tmb;
+		if (start <= prev_end) {
+			prev_end = end;
+			continue;
+		}
 
 		/* Add the hole before this region */
 		ret = tdmr_add_rsvd_area(tdmr, rsvd_idx, prev_end,
@@ -901,16 +796,11 @@ static int tdmr_populate_rsvd_holes(struct list_head *tmb_list,
 		if (ret)
 			return ret;
 
-next_tmb:
 		prev_end = end;
 	}
 
-	/*
-	 * Add the hole after the last region if it exists, but skip
-	 * if it is within any CMR.
-	 */
-	if (prev_end < tdmr_end(tdmr) &&
-			!is_cmr_subregion(cmr_array, prev_end, tdmr_end(tdmr))) {
+	/* Add the hole after the last region if it exists. */
+	if (prev_end < tdmr_end(tdmr)) {
 		ret = tdmr_add_rsvd_area(tdmr, rsvd_idx, prev_end,
 				tdmr_end(tdmr) - prev_end,
 				max_reserved_per_tdmr);
@@ -986,13 +876,12 @@ static int rsvd_area_cmp_func(const void *a, const void *b)
 static int tdmr_populate_rsvd_areas(struct tdmr_info *tdmr,
 				    struct list_head *tmb_list,
 				    struct tdmr_info_list *tdmr_list,
-				    u16 max_reserved_per_tdmr,
-				    struct cmr_info *cmr_array)
+				    u16 max_reserved_per_tdmr)
 {
 	int ret, rsvd_idx = 0;
 
 	ret = tdmr_populate_rsvd_holes(tmb_list, tdmr, &rsvd_idx,
-			max_reserved_per_tdmr, cmr_array);
+			max_reserved_per_tdmr);
 	if (ret)
 		return ret;
 
@@ -1010,13 +899,11 @@ static int tdmr_populate_rsvd_areas(struct tdmr_info *tdmr,
 
 /*
  * Populate reserved areas for all TDMRs in @tdmr_list, including memory
- * holes (via @tmb_list) and PAMTs.  Exclude the memory holes within any
- * CMR to reduce number of consumed reserved areas.
+ * holes (via @tmb_list) and PAMTs.
  */
 static int tdmrs_populate_rsvd_areas_all(struct tdmr_info_list *tdmr_list,
 					 struct list_head *tmb_list,
-					 u16 max_reserved_per_tdmr,
-					 struct cmr_info *cmr_array)
+					 u16 max_reserved_per_tdmr)
 {
 	int i;
 
@@ -1024,8 +911,7 @@ static int tdmrs_populate_rsvd_areas_all(struct tdmr_info_list *tdmr_list,
 		int ret;
 
 		ret = tdmr_populate_rsvd_areas(tdmr_entry(tdmr_list, i),
-				tmb_list, tdmr_list, max_reserved_per_tdmr,
-				cmr_array);
+				tmb_list, tdmr_list, max_reserved_per_tdmr);
 		if (ret)
 			return ret;
 	}
@@ -1040,8 +926,7 @@ static int tdmrs_populate_rsvd_areas_all(struct tdmr_info_list *tdmr_list,
  */
 static int construct_tdmrs(struct list_head *tmb_list,
 			   struct tdmr_info_list *tdmr_list,
-			   struct tdx_tdmr_sysinfo *tdmr_sysinfo,
-			   struct cmr_info *cmr_info)
+			   struct tdx_tdmr_sysinfo *tdmr_sysinfo)
 {
 	int ret;
 
@@ -1055,8 +940,7 @@ static int construct_tdmrs(struct list_head *tmb_list,
 		return ret;
 
 	ret = tdmrs_populate_rsvd_areas_all(tdmr_list, tmb_list,
-			tdmr_sysinfo->max_reserved_per_tdmr,
-			cmr_info);
+			tdmr_sysinfo->max_reserved_per_tdmr);
 	if (ret)
 		tdmrs_free_pamt_all(tdmr_list);
 
@@ -1213,45 +1097,10 @@ static int init_tdmrs(struct tdmr_info_list *tdmr_list)
 	return 0;
 }
 
-static void mark_may_have_private_memory(bool may)
-{
-	tdx_may_have_private_memory = may;
-
-	/*
-	 * Ensure update to tdx_may_have_private_memory is visible to all
-	 * cpus.  This ensures when any remote cpu reads it as true, the
-	 * 'tdx_tdmr_list' must be stable for reading PAMTs.
-	 */
-	smp_wmb();
-}
-
 static int init_tdx_module(void)
 {
-	struct tdsysinfo_struct *tdsysinfo;
-	struct cmr_info *cmr_array;
-	int tdsysinfo_size;
-	int cmr_array_size;
 	struct tdx_tdmr_sysinfo tdmr_sysinfo;
 	int ret;
-
-	tdsysinfo_size = round_up(TDSYSINFO_STRUCT_SIZE,
-		TDSYSINFO_STRUCT_ALIGNMENT);
-	tdsysinfo = kzalloc(tdsysinfo_size, GFP_KERNEL);
-	if (!tdsysinfo)
-		return -ENOMEM;
-
-	cmr_array_size = sizeof(struct cmr_info) * MAX_CMRS;
-	cmr_array_size = round_up(cmr_array_size, CMR_INFO_ARRAY_ALIGNMENT);
-	cmr_array = kzalloc(cmr_array_size, GFP_KERNEL);
-	if (!cmr_array) {
-		kfree(tdsysinfo);
-		return -ENOMEM;
-	}
-
-	/* Get the TDSYSINFO_STRUCT and CMRs from the TDX module. */
-	ret = get_tdx_sysinfo(tdsysinfo, cmr_array);
-	if (ret)
-		goto out;
 
 	/*
 	 * To keep things simple, assume that all TDX-protected memory
@@ -1279,7 +1128,7 @@ static int init_tdx_module(void)
 		goto err_free_tdxmem;
 
 	/* Cover all TDX-usable memory regions in TDMRs */
-	ret = construct_tdmrs(&tdx_memlist, &tdx_tdmr_list, &tdmr_sysinfo, cmr_array);
+	ret = construct_tdmrs(&tdx_memlist, &tdx_tdmr_list, &tdmr_sysinfo);
 	if (ret)
 		goto err_free_tdmrs;
 
@@ -1292,12 +1141,6 @@ static int init_tdx_module(void)
 	ret = config_global_keyid();
 	if (ret)
 		goto err_reset_pamts;
-
-	/*
-	 * Starting from this point the system is possible to have
-	 * TDX private memory.
-	 */
-	mark_may_have_private_memory(true);
 
 	/* Initialize TDMRs to complete the TDX module initialization */
 	ret = init_tdmrs(&tdx_tdmr_list);
@@ -1330,7 +1173,6 @@ err_reset_pamts:
 	 * as suggested by the TDX spec.
 	 */
 	tdmrs_reset_pamt_all(&tdx_tdmr_list);
-	mark_may_have_private_memory(false);
 err_free_pamts:
 	tdmrs_free_pamt_all(&tdx_tdmr_list);
 err_free_tdmrs:
@@ -1338,14 +1180,6 @@ err_free_tdmrs:
 err_free_tdxmem:
 	free_tdx_memlist(&tdx_memlist);
 	goto out_put_tdxmem;
-out:
-	/*
-	 * For now both @sysinfo and @cmr_array are only used during
-	 * module initialization, so always free them.
-	 */
-	kfree(tdsysinfo);
-	kfree(cmr_array);
-	return ret;
 }
 
 static int __tdx_enable(void)
@@ -1655,80 +1489,4 @@ void __init tdx_init(void)
 	setup_force_cpu_cap(X86_FEATURE_TDX_HOST_PLATFORM);
 
 	check_tdx_erratum();
-}
-
-int tdx_register_memory_reset_notifier(struct notifier_block *nb)
-{
-	return blocking_notifier_chain_register(&tdx_memory_reset_chain, nb);
-}
-EXPORT_SYMBOL_GPL(tdx_register_memory_reset_notifier);
-
-void tdx_unregister_memory_reset_notifier(struct notifier_block *nb)
-{
-	blocking_notifier_chain_unregister(&tdx_memory_reset_chain, nb);
-}
-EXPORT_SYMBOL_GPL(tdx_unregister_memory_reset_notifier);
-
-static int notify_reset_memory(void)
-{
-	int ret;
-
-	ret = blocking_notifier_call_chain(&tdx_memory_reset_chain, 0, NULL);
-
-	return notifier_to_errno(ret);
-}
-
-void tdx_reset_memory(void)
-{
-	if (!boot_cpu_has(X86_FEATURE_TDX_HOST_PLATFORM))
-		return;
-
-	/*
-	 * Converting TDX private pages back to normal must be done
-	 * when there's no TDX activity anymore on all remote cpus.
-	 * Verify this is only called when all remote cpus have
-	 * been stopped.
-	 */
-	WARN_ON_ONCE(num_online_cpus() != 1);
-
-	/*
-	 * Kernel read/write to TDX private memory doesn't cause
-	 * machine check on hardware w/o this erratum.
-	 */
-	if (!boot_cpu_has_bug(X86_BUG_TDX_PW_MCE))
-		return;
-
-	/*
-	 * Nothing to convert if it's not possible to have any TDX
-	 * private pages.
-	 */
-	if (!tdx_may_have_private_memory)
-		return;
-
-	/*
-	 * Ensure the 'tdx_tdmr_list' is stable for reading PAMTs
-	 * when tdx_may_have_private_memory reads true, paired with
-	 * the smp_wmb() in mark_may_have_private_memory().
-	 */
-	smp_rmb();
-
-	/*
-	 * All remote cpus have been stopped, and their caches have
-	 * been flushed in stop_this_cpu().  Now flush cache for the
-	 * last running cpu _before_ converting TDX private pages.
-	 */
-	native_wbinvd();
-
-	/*
-	 * Tell all in-kernel TDX users to reset TDX private pages
-	 * that they manage.
-	 */
-	if (notify_reset_memory())
-		pr_err("Failed to reset all TDX private pages.\n");
-
-	/*
-	 * The only remaining TDX private pages are PAMT pages.
-	 * Reset them.
-	 */
-	tdmrs_reset_pamt_all(&tdx_tdmr_list);
 }

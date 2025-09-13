@@ -8,20 +8,6 @@
 
 __init int vmx_hardware_setup(void);
 
-#if IS_ENABLED(CONFIG_HYPERV)
-__init void hv_init_evmcs(void);
-void hv_reset_evmcs(void);
-#else /* IS_ENABLED(CONFIG_HYPERV) */
-static inline __init void hv_init_evmcs(void) {}
-static inline void hv_reset_evmcs(void) {}
-#endif /* IS_ENABLED(CONFIG_HYPERV) */
-
-DECLARE_PER_CPU(struct list_head, loaded_vmcss_on_cpu);
-
-bool kvm_is_vmx_supported(void);
-int __init vmx_init(void);
-void vmx_exit(void);
-
 extern struct kvm_x86_ops vt_x86_ops __initdata;
 extern struct kvm_x86_init_ops vt_init_ops __initdata;
 
@@ -60,6 +46,7 @@ int vmx_check_intercept(struct kvm_vcpu *vcpu,
 bool vmx_apic_init_signal_blocked(struct kvm_vcpu *vcpu);
 void vmx_migrate_timers(struct kvm_vcpu *vcpu);
 void vmx_set_virtual_apic_mode(struct kvm_vcpu *vcpu);
+void vmx_apicv_pre_state_restore(struct kvm_vcpu *vcpu);
 void vmx_hwapic_irr_update(struct kvm_vcpu *vcpu, int max_irr);
 void vmx_hwapic_isr_update(struct kvm_vcpu *vcpu, int max_isr);
 int vmx_sync_pir_to_irr(struct kvm_vcpu *vcpu);
@@ -131,143 +118,5 @@ int vmx_set_hv_timer(struct kvm_vcpu *vcpu, u64 guest_deadline_tsc,
 void vmx_cancel_hv_timer(struct kvm_vcpu *vcpu);
 #endif
 void vmx_setup_mce(struct kvm_vcpu *vcpu);
-
-#ifdef CONFIG_INTEL_TDX_HOST
-int __init tdx_hardware_setup(struct kvm_x86_ops *x86_ops);
-void tdx_hardware_unsetup(void);
-void tdx_hardware_disable(void);
-int tdx_offline_cpu(void);
-
-int tdx_vm_enable_cap(struct kvm *kvm, struct kvm_enable_cap *cap);
-int tdx_vm_init(struct kvm *kvm);
-void tdx_mmu_release_hkid(struct kvm *kvm);
-void tdx_vm_free(struct kvm *kvm);
-
-int tdx_vm_ioctl(struct kvm *kvm, void __user *argp);
-
-int tdx_vcpu_create(struct kvm_vcpu *vcpu);
-void tdx_vcpu_free(struct kvm_vcpu *vcpu);
-void tdx_vcpu_reset(struct kvm_vcpu *vcpu, bool init_event);
-fastpath_t tdx_vcpu_run(struct kvm_vcpu *vcpu, bool force_immediate_exit);
-void tdx_prepare_switch_to_guest(struct kvm_vcpu *vcpu);
-void tdx_vcpu_put(struct kvm_vcpu *vcpu);
-void tdx_vcpu_load(struct kvm_vcpu *vcpu, int cpu);
-bool tdx_protected_apic_has_interrupt(struct kvm_vcpu *vcpu);
-u8 tdx_get_mt_mask(struct kvm_vcpu *vcpu, gfn_t gfn, bool is_mmio);
-
-void tdx_deliver_interrupt(struct kvm_lapic *apic, int delivery_mode,
-			   int trig_mode, int vector);
-int tdx_vcpu_check_cpuid(struct kvm_vcpu *vcpu, struct kvm_cpuid_entry2 *e2,
-			 int nent);
-void tdx_inject_nmi(struct kvm_vcpu *vcpu);
-void tdx_get_exit_info(struct kvm_vcpu *vcpu, u32 *reason,
-		u64 *info1, u64 *info2, u32 *intr_info, u32 *error_code);
-bool tdx_has_emulated_msr(u32 index, bool write);
-int tdx_get_msr(struct kvm_vcpu *vcpu, struct msr_data *msr);
-int tdx_set_msr(struct kvm_vcpu *vcpu, struct msr_data *msr);
-void tdx_set_virtual_apic_mode(struct kvm_vcpu *vcpu);
-
-int tdx_get_cpl(struct kvm_vcpu *vcpu);
-void tdx_cache_reg(struct kvm_vcpu *vcpu, enum kvm_reg reg);
-unsigned long tdx_get_rflags(struct kvm_vcpu *vcpu);
-u64 tdx_get_segment_base(struct kvm_vcpu *vcpu, int seg);
-void tdx_get_segment(struct kvm_vcpu *vcpu, struct kvm_segment *var, int seg);
-
-int tdx_vcpu_ioctl(struct kvm_vcpu *vcpu, void __user *argp);
-
-void tdx_flush_tlb(struct kvm_vcpu *vcpu);
-void tdx_flush_tlb_current(struct kvm_vcpu *vcpu);
-int tdx_sept_flush_remote_tlbs(struct kvm *kvm);
-void tdx_load_mmu_pgd(struct kvm_vcpu *vcpu, hpa_t root_hpa, int root_level);
-int tdx_gmem_max_level(struct kvm *kvm, kvm_pfn_t pfn, gfn_t gfn,
-		       bool is_private, u8 *max_level);
-int tdx_pre_memory_mapping(struct kvm_vcpu *vcpu,
-			   struct kvm_memory_mapping *mapping,
-			   u64 *error_code, u8 *max_level);
-void tdx_post_memory_mapping(struct kvm_vcpu *vcpu,
-			     struct kvm_memory_mapping *mapping);
-void tdx_handle_exit_irqoff(struct kvm_vcpu *vcpu);
-int tdx_handle_exit(struct kvm_vcpu *vcpu,
-		enum exit_fastpath_completion fastpath);
-#else
-static inline int tdx_hardware_setup(struct kvm_x86_ops *x86_ops) { return -EOPNOTSUPP; }
-static inline void tdx_hardware_unsetup(void) {}
-static inline void tdx_hardware_disable(void) {}
-static inline int tdx_offline_cpu(void) { return 0; }
-
-static inline int tdx_vm_enable_cap(struct kvm *kvm, struct kvm_enable_cap *cap)
-{
-	return -EINVAL;
-}
-static inline int tdx_vm_init(struct kvm *kvm) { return -EOPNOTSUPP; }
-static inline void tdx_mmu_release_hkid(struct kvm *kvm) {}
-static inline void tdx_vm_free(struct kvm *kvm) {}
-
-static inline int tdx_vm_ioctl(struct kvm *kvm, void __user *argp) { return -EOPNOTSUPP; }
-
-static inline int tdx_vcpu_create(struct kvm_vcpu *vcpu) { return -EOPNOTSUPP; }
-static inline void tdx_vcpu_free(struct kvm_vcpu *vcpu) {}
-static inline void tdx_vcpu_reset(struct kvm_vcpu *vcpu, bool init_event) {}
-static inline fastpath_t tdx_vcpu_run(struct kvm_vcpu *vcpu,  bool force_immediate_exit) { return EXIT_FASTPATH_NONE; }
-static inline void tdx_prepare_switch_to_guest(struct kvm_vcpu *vcpu) {}
-static inline void tdx_vcpu_put(struct kvm_vcpu *vcpu) {}
-static inline void tdx_vcpu_load(struct kvm_vcpu *vcpu, int cpu) {}
-static inline bool tdx_protected_apic_has_interrupt(struct kvm_vcpu *vcpu) { return false; }
-static inline void tdx_handle_exit_irqoff(struct kvm_vcpu *vcpu) {}
-static inline int tdx_handle_exit(struct kvm_vcpu *vcpu,
-		enum exit_fastpath_completion fastpath) { return 0; }
-static inline u8 tdx_get_mt_mask(struct kvm_vcpu *vcpu, gfn_t gfn, bool is_mmio) { return 0; }
-
-static inline void tdx_deliver_interrupt(struct kvm_lapic *apic, int delivery_mode,
-					 int trig_mode, int vector) {}
-static inline int tdx_vcpu_check_cpuid(struct kvm_vcpu *vcpu, struct kvm_cpuid_entry2 *e2,
-				       int nent) { return -EOPNOTSUPP; }
-static inline void tdx_inject_nmi(struct kvm_vcpu *vcpu) {}
-static inline void tdx_get_exit_info(struct kvm_vcpu *vcpu, u32 *reason, u64 *info1,
-				     u64 *info2, u32 *intr_info, u32 *error_code) {}
-static inline bool tdx_has_emulated_msr(u32 index, bool write) { return false; }
-static inline int tdx_get_msr(struct kvm_vcpu *vcpu, struct msr_data *msr) { return 1; }
-static inline int tdx_set_msr(struct kvm_vcpu *vcpu, struct msr_data *msr) { return 1; }
-
-static inline void tdx_set_virtual_apic_mode(struct kvm_vcpu *vcpu) {}
-
-static inline int tdx_get_cpl(struct kvm_vcpu *vcpu) { return 0; }
-static inline void tdx_cache_reg(struct kvm_vcpu *vcpu, enum kvm_reg reg) {}
-static inline unsigned long tdx_get_rflags(struct kvm_vcpu *vcpu) { return 0; }
-static inline u64 tdx_get_segment_base(struct kvm_vcpu *vcpu, int seg) { return 0; }
-static inline void tdx_get_segment(struct kvm_vcpu *vcpu, struct kvm_segment *var,
-				   int seg) {}
-
-static inline int tdx_vcpu_ioctl(struct kvm_vcpu *vcpu, void __user *argp) { return -EOPNOTSUPP; }
-
-static inline void tdx_flush_tlb(struct kvm_vcpu *vcpu) {}
-static inline void tdx_flush_tlb_current(struct kvm_vcpu *vcpu) {}
-static inline int tdx_sept_flush_remote_tlbs(struct kvm *kvm) { return 0; }
-static inline void tdx_load_mmu_pgd(struct kvm_vcpu *vcpu, hpa_t root_hpa, int root_level) {}
-static inline int tdx_gmem_max_level(struct kvm *kvm, kvm_pfn_t pfn, gfn_t gfn,
-				     bool is_private, u8 *max_level)
-{
-	return -EOPNOTSUPP;
-}
-static inline int tdx_pre_memory_mapping(struct kvm_vcpu *vcpu,
-			   struct kvm_memory_mapping *mapping,
-			   u64 *error_code, u8 *max_level)
-{
-	return -EOPNOTSUPP;
-}
-static inline void tdx_post_memory_mapping(struct kvm_vcpu *vcpu, struct kvm_memory_mapping *mapping) {}
-#endif
-
-#if defined(CONFIG_INTEL_TDX_HOST) && defined(CONFIG_KVM_SMM)
-int tdx_smi_allowed(struct kvm_vcpu *vcpu, bool for_injection);
-int tdx_enter_smm(struct kvm_vcpu *vcpu, union kvm_smram *smram);
-int tdx_leave_smm(struct kvm_vcpu *vcpu, const union kvm_smram *smram);
-void tdx_enable_smi_window(struct kvm_vcpu *vcpu);
-#else
-static inline int tdx_smi_allowed(struct kvm_vcpu *vcpu, bool for_injection) { return false; }
-static inline int tdx_enter_smm(struct kvm_vcpu *vcpu, union kvm_smram *smram) { return 0; }
-static inline int tdx_leave_smm(struct kvm_vcpu *vcpu, const union kvm_smram *smram) { return 0; }
-static inline void tdx_enable_smi_window(struct kvm_vcpu *vcpu) {}
-#endif
 
 #endif /* __KVM_X86_VMX_X86_OPS_H */

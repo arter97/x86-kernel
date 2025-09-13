@@ -11,10 +11,8 @@ KVM for x86 systems
    cpuid
    errata
    hypercalls
-   intel-tdx
    mmu
    msr
    nested-vmx
    running-nested-guests
-   tdx-tdp-mmu
    timekeeping

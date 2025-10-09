@@ -332,6 +332,7 @@ struct igc_adapter {
 	/* LEDs */
 	struct mutex led_mutex;
 	struct igc_led_classdev *leds;
+	bool leds_available;
 
 	struct delayed_work fp_verification_work;
 	unsigned long fp_start;

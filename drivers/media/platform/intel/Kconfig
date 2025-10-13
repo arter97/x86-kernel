@@ -13,15 +13,6 @@ config VIDEO_PXA27x
 	help
 	  This is a v4l2 driver for the PXA27x Quick Capture Interface
 
-config INTEL_IPU6_ADLRVP_PDATA
-        bool "Enable built in platform data for ADL RVP"
-        depends on MEDIA_CAMERA_SUPPORT
-        help
-         Pre-ACPI system platform data is compiled inside kernel
-
-         This platform data is useful for software development before
-         the SOC system not ready.
-
 config INTEL_IPU_ACPI
         tristate "Enable IPU ACPI driver"
         depends on I2C

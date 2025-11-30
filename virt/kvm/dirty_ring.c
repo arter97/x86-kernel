@@ -50,16 +50,16 @@ static bool kvm_dirty_ring_full(struct kvm_dirty_ring *ring)
 	return kvm_dirty_ring_used(ring) >= ring->size;
 }
 
-static void kvm_reset_dirty_gfn(struct kvm *kvm, u32 slot, u64 offset, u64 mask)
+static void kvm_reset_dirty_gfn(struct kvm *kvm, u64 slot, u64 offset, u64 mask)
 {
 	struct kvm_memory_slot *memslot;
-	int as_id, id;
+	u32 as_id, id;
 
 	if (!mask)
 		return;
 
-	as_id = slot >> 16;
-	id = (u16)slot;
+	as_id = slot >> 32;
+	id = (u32)slot;
 
 	if (as_id >= kvm_arch_nr_memslot_as_ids(kvm) || id >= KVM_USER_MEM_SLOTS)
 		return;
@@ -106,7 +106,7 @@ static inline bool kvm_dirty_gfn_harvested(struct kvm_dirty_gfn *gfn)
 
 int kvm_dirty_ring_reset(struct kvm *kvm, struct kvm_dirty_ring *ring)
 {
-	u32 cur_slot, next_slot;
+	u64 cur_slot, next_slot;
 	u64 cur_offset, next_offset;
 	unsigned long mask;
 	int count = 0;
@@ -169,7 +169,7 @@ int kvm_dirty_ring_reset(struct kvm *kvm, struct kvm_dirty_ring *ring)
 	return count;
 }
 
-void kvm_dirty_ring_push(struct kvm_vcpu *vcpu, u32 slot, u64 offset)
+void kvm_dirty_ring_push(struct kvm_vcpu *vcpu, u64 slot, u64 offset)
 {
 	struct kvm_dirty_ring *ring = &vcpu->dirty_ring;
 	struct kvm_dirty_gfn *entry;

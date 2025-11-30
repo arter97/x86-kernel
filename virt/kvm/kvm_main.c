@@ -1173,8 +1173,6 @@ static struct kvm *kvm_create_vm(unsigned long type, const char *fdname)
 	INIT_LIST_HEAD(&kvm->devices);
 	kvm->max_vcpus = KVM_MAX_VCPUS;
 
-	BUILD_BUG_ON(KVM_MEM_SLOTS_NUM > SHRT_MAX);
-
 	/*
 	 * Force subsequent debugfs file creations to fail if the VM directory
 	 * is not created (by kvm_create_vm_debugfs()).
@@ -1993,15 +1991,16 @@ int __kvm_set_memory_region(struct kvm *kvm,
 	enum kvm_mr_change change;
 	unsigned long npages;
 	gfn_t base_gfn;
-	int as_id, id;
+	u32 as_id;
+	u32 id;
 	int r;
 
 	r = check_memory_region_flags(kvm, mem);
 	if (r)
 		return r;
 
-	as_id = mem->slot >> 16;
-	id = (u16)mem->slot;
+	as_id = mem->slot >> 32;
+	id = mem->slot;
 
 	/* General sanity checks */
 	if ((mem->memory_size & (PAGE_SIZE - 1)) ||
@@ -2142,7 +2141,8 @@ int kvm_get_dirty_log(struct kvm *kvm, struct kvm_dirty_log *log,
 		      int *is_dirty, struct kvm_memory_slot **memslot)
 {
 	struct kvm_memslots *slots;
-	int i, as_id, id;
+	int i;
+	u32 as_id, id;
 	unsigned long n;
 	unsigned long any = 0;
 
@@ -2153,8 +2153,8 @@ int kvm_get_dirty_log(struct kvm *kvm, struct kvm_dirty_log *log,
 	*memslot = NULL;
 	*is_dirty = 0;
 
-	as_id = log->slot >> 16;
-	id = (u16)log->slot;
+	as_id = log->slot >> 32;
+	id = (u32)log->slot;
 	if (as_id >= kvm_arch_nr_memslot_as_ids(kvm) || id >= KVM_USER_MEM_SLOTS)
 		return -EINVAL;
 
@@ -2205,7 +2205,8 @@ static int kvm_get_dirty_log_protect(struct kvm *kvm, struct kvm_dirty_log *log)
 {
 	struct kvm_memslots *slots;
 	struct kvm_memory_slot *memslot;
-	int i, as_id, id;
+	int i;
+	u32 as_id, id;
 	unsigned long n;
 	unsigned long *dirty_bitmap;
 	unsigned long *dirty_bitmap_buffer;
@@ -2215,8 +2216,8 @@ static int kvm_get_dirty_log_protect(struct kvm *kvm, struct kvm_dirty_log *log)
 	if (!kvm_use_dirty_bitmap(kvm))
 		return -ENXIO;
 
-	as_id = log->slot >> 16;
-	id = (u16)log->slot;
+	as_id = log->slot >> 32;
+	id = (u32)log->slot;
 	if (as_id >= kvm_arch_nr_memslot_as_ids(kvm) || id >= KVM_USER_MEM_SLOTS)
 		return -EINVAL;
 
@@ -2316,7 +2317,7 @@ static int kvm_clear_dirty_log_protect(struct kvm *kvm,
 {
 	struct kvm_memslots *slots;
 	struct kvm_memory_slot *memslot;
-	int as_id, id;
+	u32 as_id, id;
 	gfn_t offset;
 	unsigned long i, n;
 	unsigned long *dirty_bitmap;
@@ -2327,8 +2328,8 @@ static int kvm_clear_dirty_log_protect(struct kvm *kvm,
 	if (!kvm_use_dirty_bitmap(kvm))
 		return -ENXIO;
 
-	as_id = log->slot >> 16;
-	id = (u16)log->slot;
+	as_id = log->slot >> 32;
+	id = (u32)log->slot;
 	if (as_id >= kvm_arch_nr_memslot_as_ids(kvm) || id >= KVM_USER_MEM_SLOTS)
 		return -EINVAL;
 
@@ -3616,7 +3617,7 @@ void mark_page_dirty_in_slot(struct kvm *kvm,
 
 	if (memslot && kvm_slot_dirty_track_enabled(memslot)) {
 		unsigned long rel_gfn = gfn - memslot->base_gfn;
-		u32 slot = (memslot->as_id << 16) | memslot->id;
+		u64 slot = ((u64)memslot->as_id << 32) | memslot->id;
 
 		if (kvm->dirty_ring_size && vcpu)
 			kvm_dirty_ring_push(vcpu, slot, rel_gfn);
@@ -5462,7 +5463,6 @@ static long kvm_vm_compat_ioctl(struct file *filp,
 				   sizeof(compat_log)))
 			return -EFAULT;
 		log.slot	 = compat_log.slot;
-		log.padding1	 = compat_log.padding1;
 		log.padding2	 = compat_log.padding2;
 		log.dirty_bitmap = compat_ptr(compat_log.dirty_bitmap);
 

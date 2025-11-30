@@ -56,7 +56,7 @@ static inline int kvm_dirty_ring_reset(struct kvm *kvm,
 }
 
 static inline void kvm_dirty_ring_push(struct kvm_vcpu *vcpu,
-				       u32 slot, u64 offset)
+				       u64 slot, u64 offset)
 {
 }
 
@@ -80,7 +80,7 @@ int kvm_dirty_ring_alloc(struct kvm *kvm, struct kvm_dirty_ring *ring,
 			 int index, u32 size);
 int kvm_dirty_ring_reset(struct kvm *kvm, struct kvm_dirty_ring *ring,
 			 int *nr_entries_reset);
-void kvm_dirty_ring_push(struct kvm_vcpu *vcpu, u32 slot, u64 offset);
+void kvm_dirty_ring_push(struct kvm_vcpu *vcpu, u64 slot, u64 offset);
 
 bool kvm_dirty_ring_check_request(struct kvm_vcpu *vcpu);
 

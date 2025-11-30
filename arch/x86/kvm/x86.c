@@ -13443,7 +13443,7 @@ void __user * __x86_set_memory_region(struct kvm *kvm, int id, gpa_t gpa,
 	for (i = 0; i < kvm_arch_nr_memslot_as_ids(kvm); i++) {
 		struct kvm_userspace_memory_region2 m;
 
-		m.slot = id | (i << 16);
+		m.slot = id | ((u64)i << 32);
 		m.flags = 0;
 		m.guest_phys_addr = gpa;
 		m.userspace_addr = hva;

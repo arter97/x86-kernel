@@ -28,7 +28,7 @@
 
 /* for KVM_SET_USER_MEMORY_REGION */
 struct kvm_userspace_memory_region {
-	__u32 slot;
+	__u64 slot;
 	__u32 flags;
 	__u64 guest_phys_addr;
 	__u64 memory_size; /* bytes */
@@ -37,15 +37,14 @@ struct kvm_userspace_memory_region {
 
 /* for KVM_SET_USER_MEMORY_REGION2 */
 struct kvm_userspace_memory_region2 {
-	__u32 slot;
+	__u64 slot;
 	__u32 flags;
 	__u64 guest_phys_addr;
 	__u64 memory_size;
 	__u64 userspace_addr;
 	__u64 guest_memfd_offset;
 	__u32 guest_memfd;
-	__u32 pad1;
-	__u64 pad2[14];
+	__u64 pad[14];
 };
 
 /*
@@ -561,8 +560,7 @@ struct kvm_interrupt {
 
 /* for KVM_GET_DIRTY_LOG */
 struct kvm_dirty_log {
-	__u32 slot;
-	__u32 padding1;
+	__u64 slot;
 	union {
 		void __user *dirty_bitmap; /* one bit per page */
 		__u64 padding2;
@@ -571,7 +569,8 @@ struct kvm_dirty_log {
 
 /* for KVM_CLEAR_DIRTY_LOG */
 struct kvm_clear_dirty_log {
-	__u32 slot;
+	__u64 slot;
+	__u32 padding1;
 	__u32 num_pages;
 	__u64 first_page;
 	union {
@@ -1505,7 +1504,7 @@ struct kvm_enc_region {
  */
 struct kvm_dirty_gfn {
 	__u32 flags;
-	__u32 slot;
+	__u64 slot;
 	__u64 offset;
 };
 

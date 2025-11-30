@@ -602,8 +602,8 @@ struct kvm_memory_slot {
 	struct kvm_arch_memory_slot arch;
 	unsigned long userspace_addr;
 	u32 flags;
-	short id;
-	u16 as_id;
+	u32 id;
+	u32 as_id;
 
 #ifdef CONFIG_KVM_GUEST_MEMFD
 	struct {
@@ -707,7 +707,7 @@ bool kvm_arch_irqchip_in_kernel(struct kvm *kvm);
 #define KVM_INTERNAL_MEM_SLOTS 0
 #endif
 
-#define KVM_MEM_SLOTS_NUM SHRT_MAX
+#define KVM_MEM_SLOTS_NUM INT_MAX
 #define KVM_USER_MEM_SLOTS (KVM_MEM_SLOTS_NUM - KVM_INTERNAL_MEM_SLOTS)
 
 #if KVM_MAX_NR_ADDRESS_SPACES == 1

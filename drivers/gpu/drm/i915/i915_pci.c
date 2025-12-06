@@ -795,7 +795,6 @@ static const struct intel_device_info mtl_info = {
 	.has_pxp = 1,
 	.__runtime.memory_regions = BIT(INTEL_REGION_SMEM) | BIT(INTEL_REGION_STOLEN_LMEM),
 	.__runtime.platform_engine_mask = BIT(RCS0) | BIT(BCS0) | BIT(CCS0),
-	.require_force_probe = 1,
 	MTL_CACHELEVEL,
 };
 

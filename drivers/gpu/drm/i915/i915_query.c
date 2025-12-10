@@ -159,6 +159,16 @@ query_engine_info(struct drm_i915_private *i915,
 	info_ptr = &query_ptr->engines[0];
 
 	for_each_uabi_engine(engine, i915) {
+		/* Do not advertise CCS is available for selected platforms
+		 * as CCS is not actually functional on those.
+		 */
+		if ((INTEL_INFO(i915)->platform == INTEL_DG1 ||
+				INTEL_INFO(i915)->platform == INTEL_TIGERLAKE ||
+				INTEL_INFO(i915)->platform == INTEL_ALDERLAKE_S ||
+				INTEL_INFO(i915)->platform == INTEL_ALDERLAKE_P) &&
+				engine->uabi_class == I915_ENGINE_CLASS_COMPUTE)
+			continue;
+
 		info.engine.engine_class = engine->uabi_class;
 		info.engine.engine_instance = engine->uabi_instance;
 		info.flags = I915_ENGINE_INFO_HAS_LOGICAL_INSTANCE;

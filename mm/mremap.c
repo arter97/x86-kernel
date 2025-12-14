@@ -32,20 +32,6 @@
 
 #include "internal.h"
 
-#define MJ_USER_PFN_PRINT_MREMAP
-
-#ifdef MJ_USER_PFN_PRINT_MREMAP
-#include "../drivers/misc/proc_fs.h"
-#define VPMAP_ELEM_LIMIT	(32 * (1024*1024))
-
-extern int target_count;
-extern int target_pid[16];
-
-extern struct vpmap_elem *vpmap_buf;
-extern int vpmap_elem_cnt;
-#endif
-
-
 static pud_t *get_old_pud(struct mm_struct *mm, unsigned long addr)
 {
 	pgd_t *pgd;
@@ -159,11 +145,6 @@ static int move_ptes(struct vm_area_struct *vma, pmd_t *old_pmd,
 	bool force_flush = false;
 	unsigned long len = old_end - old_addr;
 	int err = 0;
-#ifdef MJ_USER_PFN_PRINT_MREMAP
-	struct timespec64 ts;
-	pid_t curr_pid = current->pid;
-	int i;
-#endif
 
 	/*
 	 * When need_rmap_locks is true, we take the i_mmap_rwsem and anon_vma
@@ -227,24 +208,6 @@ static int move_ptes(struct vm_area_struct *vma, pmd_t *old_pmd,
 			force_flush = true;
 		pte = move_pte(pte, old_addr, new_addr);
 		pte = move_soft_dirty_pte(pte);
-
-#ifdef MJ_USER_PFN_PRINT_MREMAP
-		for (i=0; i<target_count; i++) {
-			if (curr_pid == target_pid[i]) {
-				ktime_get_ts64(&ts);
-				if (vpmap_elem_cnt < VPMAP_ELEM_LIMIT) {
-					vpmap_buf[vpmap_elem_cnt].ftype = 'r';
-					vpmap_buf[vpmap_elem_cnt].pid = target_pid[0];
-					vpmap_buf[vpmap_elem_cnt].vpn = new_addr >> PAGE_SHIFT;
-					vpmap_buf[vpmap_elem_cnt].pfn = (((u64)pte.pte & (~((1ul<<PAGE_SHIFT)-1))) & ((1ul<<63)-1)) >> PAGE_SHIFT;
-					vpmap_buf[vpmap_elem_cnt].tv_sec = ts.tv_sec;
-					vpmap_buf[vpmap_elem_cnt].tv_nsec = ts.tv_nsec;
-					vpmap_elem_cnt++;
-				}
-				break;
-			}
-		}
-#endif
 
 		if (need_clear_uffd_wp && pte_marker_uffd_wp(pte))
 			pte_clear(mm, new_addr, new_pte);

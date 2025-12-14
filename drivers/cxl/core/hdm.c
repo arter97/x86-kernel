@@ -92,6 +92,10 @@ static void parse_hdm_decoder_caps(struct cxl_hdm *cxlhdm)
 		cxlhdm->iw_cap_mask |= BIT(3) | BIT(6) | BIT(12);
 	if (FIELD_GET(CXL_HDM_DECODER_INTERLEAVE_16_WAY, hdm_cap))
 		cxlhdm->iw_cap_mask |= BIT(16);
+
+	pr_info("cxl: HDM decoder count %d, target count %d, interleave mask %#x, iw_cap_mask %#lx\n",
+		cxlhdm->decoder_count, cxlhdm->target_count,
+		cxlhdm->interleave_mask, cxlhdm->iw_cap_mask);
 }
 
 static bool should_emulate_decoders(struct cxl_endpoint_dvsec_info *info)

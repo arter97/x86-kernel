@@ -1247,6 +1247,8 @@ static int check_interleave_cap(struct cxl_decoder *cxld, int iw, int ig)
 	u16 eig;
 	int high_pos, low_pos;
 
+	pr_info("cxl: %s: iw: %d ig: %d, iw_cap_mask: %#lx\n", __func__, iw, ig, cxlhdm->iw_cap_mask);
+
 //	if (!test_bit(iw, &cxlhdm->iw_cap_mask))
 //		return -ENXIO;
 	/*
@@ -1276,6 +1278,8 @@ static int check_interleave_cap(struct cxl_decoder *cxld, int iw, int ig)
 		high_pos = eiw + eig + 7;
 	low_pos = eig + 8;
 	interleave_mask = GENMASK(high_pos, low_pos);
+	pr_info("cxl: %s: interleave_mask: %#x, cxlhdm->interleave_mask: %#x\n",
+		__func__, interleave_mask, cxlhdm->interleave_mask);
 //	if (interleave_mask & ~cxlhdm->interleave_mask)
 //		return -ENXIO;
 

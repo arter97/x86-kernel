@@ -568,8 +568,13 @@ static unsigned char cdat_checksum(void *buf, size_t size)
 	unsigned char sum, *data = buf;
 	size_t i;
 
+	print_hex_dump(KERN_INFO, __func__, DUMP_PREFIX_OFFSET, 16, 1, buf, size, true);
+
 	for (sum = 0, i = 0; i < size; i++)
 		sum += data[i];
+
+	pr_info("%s: sum: %x\n", __func__, sum);
+
 	return sum;
 }
 

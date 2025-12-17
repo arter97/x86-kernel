@@ -4,6 +4,7 @@
 #include <linux/dev_printk.h>
 #include <linux/fs.h>
 #include <linux/list.h>
+#include <linux/sizes.h>
 #include <linux/slab.h>
 #include <linux/wait.h>
 #include <linux/uuid.h>
@@ -11,6 +12,8 @@
 #include "issei_dev.h"
 #include "host_client.h"
 #include "fw_client.h"
+
+#define ISSEI_HOST_DMA_MAX_SIZE SZ_32M
 
 static inline u8 __issei_cl_fw_id(const struct issei_host_client *cl)
 {
@@ -104,6 +107,18 @@ static void __issei_cl_disconnect(struct issei_device *idev, struct issei_host_c
 	cl_dbg(idev, cl, "Disconnected\n");
 }
 
+static void __issei_cl_dma_unmap(struct issei_host_client *cl)
+{
+	if (!cl->dma_size)
+		return;
+
+	dmam_free_coherent(cl->idev->parent,
+			   cl->dma_size, cl->dma_vaddr, cl->dma_daddr);
+	cl->dma_size = 0;
+	cl->dma_vaddr = NULL;
+	cl->dma_daddr = 0;
+}
+
 static void issei_cl_init(struct issei_host_client *cl, struct issei_device *idev,
 			  u16 id, struct file *fp)
 {
@@ -178,6 +193,8 @@ void issei_cl_remove(struct issei_host_client *cl)
 	list_del(&cl->list);
 
 	__issei_cl_disconnect(idev, cl);
+
+	__issei_cl_dma_unmap(cl);
 
 	cl_dbg(idev, cl, "Removed\n");
 	kfree(cl);
@@ -486,4 +503,42 @@ int issei_cl_check_write(struct issei_host_client *cl)
 	if (cl->write_in_progress)
 		return 1;
 	return 0;
+}
+
+int issei_cl_dma_map(struct issei_host_client *cl, size_t size,
+		     dma_addr_t *daddr, void **vaddr)
+{
+	struct issei_device *idev = cl->idev;
+
+	if (size == 0 || size > ISSEI_HOST_DMA_MAX_SIZE) {
+		cl_err(idev, cl, "The size is out of bounds.");
+		return -EINVAL;
+	}
+
+	guard(mutex)(&idev->host_client_lock);
+
+	if (cl->dma_size) {
+		cl_err(idev, cl, "DMA already allocated.");
+		return -EALREADY;
+	}
+
+	cl->dma_vaddr = dmam_alloc_coherent(idev->parent, size,
+					    &cl->dma_daddr, GFP_KERNEL);
+	if (!cl->dma_vaddr)
+		return -ENOMEM;
+
+	cl->dma_size = size;
+
+	*daddr = cl->dma_daddr;
+	*vaddr = cl->dma_vaddr;
+	return 0;
+}
+
+void issei_cl_dma_unmap(struct issei_host_client *cl)
+{
+	struct issei_device *idev = cl->idev;
+
+	guard(mutex)(&idev->host_client_lock);
+
+	__issei_cl_dma_unmap(cl);
 }

@@ -5294,6 +5294,7 @@ static void e1000_watchdog_task(struct work_struct *work)
 			case SPEED_10:
 				txb2b = false;
 				adapter->tx_timeout_factor = 16;
+				e1000_enable_ulp_lpt_lp(hw, false);
 				break;
 			case SPEED_100:
 				txb2b = false;

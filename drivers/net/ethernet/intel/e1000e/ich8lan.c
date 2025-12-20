@@ -1225,10 +1225,13 @@ static s32 e1000e_force_smbus(struct e1000_hw *hw)
  */
 s32 e1000_enable_ulp_lpt_lp(struct e1000_hw *hw, bool to_sx)
 {
+	struct e1000_adapter *adapter = hw->adapter;
 	u32 mac_reg;
 	s32 ret_val = 0;
 	u16 phy_reg;
 	u16 oem_reg = 0;
+
+	e_info("Enabling ULP\n");
 
 	if ((hw->mac.type < e1000_pch_lpt) ||
 	    (hw->adapter->pdev->device == E1000_DEV_ID_PCH_LPT_I217_LM) ||
@@ -1250,6 +1253,7 @@ s32 e1000_enable_ulp_lpt_lp(struct e1000_hw *hw, bool to_sx)
 	if (!to_sx) {
 		int i = 0;
 
+#if 0
 		/* Poll up to 5 seconds for Cable Disconnected indication */
 		while (!(er32(FEXT) & E1000_FEXT_PHY_CABLE_DISCONNECTED)) {
 			/* Bail if link is re-acquired */
@@ -1261,6 +1265,7 @@ s32 e1000_enable_ulp_lpt_lp(struct e1000_hw *hw, bool to_sx)
 
 			msleep(50);
 		}
+#endif
 		e_dbg("CABLE_DISCONNECTED %s set after %dmsec\n",
 		      (er32(FEXT) &
 		       E1000_FEXT_PHY_CABLE_DISCONNECTED) ? "" : "not", i * 50);
@@ -1339,7 +1344,7 @@ release:
 	hw->phy.ops.release(hw);
 out:
 	if (ret_val)
-		e_dbg("Error in ULP enable flow: %d\n", ret_val);
+		e_warn("Error in ULP enable flow: %d\n", ret_val);
 	else
 		hw->dev_spec.ich8lan.ulp_state = e1000_ulp_state_on;
 
@@ -1363,10 +1368,13 @@ out:
  */
 static s32 e1000_disable_ulp_lpt_lp(struct e1000_hw *hw, bool force)
 {
+	struct e1000_adapter *adapter = hw->adapter;
 	s32 ret_val = 0;
 	u32 mac_reg;
 	u16 phy_reg;
 	int i = 0;
+
+	e_info("Disabling ULP\n");
 
 	if ((hw->mac.type < e1000_pch_lpt) ||
 	    (hw->adapter->pdev->device == E1000_DEV_ID_PCH_LPT_I217_LM) ||
@@ -1503,7 +1511,7 @@ release:
 	}
 out:
 	if (ret_val)
-		e_dbg("Error in ULP disable flow: %d\n", ret_val);
+		e_warn("Error in ULP disable flow: %d\n", ret_val);
 	else
 		hw->dev_spec.ich8lan.ulp_state = e1000_ulp_state_off;
 

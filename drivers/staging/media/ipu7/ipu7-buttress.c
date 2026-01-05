@@ -353,8 +353,7 @@ irqreturn_t ipu_buttress_isr(int irq, void *isp_ptr)
 
 	/* check btrs ATS, CFI and IMR errors, BIT(0) is unused for IPU */
 	pb_local_irq = readl(isp->pb_base + BTRS_LOCAL_INTERRUPT_MASK);
-	if (pb_local_irq == 0xffffffff) {
-		dev_warn_once(dev, "invalid PB irq status\n");
+	if (WARN_ON_ONCE(pb_local_irq == 0xffffffff)) {
 		pm_runtime_put_noidle(dev);
 		return IRQ_NONE;
 	}
@@ -374,7 +373,7 @@ irqreturn_t ipu_buttress_isr(int irq, void *isp_ptr)
 	}
 
 	irq_status = readl(isp->base + BUTTRESS_REG_IRQ_STATUS);
-	if (!irq_status) {
+	if (!irq_status || WARN_ON_ONCE(irq_status == 0xffffffff)) {
 		pm_runtime_put_noidle(dev);
 		return IRQ_NONE;
 	}

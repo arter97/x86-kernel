@@ -1,0 +1,20 @@
+# for CONFIG_OPTIMIZE_SPECIFICALLY
+# 1. Get -m flags from clang
+## clang -march=native -E -v - </dev/null 2>&1 | grep cc1 | sed -e 's@-target-feature -@-mno-@g' -e 's@-target-feature +@-m@g'
+# 2. Get -target-cpu value and add it to -march, -mtune
+# 3. Run it once and remove invalid flags that is only valid to cc1 backend
+
+ifdef CONFIG_OPTIMIZE_FOR_125H
+KBUILD_CFLAGS	+= -march=meteorlake -mtune=meteorlake -mprfchw -mno-cldemote -mavx -maes -msahf -mpclmul -mno-xop -mcrc32 -mno-amx-fp8 -mxsaves -mno-avx512fp16 -mno-usermsr -mno-sm4 -msse4.1 -mno-avx512ifma -mxsave -msse4.2 -mno-tsxldtrk -mno-sm3 -mptwrite -mno-widekl -mno-movrs -minvpcid -mxsavec -mno-avx512vpopcntdq -mno-avx512vp2intersect -mno-avx512cd -mmovbe -mno-avxvnniint8 -mno-amx-int8 -mno-kl -mno-sha512 -mavxvnni -mno-rtm -madx -mavx2 -mhreset -mmovdiri -mserialize -mvpclmulqdq -mno-avx512vl -mno-uintr -mclflushopt -mno-raoint -mno-cmpccxadd -mbmi -mno-amx-tile -msse -mgfni -mno-avxvnniint16 -mno-amx-fp16 -mxsaveopt -mrdrnd -mno-avx512f -mno-amx-bf16 -mno-avx512bf16 -mno-avx512vnni -mno-avx512bw -msse3 -mpku -mno-amx-tf32 -mno-amx-avx512 -mfsgsbase -mno-clzero -mno-mwaitx -mno-lwp -mlzcnt -msha -mmovdir64b -mno-wbnoinvd -mno-enqcmd -mno-amx-transpose -mno-avxneconvert -mno-tbm -mno-pconfig -mno-amx-complex -mssse3 -mcx16 -mbmi2 -mfma -mpopcnt -mno-avxifma -mf16c -mno-avx512bitalg -mno-rdpru -mclwb -mmmx -msse2 -mrdseed -mno-avx512vbmi2 -mno-prefetchi -mno-amx-movrs -mrdpid -mno-fma4 -mno-avx512vbmi -mshstk -mvaes -mwaitpkg -mno-sgx -mfxsr -mno-avx512dq -mno-sse4a
+endif
+
+ifdef CONFIG_OPTIMIZE_FOR_9600K
+KBUILD_CFLAGS	+= -march=skylake -mtune=skylake -mprfchw -mno-cldemote -mavx -maes -msahf -mpclmul -mno-xop -mcrc32 -mno-amx-fp8 -mxsaves -mno-avx512fp16 -mno-usermsr -mno-sm4 -msse4.1 -mno-avx512ifma -mxsave -msse4.2 -mno-tsxldtrk -mno-sm3 -mno-ptwrite -mno-widekl -mno-movrs -minvpcid -mxsavec -mno-avx512vpopcntdq -mno-avx512vp2intersect -mno-avx512cd -mmovbe -mno-avxvnniint8 -mno-amx-int8 -mno-kl -mno-sha512 -mno-avxvnni -mrtm -madx -mavx2 -mno-hreset -mno-movdiri -mno-serialize -mno-vpclmulqdq -mno-avx512vl -mno-uintr -mclflushopt -mno-raoint -mno-cmpccxadd -mbmi -mno-amx-tile -msse -mno-gfni -mno-avxvnniint16 -mno-amx-fp16 -mxsaveopt -mrdrnd -mno-avx512f -mno-amx-bf16 -mno-avx512bf16 -mno-avx512vnni -mno-avx512bw -msse3 -mno-pku -mno-amx-tf32 -mno-amx-avx512 -mfsgsbase -mno-clzero -mno-mwaitx -mno-lwp -mlzcnt -mno-sha -mno-movdir64b -mno-wbnoinvd -mno-enqcmd -mno-amx-transpose -mno-avxneconvert -mno-tbm -mno-pconfig -mno-amx-complex -mssse3 -mcx16 -mbmi2 -mfma -mpopcnt -mno-avxifma -mf16c -mno-avx512bitalg -mno-rdpru -mno-clwb -mmmx -msse2 -mrdseed -mno-avx512vbmi2 -mno-prefetchi -mno-amx-movrs -mno-rdpid -mno-fma4 -mno-avx512vbmi -mno-shstk -mno-vaes -mno-waitpkg -msgx -mfxsr -mno-avx512dq -mno-sse4a
+endif
+
+ifdef CONFIG_OPTIMIZE_FOR_7980X
+KBUILD_CFLAGS	+= -march=znver4 -mtune=znver4 -mprfchw -mno-cldemote -mavx -maes -msahf -mpclmul -mno-xop -mcrc32 -mno-amx-fp8 -mxsaves -mno-avx512fp16 -mno-usermsr -mno-sm4 -msse4.1 -mavx512ifma -mxsave -msse4.2 -mno-tsxldtrk -mno-sm3 -mno-ptwrite -mno-widekl -mno-movrs -minvpcid -mxsavec -mavx512vpopcntdq -mno-avx512vp2intersect -mavx512cd -mmovbe -mno-avxvnniint8 -mno-amx-int8 -mno-kl -mno-avxvnni -mno-rtm -madx -mavx2 -mno-hreset -mno-movdiri -mno-serialize -mno-sha512 -mvpclmulqdq -mavx512vl -mno-uintr -mclflushopt -mno-raoint -mno-cmpccxadd -mbmi -mno-amx-tile -msse -mgfni -mno-avxvnniint16 -mno-amx-fp16 -mxsaveopt -mrdrnd -mavx512f -mno-amx-bf16 -mavx512bf16 -mavx512vnni -mavx512bw -msse3 -mpku -mno-amx-tf32 -mno-amx-avx512 -mfsgsbase -mclzero -mmwaitx -mno-lwp -mlzcnt -msha -mno-movdir64b -mwbnoinvd -mno-enqcmd -mno-amx-transpose -mno-avxneconvert -mno-tbm -mno-pconfig -mno-amx-complex -mssse3 -mcx16 -mbmi2 -mfma -mpopcnt -mno-avxifma -mf16c -mavx512bitalg -mrdpru -mclwb -mmmx -msse2 -mrdseed -mavx512vbmi2 -mno-prefetchi -mno-amx-movrs -mrdpid -mno-fma4 -mavx512vbmi -mshstk -mvaes -mno-waitpkg -mno-sgx -mfxsr -mavx512dq -msse4a
+endif
+
+# from arch/x86/Makefile: Prevent GCC from generating any FP code by mistake.
+KBUILD_CFLAGS += -mno-sse -mno-mmx -mno-sse2 -mno-3dnow -mno-avx -mno-sse4a

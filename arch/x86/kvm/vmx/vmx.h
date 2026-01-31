@@ -68,6 +68,37 @@ struct pt_desc {
 };
 
 /*
+ * Used to snapshot FRED MSRs that may NOT be saved to vmcs12 as specified
+ * in the VM-Exit controls of vmcs12 configured by L1 VMM.
+ *
+ * FRED MSRs are *always* saved into vmcs02 because KVM always sets
+ * SECONDARY_VM_EXIT_SAVE_IA32_FRED.  However an L1 VMM may choose to clear
+ * this bit, resulting in FRED MSRs not being propagated to vmcs12 from
+ * vmcs02.  When the L1 VMM sets SECONDARY_VM_EXIT_LOAD_IA32_FRED, this is
+ * not a problem, since KVM then immediately loads the host FRED MSRs of
+ * vmcs12 to the guest FRED MSRs of vmcs01.
+ *
+ * But if the L1 VMM clears SECONDARY_VM_EXIT_LOAD_IA32_FRED, KVM should
+ * retain the FRED MSRs, i.e., propagate the guest FRED MSRs of vmcs02 to
+ * the guest FRED MSRs of vmcs01.
+ *
+ * This structure stores guest FRED MSRs that an L1 VMM opts not to save
+ * during VM-Exits from L2 to L1.  These MSRs may still be retained for
+ * running the L1 VMM if SECONDARY_VM_EXIT_LOAD_IA32_FRED is cleared in
+ * vmcs12.
+ */
+struct fred_msr_at_vmexit {
+	u64 fred_config;
+	u64 fred_rsp1;
+	u64 fred_rsp2;
+	u64 fred_rsp3;
+	u64 fred_stklvls;
+	u64 fred_ssp1;
+	u64 fred_ssp2;
+	u64 fred_ssp3;
+};
+
+/*
  * The nested_vmx structure is part of vcpu_vmx, and holds information we need
  * for correct emulation of VMX (i.e., nested VMX) on this vcpu.
  */
@@ -184,6 +215,16 @@ struct nested_vmx {
 	u64 pre_vmenter_s_cet;
 	u64 pre_vmenter_ssp;
 	u64 pre_vmenter_ssp_tbl;
+	u64 pre_vmenter_fred_config;
+	u64 pre_vmenter_fred_rsp1;
+	u64 pre_vmenter_fred_rsp2;
+	u64 pre_vmenter_fred_rsp3;
+	u64 pre_vmenter_fred_stklvls;
+	u64 pre_vmenter_fred_ssp1;
+	u64 pre_vmenter_fred_ssp2;
+	u64 pre_vmenter_fred_ssp3;
+
+	struct fred_msr_at_vmexit fred_msr_at_vmexit;
 
 	/* to migrate it to L1 if L2 writes to L1's CR8 directly */
 	int l1_tpr_threshold;
@@ -227,6 +268,7 @@ struct vcpu_vmx {
 	bool                  guest_uret_msrs_loaded;
 #ifdef CONFIG_X86_64
 	u64		      msr_guest_kernel_gs_base;
+	u64		      msr_guest_fred_rsp0;
 #endif
 
 	u64		      spec_ctrl;
@@ -488,7 +530,8 @@ static inline u8 vmx_get_rvi(void)
 	 VM_ENTRY_LOAD_BNDCFGS |					\
 	 VM_ENTRY_PT_CONCEAL_PIP |					\
 	 VM_ENTRY_LOAD_IA32_RTIT_CTL |					\
-	 VM_ENTRY_LOAD_CET_STATE)
+	 VM_ENTRY_LOAD_CET_STATE |					\
+	 VM_ENTRY_LOAD_IA32_FRED)
 
 #define __KVM_REQUIRED_VMX_VM_EXIT_CONTROLS				\
 	(VM_EXIT_SAVE_DEBUG_CONTROLS |					\
@@ -511,7 +554,13 @@ static inline u8 vmx_get_rvi(void)
 	       VM_EXIT_CLEAR_BNDCFGS |					\
 	       VM_EXIT_PT_CONCEAL_PIP |					\
 	       VM_EXIT_CLEAR_IA32_RTIT_CTL |				\
-	       VM_EXIT_LOAD_CET_STATE)
+	       VM_EXIT_LOAD_CET_STATE |					\
+	       VM_EXIT_ACTIVATE_SECONDARY_CONTROLS)
+
+#define KVM_REQUIRED_VMX_SECONDARY_VM_EXIT_CONTROLS (0)
+#define KVM_OPTIONAL_VMX_SECONDARY_VM_EXIT_CONTROLS			\
+	     (SECONDARY_VM_EXIT_SAVE_IA32_FRED |			\
+	      SECONDARY_VM_EXIT_LOAD_IA32_FRED)
 
 #define KVM_REQUIRED_VMX_PIN_BASED_VM_EXEC_CONTROL			\
 	(PIN_BASED_EXT_INTR_MASK |					\
@@ -624,6 +673,7 @@ static __always_inline void lname##_controls_changebit(struct vcpu_vmx *vmx, u##
 }
 BUILD_CONTROLS_SHADOW(vm_entry, VM_ENTRY_CONTROLS, 32)
 BUILD_CONTROLS_SHADOW(vm_exit, VM_EXIT_CONTROLS, 32)
+BUILD_CONTROLS_SHADOW(secondary_vm_exit, SECONDARY_VM_EXIT_CONTROLS, 64)
 BUILD_CONTROLS_SHADOW(pin, PIN_BASED_VM_EXEC_CONTROL, 32)
 BUILD_CONTROLS_SHADOW(exec, CPU_BASED_VM_EXEC_CONTROL, 32)
 BUILD_CONTROLS_SHADOW(secondary_exec, SECONDARY_VM_EXEC_CONTROL, 32)

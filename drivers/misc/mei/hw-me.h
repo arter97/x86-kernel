@@ -23,14 +23,16 @@
  * @dma_size: device DMA buffers size
  * @fw_ver_supported: is fw version retrievable from FW
  * @hw_trc_supported: does the hw support trc register
+ * @hw_down_supported: can go down
  */
 struct mei_cfg {
 	const struct mei_fw_status fw_status;
 	bool (*quirk_probe)(const struct pci_dev *pdev);
-	const char *kind;
+	enum mei_dev_kind (*get_kind)(const struct pci_dev *pdev);
 	size_t dma_size[DMA_DSCR_NUM];
 	u32 fw_ver_supported:1;
 	u32 hw_trc_supported:1;
+	u32 hw_down_supported:1;
 };
 
 
@@ -110,6 +112,7 @@ static inline bool mei_me_hw_use_polling(const struct mei_me_hw *hw)
  *                         SPS firmware exclusion.
  * @MEI_ME_GSC_CFG:        Graphics System Controller
  * @MEI_ME_GSCFI_CFG:      Graphics System Controller Firmware Interface
+ * @MEI_ME_PCH22_CFG:      Platform Controller Hub Gen22 and newer
  * @MEI_ME_NUM_CFG:        Upper Sentinel.
  */
 enum mei_cfg_idx {
@@ -130,6 +133,7 @@ enum mei_cfg_idx {
 	MEI_ME_PCH15_SPS_CFG,
 	MEI_ME_GSC_CFG,
 	MEI_ME_GSCFI_CFG,
+	MEI_ME_PCH22_CFG,
 	MEI_ME_NUM_CFG,
 };
 

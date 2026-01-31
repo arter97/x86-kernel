@@ -48,12 +48,70 @@ enum {
 
 typedef int (*nmi_handler_t)(unsigned int, struct pt_regs *);
 
+/**
+ * enum nmi_source_vectors - NMI-source vectors are used to identify the
+ * origin of an NMI and to route the NMI directly to the appropriate
+ * handler.
+ *
+ * On CPUs that support NMI-source reporting with FRED, receiving an NMI
+ * with a valid vector sets the corresponding bit in the NMI-source
+ * bitmap. The bitmap is delivered as FRED event data on the stack.
+ *
+ * Multiple NMIs are coalesced in the NMI-source bitmap until the next
+ * NMI delivery. If an NMI is received without a vector or beyond the
+ * defined range, the CPU sets bit 0 of the NMI-source bitmap.
+ *
+ * Third-party chipsets may send NMI messages with a fixed vector of 2.
+ * Using vector 2 for some other purpose would cause confusion between
+ * those external NMI messages and the other purpose. Avoid using it.
+ *
+ * The vectors are in no particular priority order. Add new vector
+ * assignments sequentially in the list below before the COUNT.
+ *
+ * @NMIS_NO_SOURCE:        Reserved for undefined or unidentified sources.
+ * @NMIS_VECTOR_TEST:      NMI selftest.
+ * @NMIS_VECTOR_EXTERNAL:  Reserved to match external NMI vector 2.
+ * @NMIS_VECTOR_SMP_STOP:  Panic stop CPU.
+ * @NMIS_VECTOR_BT:        CPU backtrace.
+ * @NMIS_VECTOR_KGDB:      Kernel debugger.
+ * @NMIS_VECTOR_MCE:       MCE injection.
+ * @NMIS_VECTOR_PMI:       PerfMon counters.
+ *
+ * @NMIS_VECTOR_COUNT:     Count of the defined vectors.
+ */
+enum nmi_source_vectors {
+	NMIS_NO_SOURCE		= 0,
+	NMIS_VECTOR_TEST,
+	NMIS_VECTOR_EXTERNAL	= 2,
+	NMIS_VECTOR_SMP_STOP,
+	NMIS_VECTOR_BT,
+	NMIS_VECTOR_KGDB,
+	NMIS_VECTOR_MCE,
+	NMIS_VECTOR_PMI,
+
+	NMIS_VECTOR_COUNT
+};
+
+/*
+ * The early (and likely all future) hardware implementations of
+ * NMI-source reporting would only support a 16-bit source bitmap, with
+ * 1-15 being valid source vectors.
+ *
+ * If the hardware ever supports a larger bitmap, the kernel support can
+ * easily be extended to 64 bits by modifying the MAX below. However,
+ * care must be taken to reallocate the latency sensitive NMI sources
+ * within the first 15 vectors. Any source vector beyond the supported
+ * maximum on prior systems would set bit 0 in the NMI-source bitmap.
+ */
+#define NMIS_VECTORS_MAX	16
+
 struct nmiaction {
 	struct list_head	list;
 	nmi_handler_t		handler;
 	u64			max_duration;
 	unsigned long		flags;
 	const char		*name;
+	enum nmi_source_vectors	source_vector;
 };
 
 /**
@@ -62,6 +120,7 @@ struct nmiaction {
  * @fn:   The NMI handler
  * @fg:   Flags associated with the NMI handler
  * @n:    Name of the NMI handler
+ * @src:  NMI-source vector for the NMI handler
  * @init: Optional __init* attributes for struct nmiaction
  *
  * Adds the provided handler to the list of handlers for the specified
@@ -75,13 +134,14 @@ struct nmiaction {
  *
  * Return: 0 on success, or an error code on failure.
  */
-#define register_nmi_handler(t, fn, fg, n, init...)	\
+#define register_nmi_handler(t, fn, fg, n, src, init...)\
 ({							\
 	static struct nmiaction init fn##_na = {	\
 		.list = LIST_HEAD_INIT(fn##_na.list),	\
 		.handler = (fn),			\
 		.name = (n),				\
 		.flags = (fg),				\
+		.source_vector = (src),			\
 	};						\
 	__register_nmi_handler((t), &fn##_na);		\
 })

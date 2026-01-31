@@ -641,6 +641,23 @@ bool mei_cldev_enabled(const struct mei_cl_device *cldev)
 EXPORT_SYMBOL_GPL(mei_cldev_enabled);
 
 /**
+ * mei_cldev_get_capabilities - obtain client capabilities
+ *
+ * @cldev: mei client device
+ *
+ * Return: client capabilities bitmap
+ */
+u32 mei_cldev_get_capabilities(const struct mei_cl_device *cldev)
+{
+	u32 cap = 0;
+
+	if (!mei_cl_vt_support_check(cldev->cl))
+		cap |= MEI_CLDEV_CAPABILITY_VTAG;
+
+	return cap;
+}
+
+/**
  * mei_cl_bus_module_get - acquire module of the underlying
  *    hw driver.
  *
@@ -1452,17 +1469,14 @@ static void mei_cl_bus_dev_stop(struct mei_cl_device *cldev)
  */
 static void mei_cl_bus_dev_destroy(struct mei_cl_device *cldev)
 {
-
 	WARN_ON(!mutex_is_locked(&cldev->bus->cl_bus_lock));
 
-	if (!cldev->is_added)
-		return;
-
-	device_del(&cldev->dev);
+	if (cldev->is_added) {
+		device_del(&cldev->dev);
+		cldev->is_added = 0;
+	}
 
 	list_del_init(&cldev->bus_list);
-
-	cldev->is_added = 0;
 	put_device(&cldev->dev);
 }
 

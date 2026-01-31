@@ -9,6 +9,7 @@
 #include <linux/const.h>
 
 #include <asm/asm.h>
+#include <asm/irq_vectors.h>
 #include <asm/msr.h>
 #include <asm/trapnr.h>
 
@@ -65,24 +66,37 @@ static __always_inline unsigned long fred_event_data(struct pt_regs *regs)
 
 void asm_fred_entrypoint_user(void);
 void asm_fred_entrypoint_kernel(void);
-void asm_fred_entry_from_kvm(struct fred_ss);
+void asm_fred_entry_from_kvm(struct fred_ss ss, unsigned long edata);
 
 __visible void fred_entry_from_user(struct pt_regs *regs);
 __visible void fred_entry_from_kernel(struct pt_regs *regs);
 __visible void __fred_entry_from_kvm(struct pt_regs *regs);
 
-/* Can be called from noinstr code, thus __always_inline */
-static __always_inline void fred_entry_from_kvm(unsigned int type, unsigned int vector)
+/* Must be called from noinstr code, thus __always_inline */
+static __always_inline void fred_nmi_from_kvm(unsigned long edata)
 {
 	struct fred_ss ss = {
-		.ss     =__KERNEL_DS,
-		.type   = type,
-		.vector = vector,
-		.nmi    = type == EVENT_TYPE_NMI,
-		.lm     = 1,
+		.ss	= __KERNEL_DS,
+		.type	= EVENT_TYPE_NMI,
+		.vector	= NMI_VECTOR,
+		.nmi	= true,
+		.lm	= 1,
 	};
 
-	asm_fred_entry_from_kvm(ss);
+	asm_fred_entry_from_kvm(ss, edata);
+}
+
+static inline void fred_irq_from_kvm(unsigned int vector)
+{
+	struct fred_ss ss = {
+		.ss	= __KERNEL_DS,
+		.type	= EVENT_TYPE_EXTINT,
+		.vector	= vector,
+		.lm	= 1,
+	};
+
+	/* Event data is always zero for IRQ */
+	asm_fred_entry_from_kvm(ss, 0);
 }
 
 void cpu_init_fred_exceptions(void);
@@ -98,7 +112,7 @@ static __always_inline void fred_sync_rsp0(unsigned long rsp0)
 
 static __always_inline void fred_update_rsp0(void)
 {
-	unsigned long rsp0 = (unsigned long) task_stack_page(current) + THREAD_SIZE;
+	unsigned long rsp0 = (unsigned long)task_empty_stack_pointer(current);
 
 	if (cpu_feature_enabled(X86_FEATURE_FRED) && (__this_cpu_read(fred_rsp0) != rsp0)) {
 		wrmsrns(MSR_IA32_FRED_RSP0, rsp0);
@@ -110,7 +124,8 @@ static __always_inline unsigned long fred_event_data(struct pt_regs *regs) { ret
 static inline void cpu_init_fred_exceptions(void) { }
 static inline void cpu_init_fred_rsps(void) { }
 static inline void fred_complete_exception_setup(void) { }
-static inline void fred_entry_from_kvm(unsigned int type, unsigned int vector) { }
+static __always_inline void fred_nmi_from_kvm(unsigned long edata) { }
+static inline void fred_irq_from_kvm(unsigned int vector) { }
 static inline void fred_sync_rsp0(unsigned long rsp0) { }
 static inline void fred_update_rsp0(void) { }
 #endif /* CONFIG_X86_FRED */

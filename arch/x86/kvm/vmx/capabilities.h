@@ -34,6 +34,7 @@ struct nested_vmx_msrs {
 	u32 pinbased_ctls_high;
 	u32 exit_ctls_low;
 	u32 exit_ctls_high;
+	u64 secondary_exit_ctls;
 	u32 entry_ctls_low;
 	u32 entry_ctls_high;
 	u32 misc_low;
@@ -55,8 +56,9 @@ struct vmcs_config {
 	u32 cpu_based_exec_ctrl;
 	u32 cpu_based_2nd_exec_ctrl;
 	u64 cpu_based_3rd_exec_ctrl;
-	u32 vmexit_ctrl;
 	u32 vmentry_ctrl;
+	u32 vmexit_ctrl;
+	u64 vmexit_2nd_ctrl;
 	u64 misc;
 	struct nested_vmx_msrs nested;
 };
@@ -76,6 +78,11 @@ static inline bool cpu_has_vmx_basic_inout(void)
 static inline bool cpu_has_vmx_basic_no_hw_errcode_cc(void)
 {
 	return	vmcs_config.basic & VMX_BASIC_NO_HW_ERROR_CODE_CC;
+}
+
+static inline bool cpu_has_vmx_nested_exception(void)
+{
+	return vmcs_config.basic & VMX_BASIC_NESTED_EXCEPTION;
 }
 
 static inline bool cpu_has_virtual_nmis(void)
@@ -139,6 +146,12 @@ static inline bool cpu_has_tertiary_exec_ctrls(void)
 {
 	return vmcs_config.cpu_based_exec_ctrl &
 		CPU_BASED_ACTIVATE_TERTIARY_CONTROLS;
+}
+
+static inline bool cpu_has_secondary_vmexit_ctrls(void)
+{
+	return vmcs_config.vmexit_ctrl &
+		VM_EXIT_ACTIVATE_SECONDARY_CONTROLS;
 }
 
 static inline bool cpu_has_vmx_virtualize_apic_accesses(void)
@@ -396,6 +409,16 @@ static inline bool vmx_pt_mode_is_host_guest(void)
 static inline bool vmx_pebs_supported(void)
 {
 	return boot_cpu_has(X86_FEATURE_PEBS) && kvm_pmu_cap.pebs_ept;
+}
+
+static inline bool cpu_has_vmx_fred(void)
+{
+	/*
+	 * setup_vmcs_config() guarantees FRED VM-entry/exit controls
+	 * are either all set or none.  So, no need to check FRED VM-exit
+	 * controls.
+	 */
+	return (vmcs_config.vmentry_ctrl & VM_ENTRY_LOAD_IA32_FRED);
 }
 
 static inline bool cpu_has_notify_vmexit(void)

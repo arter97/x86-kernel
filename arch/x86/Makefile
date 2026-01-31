@@ -164,7 +164,11 @@ else
 	# Use -mskip-rax-setup if supported.
 	KBUILD_CFLAGS += -mskip-rax-setup
 
-ifdef CONFIG_X86_NATIVE_CPU
+ifdef CONFIG_OPTIMIZE_SPECIFICALLY
+        include $(srctree)/arch/x86/Makefile.spec
+        # TODO: rustc is unsupported, fallback to generic
+        KBUILD_RUSTFLAGS += -Ctarget-cpu=x86-64 -Ztune-cpu=generic
+else ifdef CONFIG_X86_NATIVE_CPU
         KBUILD_CFLAGS += -march=native
         KBUILD_RUSTFLAGS += -Ctarget-cpu=native
 else

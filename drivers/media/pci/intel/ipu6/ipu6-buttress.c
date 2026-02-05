@@ -21,8 +21,9 @@
 #include <linux/scatterlist.h>
 #include <linux/slab.h>
 #include <linux/time64.h>
+#if IS_ENABLED(CONFIG_VIDEO_INTEL_IPU_USE_PLATFORMDATA)
 #include <linux/i2c.h>
-
+#endif
 #include "ipu6.h"
 #include "ipu6-bus.h"
 #include "ipu6-dma.h"
@@ -775,6 +776,7 @@ int ipu6_buttress_start_tsc_sync(struct ipu6_device *isp)
 }
 EXPORT_SYMBOL_NS_GPL(ipu6_buttress_start_tsc_sync, "INTEL_IPU6");
 
+#if IS_ENABLED(CONFIG_VIDEO_INTEL_IPU_USE_PLATFORMDATA)
 /*
  * The dev_id was hard code in platform data, as i2c bus number
  * may change dynamiclly, we need to update this bus id
@@ -815,6 +817,7 @@ int ipu6_get_i2c_bus_id(int adapter_id, char *adapter_bdf, int bdf_len)
 	return -1;
 }
 EXPORT_SYMBOL_NS_GPL(ipu6_get_i2c_bus_id, "INTEL_IPU6");
+#endif
 
 void ipu6_buttress_tsc_read(struct ipu6_device *isp, u64 *val)
 {

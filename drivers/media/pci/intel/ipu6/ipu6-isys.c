@@ -1142,16 +1142,16 @@ static int isys_register_devices(struct ipu6_isys *isys)
 #else
 	isys_register_ext_subdevs(isys);
 #endif
-
+#if IS_ENABLED(CONFIG_VIDEO_INTEL_IPU_USE_PLATFORMDATA)
 	ret = v4l2_device_register_subdev_nodes(&isys->v4l2_dev);
 	if (ret)
 		goto out_isys_unregister_ext_subdevs;
-
+#endif
 	return 0;
-
+#if IS_ENABLED(CONFIG_VIDEO_INTEL_IPU_USE_PLATFORMDATA)
 out_isys_unregister_ext_subdevs:
 	isys_unregister_ext_subdevs(isys);
-
+#endif
 out_isys_unregister_subdevices:
 	isys_csi2_unregister_subdevices(isys);
 

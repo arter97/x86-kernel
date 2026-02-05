@@ -10,8 +10,9 @@
 #include <linux/pm_qos.h>
 #include <linux/spinlock_types.h>
 #include <linux/types.h>
+#if IS_ENABLED(CONFIG_VIDEO_INTEL_IPU_USE_PLATFORMDATA)
 #include <linux/clkdev.h>
-
+#endif
 #include <media/media-device.h>
 #include <media/v4l2-async.h>
 #include <media/v4l2-device.h>
@@ -191,13 +192,13 @@ struct isys_fw_msgs {
 	struct list_head head;
 	dma_addr_t dma_addr;
 };
-
+#if IS_ENABLED(CONFIG_VIDEO_INTEL_IPU_USE_PLATFORMDATA)
 struct ipu6_isys_subdev_i2c_info {
 	struct i2c_board_info board_info;
 	int i2c_adapter_id;
 	char i2c_adapter_bdf[32];
 };
-
+#endif
 #if (IS_ENABLED(CONFIG_VIDEO_INTEL_IPU_USE_PLATFORMDATA) \
 	&& IS_ENABLED(CONFIG_VIDEO_INTEL_IPU_PDATA_DYNAMIC_LOADING)) \
 	|| IS_ENABLED(CONFIG_INTEL_IPU_ACPI)

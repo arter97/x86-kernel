@@ -9285,9 +9285,19 @@ EXPORT_SYMBOL_FOR_KVM_INTERNAL(kvm_prepare_unexpected_reason_exit);
 static int handle_emulation_failure(struct kvm_vcpu *vcpu, int emulation_type)
 {
 	struct kvm *kvm = vcpu->kvm;
+	struct x86_emulate_ctxt *ctxt = vcpu->arch.emulate_ctxt;
 
 	++vcpu->stat.insn_emulation_fail;
 	trace_kvm_emulate_insn_failed(vcpu);
+
+	{
+		int insn_len = ctxt->fetch.ptr - ctxt->fetch.data;
+
+		pr_warn_ratelimited("kvm: emulation failure rip=%lx insn=[%*ph] (%d bytes)\n",
+				    ctxt->_eip - insn_len,
+				    min(insn_len, 15), ctxt->fetch.data,
+				    insn_len);
+	}
 
 	if (emulation_type & EMULTYPE_VMWARE_GP) {
 		kvm_queue_exception_e(vcpu, GP_VECTOR, 0);

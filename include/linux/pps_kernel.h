@@ -28,6 +28,9 @@ struct pps_source_info {
 	void (*echo)(struct pps_device *pps,
 			int event, void *data);	/* PPS echo function */
 
+	int (*enable_poll)(struct pps_device *pps,
+			   bool enable);	/* PPS poll enable function */
+
 	struct module *owner;
 	struct device *dev;		/* Parent device for device_create */
 };
@@ -42,6 +45,8 @@ struct pps_event_time {
 /* The main struct */
 struct pps_device {
 	struct pps_source_info info;		/* PSS source info */
+
+	bool is_poll_enabled;			/* Polling enabled */
 
 	struct pps_kparams params;		/* PPS current params */
 

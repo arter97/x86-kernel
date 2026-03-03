@@ -44,7 +44,7 @@ struct pps_event_time {
 
 /* The main struct */
 struct pps_device {
-	struct pps_source_info info;		/* PSS source info */
+	const struct pps_source_info *info;	/* PSS source info */
 
 	bool is_poll_enabled;			/* Polling enabled */
 
@@ -88,7 +88,7 @@ extern void pps_unregister_cdev(struct pps_device *pps);
  */
 
 extern struct pps_device *pps_register_source(
-		struct pps_source_info *info, int default_params);
+		const struct pps_source_info *info, int default_params);
 extern void pps_unregister_source(struct pps_device *pps);
 extern void pps_event(struct pps_device *pps,
 		struct pps_event_time *ts, int event, void *data);

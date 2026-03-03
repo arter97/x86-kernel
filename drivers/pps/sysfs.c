@@ -19,7 +19,7 @@ static ssize_t assert_show(struct device *dev, struct device_attribute *attr,
 {
 	struct pps_device *pps = dev_get_drvdata(dev);
 
-	if (!(pps->info.mode & PPS_CAPTUREASSERT))
+	if (!(pps->info->mode & PPS_CAPTUREASSERT))
 		return 0;
 
 	return sprintf(buf, "%lld.%09d#%d\n",
@@ -33,7 +33,7 @@ static ssize_t clear_show(struct device *dev, struct device_attribute *attr,
 {
 	struct pps_device *pps = dev_get_drvdata(dev);
 
-	if (!(pps->info.mode & PPS_CAPTURECLEAR))
+	if (!(pps->info->mode & PPS_CAPTURECLEAR))
 		return 0;
 
 	return sprintf(buf, "%lld.%09d#%d\n",
@@ -47,7 +47,7 @@ static ssize_t mode_show(struct device *dev, struct device_attribute *attr,
 {
 	struct pps_device *pps = dev_get_drvdata(dev);
 
-	return sprintf(buf, "%4x\n", pps->info.mode);
+	return sprintf(buf, "%4x\n", pps->info->mode);
 }
 static DEVICE_ATTR_RO(mode);
 
@@ -56,7 +56,11 @@ static ssize_t echo_show(struct device *dev, struct device_attribute *attr,
 {
 	struct pps_device *pps = dev_get_drvdata(dev);
 
-	return sprintf(buf, "%d\n", !!pps->info.echo);
+	if (!(pps->info->mode & (PPS_ECHOASSERT | PPS_ECHOCLEAR)) &&
+	    !pps->info->echo)
+		return -EOPNOTSUPP;
+
+	return sprintf(buf, "%d\n", !!pps->info->echo);
 }
 static DEVICE_ATTR_RO(echo);
 
@@ -65,7 +69,7 @@ static ssize_t name_show(struct device *dev, struct device_attribute *attr,
 {
 	struct pps_device *pps = dev_get_drvdata(dev);
 
-	return sprintf(buf, "%s\n", pps->info.name);
+	return sprintf(buf, "%s\n", pps->info->name);
 }
 static DEVICE_ATTR_RO(name);
 
@@ -74,7 +78,7 @@ static ssize_t path_show(struct device *dev, struct device_attribute *attr,
 {
 	struct pps_device *pps = dev_get_drvdata(dev);
 
-	return sprintf(buf, "%s\n", pps->info.path);
+	return sprintf(buf, "%s\n", pps->info->path);
 }
 static DEVICE_ATTR_RO(path);
 
@@ -89,10 +93,10 @@ static ssize_t poll_store(struct device *dev, struct device_attribute *attr,
 	if (ret)
 		return ret;
 
-	if (!pps->info.enable_poll)
+	if (!pps->info->enable_poll)
 		return -EOPNOTSUPP;
 
-	ret = pps->info.enable_poll(pps, status);
+	ret = pps->info->enable_poll(pps, status);
 	if (ret)
 		return ret;
 

@@ -39,6 +39,7 @@ static DEFINE_IDA(pps_client_index);
 struct pps_client_pp {
 	struct pardevice *pardev;	/* parport device */
 	struct pps_device *pps;		/* PPS device */
+	struct pps_source_info info;	/* PPS source info */
 	unsigned int cw;		/* port clear timeout */
 	unsigned int cw_err;		/* number of timeouts */
 	int index;			/* device number */
@@ -126,14 +127,6 @@ static void parport_attach(struct parport *port)
 	int index;
 	struct pps_client_pp *device;
 	struct pps_source_info info = {
-		.name		= KBUILD_MODNAME,
-		.path		= "",
-		.mode		= PPS_CAPTUREBOTH | \
-				  PPS_OFFSETASSERT | PPS_OFFSETCLEAR | \
-				  PPS_ECHOASSERT | PPS_ECHOCLEAR | \
-				  PPS_CANWAIT | PPS_TSFMT_TSPEC,
-		.owner		= THIS_MODULE,
-		.dev		= NULL
 	};
 
 	if (clear_wait > CLEAR_WAIT_MAX) {
@@ -169,6 +162,15 @@ static void parport_attach(struct parport *port)
 		pr_err("couldn't claim %s\n", port->name);
 		goto err_unregister_dev;
 	}
+
+	snprintf(device->info.name, PPS_MAX_NAME_LEN, "%s", KBUILD_MODNAME);
+	snprintf(device->info.path, PPS_MAX_NAME_LEN, "%s", "");
+	device->info.mode = PPS_CAPTUREBOTH | \
+			PPS_OFFSETASSERT | PPS_OFFSETCLEAR | \
+			PPS_ECHOASSERT | PPS_ECHOCLEAR | \
+			PPS_CANWAIT | PPS_TSFMT_TSPEC,
+	device->info.owner = THIS_MODULE,
+	device->info.dev = NULL;
 
 	device->pps = pps_register_source(&info,
 			PPS_CAPTUREBOTH | PPS_OFFSETASSERT | PPS_OFFSETCLEAR);

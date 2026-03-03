@@ -38,14 +38,6 @@ static void pps_add_offset(struct pps_ktime *ts, struct pps_ktime *offset)
 	ts->sec += offset->sec;
 }
 
-static void pps_echo_client_default(struct pps_device *pps, int event,
-		void *data)
-{
-	dev_info(&pps->dev, "echo %s %s\n",
-		event & PPS_CAPTUREASSERT ? "assert" : "",
-		event & PPS_CAPTURECLEAR ? "clear" : "");
-}
-
 /*
  * Exported functions
  */
@@ -62,8 +54,8 @@ static void pps_echo_client_default(struct pps_device *pps, int event,
  * ERR_PTR(errno).
  */
 
-struct pps_device *pps_register_source(struct pps_source_info *info,
-		int default_params)
+struct pps_device *pps_register_source(const struct pps_source_info *info,
+				       int default_params)
 {
 	struct pps_device *pps;
 	int err;
@@ -94,12 +86,8 @@ struct pps_device *pps_register_source(struct pps_source_info *info,
 	 */
 	pps->params.api_version = PPS_API_VERS;
 	pps->params.mode = default_params;
-	pps->info = *info;
-
-	/* check for default echo function */
-	if ((pps->info.mode & (PPS_ECHOASSERT | PPS_ECHOCLEAR)) &&
-			pps->info.echo == NULL)
-		pps->info.echo = pps_echo_client_default;
+	pps->info = info;
+	pps->is_poll_enabled = false;
 
 	init_waitqueue_head(&pps->queue);
 	spin_lock_init(&pps->lock);
@@ -151,7 +139,7 @@ EXPORT_SYMBOL(pps_unregister_source);
  *
  * If an echo function is associated with the PPS device it will be called
  * as:
- *	pps->info.echo(pps, event, data);
+ *	pps->info->echo(pps, event, data);
  */
 void pps_event(struct pps_device *pps, struct pps_event_time *ts, int event,
 		void *data)
@@ -172,7 +160,7 @@ void pps_event(struct pps_device *pps, struct pps_event_time *ts, int event,
 
 	/* Must call the echo function? */
 	if ((pps->params.mode & (PPS_ECHOASSERT | PPS_ECHOCLEAR)))
-		pps->info.echo(pps, event, data);
+		pps->info->echo(pps, event, data);
 
 	/* Check the event */
 	pps->current_mode = pps->params.mode;

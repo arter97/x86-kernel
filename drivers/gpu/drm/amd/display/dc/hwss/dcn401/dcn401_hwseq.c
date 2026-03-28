@@ -68,7 +68,11 @@ void dcn401_initialize_min_clocks(struct dc *dc)
 		 * audio corruption. Read current DISPCLK from DENTIST and request the same
 		 * freq to ensure that the timing is valid and unchanged.
 		 */
-		clocks->dispclk_khz = dc->clk_mgr->funcs->get_dispclk_from_dentist(dc->clk_mgr);
+		if (dc->clk_mgr->funcs->get_dispclk_from_dentist) {
+			clocks->dispclk_khz = dc->clk_mgr->funcs->get_dispclk_from_dentist(dc->clk_mgr);
+		} else {
+			clocks->dispclk_khz = dc->clk_mgr->boot_snapshot.dispclk * 1000;
+		}
 	}
 	clocks->ref_dtbclk_khz = dc->clk_mgr->bw_params->clk_table.entries[0].dtbclk_mhz * 1000;
 	clocks->fclk_p_state_change_support = true;
@@ -284,6 +288,8 @@ void dcn401_init_hw(struct dc *dc)
 			for (i = 0; i < dc->link_count; i++) {
 				struct dc_link *link = dc->links[i];
 
+				if (link->ep_type != DISPLAY_ENDPOINT_PHY)
+					continue;
 				if (link->link_enc->funcs->is_dig_enabled &&
 						link->link_enc->funcs->is_dig_enabled(link->link_enc) &&
 						hws->funcs.power_down) {
@@ -914,10 +920,10 @@ static void dcn401_enable_stream_calc(
 			pipe_ctx->stream->link->cur_link_settings.lane_count;
 	uint32_t active_total_with_borders;
 
-	if (dc->link_srv->dp_is_128b_132b_signal(pipe_ctx))
+	if (dc->link_srv->dp_is_128b_132b_signal(pipe_ctx)) {
 		*dp_hpo_inst = pipe_ctx->stream_res.hpo_dp_stream_enc->inst;
-
-	*phyd32clk = get_phyd32clk_src(pipe_ctx->stream->link);
+		*phyd32clk = get_phyd32clk_src(pipe_ctx->stream->link);
+	}
 
 	if (dc_is_tmds_signal(pipe_ctx->stream->signal))
 		dcn401_calculate_dccg_tmds_div_value(pipe_ctx, tmds_div);
@@ -1628,7 +1634,8 @@ void dcn401_unblank_stream(struct pipe_ctx *pipe_ctx,
 void dcn401_hardware_release(struct dc *dc)
 {
 	if (!dc->debug.disable_force_pstate_allow_on_hw_release) {
-		dc_dmub_srv_fams2_update_config(dc, dc->current_state, false);
+		if (dc->ctx->dmub_srv && dc->debug.fams2_config.bits.enable)
+			dc_dmub_srv_fams2_update_config(dc, dc->current_state, false);
 
 		/* If pstate unsupported, or still supported
 		* by firmware, force it supported by dcn
@@ -1648,7 +1655,9 @@ void dcn401_hardware_release(struct dc *dc)
 			dc->clk_mgr->clks.p_state_change_support = false;
 			dc->clk_mgr->funcs->update_clocks(dc->clk_mgr, dc->current_state, true);
 		}
-		dc_dmub_srv_fams2_update_config(dc, dc->current_state, false);
+
+		if (dc->ctx->dmub_srv && dc->debug.fams2_config.bits.enable)
+			dc_dmub_srv_fams2_update_config(dc, dc->current_state, false);
 	}
 }
 

@@ -259,7 +259,7 @@ static int live_ctx_switch_wa(void *arg)
 	 * and equally important it was wasn't run when we don't!
 	 */
 
-	for_each_engine(engine, gt, id) {
+	for_each_enabled_engine(engine, gt, id) {
 		struct i915_vma *saved_wa;
 		int err;
 

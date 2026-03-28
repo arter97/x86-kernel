@@ -1476,7 +1476,7 @@ static int xpcs_init_id(struct dw_xpcs *xpcs)
 	return xpcs_identify(xpcs);
 }
 
-static struct dw_xpcs *xpcs_create(struct mdio_device *mdiodev)
+static struct dw_xpcs *xpcs_create(struct mdio_device *mdiodev, bool skip_reset)
 {
 	struct dw_xpcs *xpcs;
 	int ret;
@@ -1495,7 +1495,7 @@ static struct dw_xpcs *xpcs_create(struct mdio_device *mdiodev)
 
 	xpcs_get_interfaces(xpcs, xpcs->pcs.supported_interfaces);
 
-	if (xpcs->info.pma == WX_TXGBE_XPCS_PMA_10G_ID)
+	if (xpcs->info.pma == WX_TXGBE_XPCS_PMA_10G_ID || skip_reset)
 		xpcs->pcs.poll = false;
 	else
 		xpcs->need_reset = true;
@@ -1520,7 +1520,7 @@ out_free_data:
  * the PCS device couldn't be found on the bus and other negative errno related
  * to the data allocation and MDIO-bus communications.
  */
-struct dw_xpcs *xpcs_create_mdiodev(struct mii_bus *bus, int addr)
+struct dw_xpcs *xpcs_create_mdiodev(struct mii_bus *bus, int addr, bool skip_reset)
 {
 	struct mdio_device *mdiodev;
 	struct dw_xpcs *xpcs;
@@ -1529,7 +1529,7 @@ struct dw_xpcs *xpcs_create_mdiodev(struct mii_bus *bus, int addr)
 	if (IS_ERR(mdiodev))
 		return ERR_CAST(mdiodev);
 
-	xpcs = xpcs_create(mdiodev);
+	xpcs = xpcs_create(mdiodev, skip_reset);
 
 	/* xpcs_create() has taken a refcount on the mdiodev if it was
 	 * successful. If xpcs_create() fails, this will free the mdio
@@ -1543,11 +1543,11 @@ struct dw_xpcs *xpcs_create_mdiodev(struct mii_bus *bus, int addr)
 }
 EXPORT_SYMBOL_GPL(xpcs_create_mdiodev);
 
-struct phylink_pcs *xpcs_create_pcs_mdiodev(struct mii_bus *bus, int addr)
+struct phylink_pcs *xpcs_create_pcs_mdiodev(struct mii_bus *bus, int addr, bool skip_reset)
 {
 	struct dw_xpcs *xpcs;
 
-	xpcs = xpcs_create_mdiodev(bus, addr);
+	xpcs = xpcs_create_mdiodev(bus, addr, skip_reset);
 	if (IS_ERR(xpcs))
 		return ERR_CAST(xpcs);
 
@@ -1577,7 +1577,7 @@ struct dw_xpcs *xpcs_create_fwnode(struct fwnode_handle *fwnode)
 	if (!mdiodev)
 		return ERR_PTR(-EPROBE_DEFER);
 
-	xpcs = xpcs_create(mdiodev);
+	xpcs = xpcs_create(mdiodev, false);
 
 	/* xpcs_create() has taken a refcount on the mdiodev if it was
 	 * successful. If xpcs_create() fails, this will free the mdio

@@ -18,6 +18,7 @@
 #include "intel_lrc.h"
 #include "intel_lrc_reg.h"
 #include "intel_ring.h"
+#include "iov/intel_iov_reg.h"
 #include "shmem_utils.h"
 
 /*
@@ -757,7 +758,8 @@ static int lrc_ring_cmd_buf_cctl(const struct intel_engine_cs *engine)
 		 * simply to match the RCS context image layout.
 		 */
 		return 0xc6;
-	else if (engine->class != RENDER_CLASS)
+	else if (engine->class != RENDER_CLASS &&
+		 engine->class != COMPUTE_CLASS)
 		return -1;
 	else if (GRAPHICS_VER(engine->i915) >= 12)
 		return 0xb6;
@@ -908,6 +910,29 @@ static struct i915_ppgtt *vm_alias(struct i915_address_space *vm)
 		return i915_vm_to_ppgtt(vm);
 }
 
+static void init_vf_irq_reg_state(u32 *regs, const struct intel_engine_cs *engine)
+{
+	struct i915_vma *vma = engine->gt->iov.vf.irq.vma;
+
+	GEM_BUG_ON(!IS_SRIOV_VF(engine->i915));
+	GEM_BUG_ON(!vma);
+
+	BUILD_BUG_ON(!IS_ALIGNED(I915_VF_IRQ_STATUS, SZ_4K));
+	BUILD_BUG_ON(!IS_ALIGNED(I915_VF_IRQ_SOURCE, SZ_64));
+
+	regs[GEN12_CTX_LRM_HEADER_0] =
+		MI_LOAD_REGISTER_MEM_GEN8 | MI_SRM_LRM_GLOBAL_GTT | MI_LRI_LRM_CS_MMIO;
+	regs[GEN12_CTX_INT_MASK_REG] = i915_mmio_reg_offset(GEN12_RING_INT_MASK(0));
+	regs[GEN12_CTX_INT_MASK_PTR] = i915_ggtt_offset(vma) + I915_VF_IRQ_ENABLE;
+
+	regs[GEN12_CTX_LRI_HEADER_4] =
+		MI_LOAD_REGISTER_IMM(2) | MI_LRI_FORCE_POSTED | MI_LRI_LRM_CS_MMIO;
+	regs[GEN12_CTX_INT_STATUS_REPORT_PTR] = i915_mmio_reg_offset(GEN12_RING_INT_STATUS(0));
+	regs[GEN12_CTX_INT_STATUS_REPORT_PTR + 1] = i915_ggtt_offset(vma) + I915_VF_IRQ_STATUS;
+	regs[GEN12_CTX_INT_SRC_REPORT_PTR] = i915_mmio_reg_offset(GEN12_RING_INT_SRC(0));
+	regs[GEN12_CTX_INT_SRC_REPORT_PTR + 1] = i915_ggtt_offset(vma) + I915_VF_IRQ_SOURCE;
+}
+
 static void __reset_stop_ring(u32 *regs, const struct intel_engine_cs *engine)
 {
 	int x;
@@ -944,6 +969,9 @@ static void __lrc_init_regs(u32 *regs,
 	init_ppgtt_regs(regs, vm_alias(ce->vm));
 
 	init_wa_bb_regs(regs, engine);
+
+	if (HAS_MEMORY_IRQ_STATUS(engine->i915))
+		init_vf_irq_reg_state(regs, engine);
 
 	__reset_stop_ring(regs, engine);
 }
@@ -1178,13 +1206,17 @@ err_vma:
 
 void lrc_reset(struct intel_context *ce)
 {
+	int srcu;
+
 	GEM_BUG_ON(!intel_context_is_pinned(ce));
 
 	intel_ring_reset(ce->ring, ce->ring->emit);
 
 	/* Scrub away the garbage */
+	gt_ggtt_address_read_lock(ce->engine->gt, &srcu);
 	lrc_init_regs(ce, ce->engine, true);
 	ce->lrc.lrca = lrc_update_regs(ce, ce->engine, ce->ring->tail);
+	gt_ggtt_address_read_unlock(ce->engine->gt, srcu);
 }
 
 int
@@ -1571,6 +1603,30 @@ u32 lrc_update_regs(const struct intel_context *ce,
 	return lrc_descriptor(ce) | CTX_DESC_FORCE_RESTORE;
 }
 
+void lrc_update_regs_with_address(struct intel_context *ce)
+{
+	struct intel_ring *ring = ce->ring;
+	u32 *regs = ce->lrc_reg_state;
+
+	regs[CTX_RING_START] = i915_ggtt_offset(ring->vma);
+
+	init_wa_bb_regs(regs, ce->engine);
+
+	if (ce->wa_bb_page) {
+		u32 *(*fn)(const struct intel_context *ce, u32 *cs);
+
+		fn = gen12_emit_indirect_ctx_xcs;
+		if (ce->engine->class == RENDER_CLASS)
+			fn = gen12_emit_indirect_ctx_rcs;
+
+		/* Mutually exclusive wrt to global indirect bb */
+		GEM_BUG_ON(ce->engine->wa_ctx.indirect_ctx.size);
+		setup_indirect_ctx_bb(ce, ce->engine, fn);
+	}
+
+	ce->lrc.lrca = lrc_descriptor(ce) | CTX_DESC_FORCE_RESTORE;
+}
+
 void lrc_update_offsets(struct intel_context *ce,
 			struct intel_engine_cs *engine)
 {
@@ -1583,10 +1639,22 @@ void lrc_check_regs(const struct intel_context *ce,
 {
 	const struct intel_ring *ring = ce->ring;
 	u32 *regs = ce->lrc_reg_state;
+	u32 regs_ring_start, vma_ring_start;
 	bool valid = true;
 	int x;
 
-	if (regs[CTX_RING_START] != i915_ggtt_offset(ring->vma)) {
+	regs_ring_start = regs[CTX_RING_START];
+	vma_ring_start = i915_ggtt_offset(ring->vma);
+	/*
+	 * The RING_START check is less strict on VFs, due to expected
+	 * inconsistency if unpin happens during post-migration recovery.
+	 * Only offsets within pages are guaranteed to always match.
+	 */
+	if (IS_SRIOV_VF(engine->i915)) {
+		regs_ring_start = offset_in_page(regs_ring_start);
+		vma_ring_start = offset_in_page(vma_ring_start);
+	}
+	if (regs_ring_start != vma_ring_start) {
 		pr_err("%s: context submitted with incorrect RING_START [%08x], expected %08x\n",
 		       engine->name,
 		       regs[CTX_RING_START],

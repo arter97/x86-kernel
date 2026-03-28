@@ -172,7 +172,7 @@ static int live_lrc_layout(void *arg)
 	GEM_BUG_ON(offset_in_page(lrc));
 
 	err = 0;
-	for_each_engine(engine, gt, id) {
+	for_each_enabled_engine(engine, gt, id) {
 		u32 *hw;
 		int dw;
 
@@ -295,7 +295,7 @@ static int live_lrc_fixed(void *arg)
 	 * the context image.
 	 */
 
-	for_each_engine(engine, gt, id) {
+	for_each_enabled_engine(engine, gt, id) {
 		const struct {
 			u32 reg;
 			u32 offset;
@@ -434,7 +434,7 @@ retry:
 		goto err_unpin;
 	}
 
-	cs = intel_ring_begin(rq, 4 * MAX_IDX);
+	cs = intel_ring_begin(rq, 4 * 2);
 	if (IS_ERR(cs)) {
 		err = PTR_ERR(cs);
 		i915_request_add(rq);
@@ -452,6 +452,8 @@ retry:
 	*cs++ = i915_mmio_reg_offset(RING_TAIL(engine->mmio_base));
 	*cs++ = i915_ggtt_offset(scratch) + RING_TAIL_IDX * sizeof(u32);
 	*cs++ = 0;
+
+	intel_ring_advance(rq, cs);
 
 	err = i915_vma_move_to_active(scratch, rq, EXEC_OBJECT_WRITE);
 
@@ -517,7 +519,7 @@ static int live_lrc_state(void *arg)
 	if (IS_ERR(scratch))
 		return PTR_ERR(scratch);
 
-	for_each_engine(engine, gt, id) {
+	for_each_enabled_engine(engine, gt, id) {
 		err = __live_lrc_state(engine, scratch);
 		if (err)
 			break;
@@ -599,6 +601,8 @@ __gpr_read(struct intel_context *ce, struct i915_vma *scratch, u32 *slot)
 		*cs++ = i915_ggtt_offset(scratch) + n * sizeof(u32);
 		*cs++ = 0;
 	}
+
+	intel_ring_advance(rq, cs);
 
 	err = igt_vma_move_to_active_unlocked(scratch, rq, EXEC_OBJECT_WRITE);
 
@@ -711,7 +715,7 @@ static int live_lrc_gpr(void *arg)
 	if (IS_ERR(scratch))
 		return PTR_ERR(scratch);
 
-	for_each_engine(engine, gt, id) {
+	for_each_enabled_engine(engine, gt, id) {
 		st_engine_heartbeat_disable(engine);
 
 		err = __live_lrc_gpr(engine, scratch, false);
@@ -876,7 +880,7 @@ static int live_lrc_timestamp(void *arg)
 	 * with a second request (carrying more poison into the timestamp).
 	 */
 
-	for_each_engine(data.engine, gt, id) {
+	for_each_enabled_engine(data.engine, gt, id) {
 		int i, err = 0;
 
 		st_engine_heartbeat_disable(data.engine);
@@ -1534,7 +1538,7 @@ static int live_lrc_isolation(void *arg)
 	 * context image and attempt to modify that list from a remote context.
 	 */
 
-	for_each_engine(engine, gt, id) {
+	for_each_enabled_engine(engine, gt, id) {
 		int i;
 
 		/* Just don't even ask */
@@ -1722,7 +1726,7 @@ static int lrc_wabb_ctx(void *arg, bool per_ctx)
 	enum intel_engine_id id;
 	int err = 0;
 
-	for_each_engine(engine, gt, id) {
+	for_each_enabled_engine(engine, gt, id) {
 		intel_engine_pm_get(engine);
 		err = __lrc_wabb_ctx(engine, per_ctx);
 		intel_engine_pm_put(engine);
@@ -1858,7 +1862,7 @@ static int live_lrc_garbage(void *arg)
 	if (!IS_ENABLED(CONFIG_DRM_I915_SELFTEST_BROKEN))
 		return 0;
 
-	for_each_engine(engine, gt, id) {
+	for_each_enabled_engine(engine, gt, id) {
 		I915_RND_STATE(prng);
 		int err = 0, i;
 
@@ -1960,7 +1964,7 @@ static int live_pphwsp_runtime(void *arg)
 	 * is monotonic.
 	 */
 
-	for_each_engine(engine, gt, id) {
+	for_each_enabled_engine(engine, gt, id) {
 		err = __live_pphwsp_runtime(engine);
 		if (err)
 			break;

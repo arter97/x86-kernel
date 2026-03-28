@@ -242,7 +242,7 @@ int live_rps_clock_interval(void *arg)
 
 	intel_gt_check_clock_frequency(gt);
 
-	for_each_engine(engine, gt, id) {
+	for_each_enabled_engine(engine, gt, id) {
 		struct i915_request *rq;
 		u32 cycles;
 		u64 dt;
@@ -401,7 +401,7 @@ int live_rps_control(void *arg)
 	rps->work.func = dummy_rps_work;
 
 	wakeref = intel_gt_pm_get(gt);
-	for_each_engine(engine, gt, id) {
+	for_each_enabled_engine(engine, gt, id) {
 		struct i915_request *rq;
 		ktime_t min_dt, max_dt;
 		int f, limit;
@@ -630,7 +630,7 @@ int live_rps_frequency_cs(void *arg)
 	saved_work = rps->work.func;
 	rps->work.func = dummy_rps_work;
 
-	for_each_engine(engine, gt, id) {
+	for_each_enabled_engine(engine, gt, id) {
 		struct i915_request *rq;
 		struct i915_vma *vma;
 		u32 *cancel, *cntr;
@@ -769,7 +769,7 @@ int live_rps_frequency_srm(void *arg)
 	saved_work = rps->work.func;
 	rps->work.func = dummy_rps_work;
 
-	for_each_engine(engine, gt, id) {
+	for_each_enabled_engine(engine, gt, id) {
 		struct i915_request *rq;
 		struct i915_vma *vma;
 		u32 *cancel, *cntr;
@@ -1052,7 +1052,7 @@ int live_rps_interrupt(void *arg)
 	saved_work = rps->work.func;
 	rps->work.func = dummy_rps_work;
 
-	for_each_engine(engine, gt, id) {
+	for_each_enabled_engine(engine, gt, id) {
 		/* Keep the engine busy with a spinner; expect an UP! */
 		if (pm_events & GEN6_PM_RP_UP_THRESHOLD) {
 			intel_gt_pm_wait_for_idle(engine->gt);
@@ -1159,7 +1159,7 @@ int live_rps_power(void *arg)
 	saved_work = rps->work.func;
 	rps->work.func = dummy_rps_work;
 
-	for_each_engine(engine, gt, id) {
+	for_each_enabled_engine(engine, gt, id) {
 		struct i915_request *rq;
 		struct {
 			u64 power;
@@ -1261,7 +1261,7 @@ int live_rps_dynamic(void *arg)
 	if (intel_rps_uses_timer(rps))
 		pr_info("RPS has timer support\n");
 
-	for_each_engine(engine, gt, id) {
+	for_each_enabled_engine(engine, gt, id) {
 		struct i915_request *rq;
 		struct {
 			ktime_t dt;

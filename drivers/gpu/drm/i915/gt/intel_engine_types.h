@@ -144,6 +144,22 @@ enum intel_engine_id {
 #define INVALID_ENGINE ((enum intel_engine_id)-1)
 };
 
+#define CCS_MODE_VALUE(ccs0, ccs1, ccs2, ccs3) \
+		(((ccs0 - CCS0) & 0x7) | \
+		(((ccs1 - CCS0) & 0x7) << 3) | \
+		(((ccs2 - CCS0) & 0x7) << 6) | \
+		(((ccs3 - CCS0) & 0x7) << 9))
+
+#define COUNT_NUM_BITS(value) ({ \
+	unsigned int v = (value); \
+	unsigned int count = 0; \
+	while (v) { \
+		count += v & 1; \
+		v >>= 1; \
+	} \
+	count; \
+})
+
 /* A simple estimator for the round-trip latency of an engine */
 DECLARE_EWMA(_engine_latency, 6, 4)
 
@@ -386,12 +402,16 @@ struct intel_engine_cs {
 	u8 class;
 	u8 instance;
 
+	u8 irq_offset;
+
 	u16 uabi_class;
 	u16 uabi_instance;
 
 	u32 uabi_capabilities;
 	u32 context_size;
 	u32 mmio_base;
+
+	struct kobject *kobj;
 
 	struct intel_engine_tlb_inv tlb_inv;
 
@@ -592,6 +612,7 @@ struct intel_engine_cs {
 #define I915_ENGINE_HAS_EU_PRIORITY    BIT(10)
 #define I915_ENGINE_FIRST_RENDER_COMPUTE BIT(11)
 #define I915_ENGINE_USES_WA_HOLD_SWITCHOUT BIT(12)
+#define I915_ENGINE_HAS_EU_ATTENTION   BIT(14)
 	unsigned int flags;
 
 	/*

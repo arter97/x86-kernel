@@ -293,7 +293,7 @@ mem_tlbinv(struct intel_gt *gt,
 	}
 
 	err = 0;
-	for_each_engine(engine, gt, id) {
+	for_each_enabled_engine(engine, gt, id) {
 		struct i915_gem_ww_ctx ww;
 		struct intel_context *ce;
 		int bit;

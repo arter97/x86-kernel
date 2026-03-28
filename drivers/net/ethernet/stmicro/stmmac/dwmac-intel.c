@@ -300,8 +300,10 @@ static void tgl_get_interfaces(struct stmmac_priv *priv, void *bsp_priv,
 		dev_info(priv->device, "Link Speed Mode: 2.5Gbps\n");
 		priv->plat->mdio_bus_data->default_an_inband = false;
 		interface = PHY_INTERFACE_MODE_2500BASEX;
+		priv->plat->fixed_2G5_clock_rate = true;
 	} else {
 		interface = PHY_INTERFACE_MODE_SGMII;
+		priv->plat->fixed_2G5_clock_rate = false;
 	}
 
 	__set_bit(interface, interfaces);
@@ -936,6 +938,7 @@ static int tgl_common_data(struct pci_dev *pdev,
 	plat->rx_queues_to_use = 6;
 	plat->tx_queues_to_use = 4;
 	plat->clk_ptp_rate = 204800000;
+	plat->phy_interface = PHY_INTERFACE_MODE_SGMII;
 	plat->get_interfaces = tgl_get_interfaces;
 
 	plat->safety_feat_cfg->tsoee = 1;
@@ -981,6 +984,7 @@ static int adls_sgmii_phy0_data(struct pci_dev *pdev,
 				struct plat_stmmacenet_data *plat)
 {
 	plat->bus_id = 1;
+	plat->skip_reset = 1;
 
 	/* SerDes power up and power down are done in BIOS for ADL */
 
@@ -995,6 +999,7 @@ static int adls_sgmii_phy1_data(struct pci_dev *pdev,
 				struct plat_stmmacenet_data *plat)
 {
 	plat->bus_id = 2;
+	plat->skip_reset = 1;
 
 	/* SerDes power up and power down are done in BIOS for ADL */
 
@@ -1013,6 +1018,7 @@ static int adln_common_data(struct pci_dev *pdev,
 	plat->rx_queues_to_use = 6;
 	plat->tx_queues_to_use = 4;
 	plat->clk_ptp_rate = 204800000;
+	plat->flags |= STMMAC_FLAG_USE_PHY_WOL;
 
 	plat->safety_feat_cfg->tsoee = 1;
 	plat->safety_feat_cfg->mrxpee = 0;
@@ -1230,7 +1236,12 @@ static int stmmac_config_multi_msi(struct pci_dev *pdev,
 static int intel_eth_pci_suspend(struct device *dev, void *bsp_priv)
 {
 	struct pci_dev *pdev = to_pci_dev(dev);
+	struct net_device *ndev = dev_get_drvdata(&pdev->dev);
 	int ret;
+
+	rtnl_lock();
+	stmmac_rearm_wol(ndev);
+	rtnl_unlock();
 
 	ret = pci_save_state(pdev);
 	if (ret)

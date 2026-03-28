@@ -1941,11 +1941,14 @@ static void intel_power_domains_verify_state(struct intel_display *display);
  */
 void intel_power_domains_init_hw(struct intel_display *display, bool resume)
 {
+	struct drm_i915_private *i915 = to_i915(display->drm);
 	struct i915_power_domains *power_domains = &display->power.domains;
 
 	power_domains->initializing = true;
 
-	if (DISPLAY_VER(display) >= 11) {
+	if (IS_SRIOV_VF(i915)) {
+		/* nop */
+	} else if (DISPLAY_VER(display) >= 11) {
 		icl_display_core_init(display, resume);
 	} else if (display->platform.geminilake || display->platform.broxton) {
 		bxt_display_core_init(display, resume);
@@ -2259,6 +2262,11 @@ static void intel_power_domains_verify_state(struct intel_display *display)
 
 void intel_display_power_suspend_late(struct intel_display *display, bool s2idle)
 {
+	struct drm_i915_private *i915 = to_i915(display->drm);
+
+	if (IS_SRIOV_VF(i915))
+		return;
+
 	intel_power_domains_suspend(display, s2idle);
 
 	if (DISPLAY_VER(display) >= 11 || display->platform.geminilake ||
@@ -2268,13 +2276,25 @@ void intel_display_power_suspend_late(struct intel_display *display, bool s2idle
 		hsw_enable_pc8(display);
 	}
 
-	/* Tweaked Wa_14010685332:cnp,icp,jsp,mcc,tgp,adp */
-	if (INTEL_PCH_TYPE(display) >= PCH_CNP && INTEL_PCH_TYPE(display) < PCH_DG1)
-		intel_de_rmw(display, SOUTH_CHICKEN1, SBCLK_RUN_REFCLK_DIS, SBCLK_RUN_REFCLK_DIS);
+	/* Tweaked Wa_14010685332:cnp,icp,jsp,mcc,tgp */
+	if (INTEL_PCH_TYPE(display) >= PCH_CNP && INTEL_PCH_TYPE(display) < PCH_DG1) {
+		intel_de_rmw(display, SOUTH_CHICKEN1,
+			    SBCLK_RUN_REFCLK_DIS, SBCLK_RUN_REFCLK_DIS);
+
+		/* Original Wa_14010685332:adp */
+		if (INTEL_PCH_TYPE(display) == PCH_ADP)
+			intel_de_rmw(display, SOUTH_CHICKEN1,
+			    SBCLK_RUN_REFCLK_DIS, 0);
+	}
 }
 
 void intel_display_power_resume_early(struct intel_display *display)
 {
+	struct drm_i915_private *i915 = to_i915(display->drm);
+
+	if (IS_SRIOV_VF(i915))
+		return;
+
 	if (DISPLAY_VER(display) >= 11 || display->platform.geminilake ||
 	    display->platform.broxton) {
 		gen9_sanitize_dc_state(display);
@@ -2283,8 +2303,10 @@ void intel_display_power_resume_early(struct intel_display *display)
 		hsw_disable_pc8(display);
 	}
 
-	/* Tweaked Wa_14010685332:cnp,icp,jsp,mcc,tgp,adp */
-	if (INTEL_PCH_TYPE(display) >= PCH_CNP && INTEL_PCH_TYPE(display) < PCH_DG1)
+	/* Tweaked Wa_14010685332:cnp,icp,jsp,mcc,tgp */
+	if (INTEL_PCH_TYPE(display) >= PCH_CNP &&
+	    INTEL_PCH_TYPE(display) < PCH_DG1 &&
+	    INTEL_PCH_TYPE(display) != PCH_ADP)
 		intel_de_rmw(display, SOUTH_CHICKEN1, SBCLK_RUN_REFCLK_DIS, 0);
 
 	intel_power_domains_resume(display);
@@ -2292,6 +2314,11 @@ void intel_display_power_resume_early(struct intel_display *display)
 
 void intel_display_power_suspend(struct intel_display *display)
 {
+	struct drm_i915_private *i915 = to_i915(display->drm);
+
+	if (IS_SRIOV_VF(i915))
+		return;
+
 	if (DISPLAY_VER(display) >= 11) {
 		icl_display_core_uninit(display);
 		bxt_enable_dc9(display);
@@ -2306,6 +2333,10 @@ void intel_display_power_suspend(struct intel_display *display)
 void intel_display_power_resume(struct intel_display *display)
 {
 	struct i915_power_domains *power_domains = &display->power.domains;
+	struct drm_i915_private *i915 = to_i915(display->drm);
+
+	if (IS_SRIOV_VF(i915))
+		return;
 
 	if (DISPLAY_VER(display) >= 11) {
 		bxt_disable_dc9(display);

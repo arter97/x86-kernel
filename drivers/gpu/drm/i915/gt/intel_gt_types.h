@@ -23,6 +23,7 @@
 #include "i915_perf_types.h"
 #include "intel_engine_types.h"
 #include "intel_gt_buffer_pool_types.h"
+#include "intel_gt_defines.h"
 #include "intel_hwconfig.h"
 #include "intel_llc_types.h"
 #include "intel_reset_types.h"
@@ -31,6 +32,7 @@
 #include "intel_migrate_types.h"
 #include "intel_wakeref.h"
 #include "intel_wopcm.h"
+#include "iov/intel_iov_types.h"
 
 struct drm_i915_private;
 struct i915_ggtt;
@@ -105,6 +107,7 @@ struct intel_gt {
 	struct intel_uc uc;
 	struct intel_gsc gsc;
 	struct intel_wopcm wopcm;
+	struct intel_iov iov;
 
 	struct {
 		/* Serialize global tlb invalidations */
@@ -141,6 +144,13 @@ struct intel_gt {
 		struct delayed_work retire_work;
 	} requests;
 
+	/**
+	 * pinned_contexts: List of pinned contexts. This list is only
+	 * assumed to be manipulated during driver load- or unload time and
+	 * does therefore not have any additional protection.
+	 */
+	struct list_head pinned_contexts;
+
 	struct {
 		struct llist_head list;
 		struct work_struct work;
@@ -154,6 +164,15 @@ struct intel_gt {
 
 	ktime_t last_init_time;
 	struct intel_reset reset;
+
+	struct {
+		bool enabled;
+		struct hrtimer timer;
+		atomic_t boost;
+		u32 delay;
+		u32 delay_fast, delay_slow;
+		bool int_enabled;
+	} fake_int;
 
 	/**
 	 * Is the GPU currently considered idle, or busy executing
@@ -207,12 +226,25 @@ struct intel_gt {
 					    [MAX_ENGINE_INSTANCE + 1];
 	enum intel_submission_method submission_method;
 
+	/*
+	 * Track fixed mapping between CCS engines and compute slices.
+	 *
+	 * In order to w/a HW that has the inability to dynamically load
+	 * balance between CCS engines and EU in the compute slices, we have to
+	 * reconfigure a static mapping on the fly.
+	 *
+	 * The mode variable is set by the user and sets the balancing mode,
+	 * i.e. how the CCS streams are distributed amongs the slices.
+	 */
 	struct {
+		u32 mode_reg_val;
+
 		/*
-		 * Mask of the non fused CCS slices
-		 * to be used for the load balancing
+		 * CCS id_mask is the command streamer instance
+		 * exposed to the user. While the CCS_MASK(gt)
+		 * is the available unfused compute slices.
 		 */
-		intel_engine_mask_t cslices;
+		intel_engine_mask_t id_mask;
 	} ccs;
 
 	/*

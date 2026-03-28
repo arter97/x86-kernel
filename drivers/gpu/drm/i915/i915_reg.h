@@ -924,6 +924,14 @@
 #define   DG1_MSTR_IRQ			REG_BIT(31)
 #define   DG1_MSTR_TILE(t)		REG_BIT(t)
 
+/* VF_CAPABILITY_REGISTER */
+#define GEN12_VF_CAP_REG               _MMIO(0x1901f8)
+#define   GEN12_VF                     REG_BIT(0)
+
+/* VIRTUALIZATION CONTROL REGISTER */
+#define GEN12_VIRTUAL_CTRL_REG         _MMIO(0x10108C)
+#define   GEN12_GUEST_GTT_UPDATE_EN    REG_BIT(8)
+
 #define ILK_DISPLAY_CHICKEN2	_MMIO(0x42004)
 /* Required on all Ironlake and Sandybridge according to the B-Spec. */
 #define   ILK_ELPIN_409_SELECT	REG_BIT(25)

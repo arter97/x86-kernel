@@ -932,6 +932,9 @@ __intel_engine_init_ctx_wa(struct intel_engine_cs *engine,
 {
 	struct drm_i915_private *i915 = engine->i915;
 
+	if (IS_SRIOV_VF(i915))
+		return;
+
 	wa_init_start(wal, engine->gt, name, engine->name);
 
 	/* Applies to all engines */
@@ -1733,6 +1736,9 @@ void intel_gt_init_workarounds(struct intel_gt *gt)
 {
 	struct i915_wa_list *wal = &gt->wa_list;
 
+	if (IS_SRIOV_VF(gt->i915))
+		return;
+
 	wa_init_start(wal, gt, "GT", "global");
 	gt_init_workarounds(gt, wal);
 	wa_init_finish(wal);
@@ -1757,7 +1763,7 @@ wa_verify(struct intel_gt *gt, const struct i915_wa *wa, u32 cur,
 static void wa_list_apply(const struct i915_wa_list *wal)
 {
 	struct intel_gt *gt = wal->gt;
-	struct intel_uncore *uncore = gt->uncore;
+	struct intel_uncore *uncore;
 	enum forcewake_domains fw;
 	unsigned long flags;
 	struct i915_wa *wa;
@@ -1765,6 +1771,8 @@ static void wa_list_apply(const struct i915_wa_list *wal)
 
 	if (!wal->count)
 		return;
+
+	uncore = gt->uncore;
 
 	fw = wal_get_fw_for_rmw(uncore, wal);
 
@@ -1817,6 +1825,9 @@ static bool wa_list_verify(struct intel_gt *gt,
 	unsigned long flags;
 	unsigned int i;
 	bool ok = true;
+
+	if (!wal->count)
+		return 0;
 
 	fw = wal_get_fw_for_rmw(uncore, wal);
 
@@ -2129,6 +2140,9 @@ void intel_engine_init_whitelist(struct intel_engine_cs *engine)
 {
 	struct drm_i915_private *i915 = engine->i915;
 	struct i915_wa_list *w = &engine->whitelist;
+
+	if (IS_SRIOV_VF(engine->i915))
+		return;
 
 	wa_init_start(w, engine->gt, "whitelist", engine->name);
 
@@ -2743,7 +2757,7 @@ add_render_compute_tuning_settings(struct intel_gt *gt,
 static void ccs_engine_wa_mode(struct intel_engine_cs *engine, struct i915_wa_list *wal)
 {
 	struct intel_gt *gt = engine->gt;
-	u32 mode;
+	u32 mode = gt->ccs.mode_reg_val;
 
 	if (!IS_DG2(gt->i915))
 		return;
@@ -2759,9 +2773,11 @@ static void ccs_engine_wa_mode(struct intel_engine_cs *engine, struct i915_wa_li
 	/*
 	 * After having disabled automatic load balancing we need to
 	 * assign all slices to a single CCS. We will call it CCS mode 1
+	 *
+	 * The gt->ccs.mode_reg_val has already been set previously during
+	 * initialization.
 	 */
-	mode = intel_gt_apply_ccs_mode(gt);
-	wa_masked_en(wal, XEHP_CCS_MODE, mode);
+	wa_add(wal, XEHP_CCS_MODE, 0, mode, mode, false);
 }
 
 /*
@@ -2896,8 +2912,13 @@ engine_init_workarounds(struct intel_engine_cs *engine, struct i915_wa_list *wal
 	 * to a single RCS/CCS engine's workaround list since
 	 * they're reset as part of the general render domain reset.
 	 */
-	if (engine->flags & I915_ENGINE_FIRST_RENDER_COMPUTE) {
+	if (engine->flags & I915_ENGINE_FIRST_RENDER_COMPUTE &&
+			engine->class == RENDER_CLASS) {
 		general_render_compute_wa_init(engine, wal);
+	}
+
+	if (engine->flags & I915_ENGINE_FIRST_RENDER_COMPUTE &&
+			engine->class == COMPUTE_CLASS) {
 		ccs_engine_wa_mode(engine, wal);
 	}
 
@@ -2912,6 +2933,9 @@ engine_init_workarounds(struct intel_engine_cs *engine, struct i915_wa_list *wal
 void intel_engine_init_workarounds(struct intel_engine_cs *engine)
 {
 	struct i915_wa_list *wal = &engine->wa_list;
+
+	if (IS_SRIOV_VF(engine->i915))
+		return;
 
 	wa_init_start(wal, engine->gt, "engine", engine->name);
 	engine_init_workarounds(engine, wal);
@@ -2994,6 +3018,7 @@ wa_list_srm(struct i915_request *rq,
 	unsigned int i, count = 0;
 	const struct i915_wa *wa;
 	u32 srm, *cs;
+	int srcu;
 
 	srm = MI_STORE_REGISTER_MEM | MI_SRM_LRM_GLOBAL_GTT;
 	if (GRAPHICS_VER(i915) >= 8)
@@ -3004,7 +3029,7 @@ wa_list_srm(struct i915_request *rq,
 			count++;
 	}
 
-	cs = intel_ring_begin(rq, 4 * count);
+	cs = intel_ring_begin_ggtt(rq, &srcu, 4 * count + 4);
 	if (IS_ERR(cs))
 		return PTR_ERR(cs);
 
@@ -3019,7 +3044,7 @@ wa_list_srm(struct i915_request *rq,
 		*cs++ = i915_ggtt_offset(vma) + sizeof(u32) * i;
 		*cs++ = 0;
 	}
-	intel_ring_advance(rq, cs);
+	intel_ring_advance_ggtt(rq, srcu, cs);
 
 	return 0;
 }

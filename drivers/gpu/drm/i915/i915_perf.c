@@ -1324,6 +1324,9 @@ __store_reg_to_mem(struct i915_request *rq, i915_reg_t reg, u32 ggtt_offset)
 {
 	u32 *cs, cmd;
 
+	/* GGTT address cannot be transferred unlocked on VF */
+	GEM_BUG_ON(IS_SRIOV_VF(rq->i915));
+
 	cmd = MI_STORE_REGISTER_MEM | MI_SRM_LRM_GLOBAL_GTT;
 	if (GRAPHICS_VER(rq->i915) >= 8)
 		cmd++;
@@ -2691,7 +2694,7 @@ oa_configure_all_contexts(struct i915_perf_stream *stream,
 	struct intel_engine_cs *engine;
 	struct intel_gt *gt = stream->engine->gt;
 	struct i915_gem_context *ctx, *cn;
-	int err;
+	int err = 0;
 
 	lockdep_assert_held(&gt->perf.lock);
 
@@ -2735,6 +2738,7 @@ oa_configure_all_contexts(struct i915_perf_stream *stream,
 	 * If we don't modify the kernel_context, we do not get events while
 	 * idle.
 	 */
+	mutex_lock(&i915->uabi_engines_mutex);
 	for_each_uabi_engine(engine, i915) {
 		struct intel_context *ce = engine->kernel_context;
 
@@ -2745,10 +2749,11 @@ oa_configure_all_contexts(struct i915_perf_stream *stream,
 
 		err = gen8_modify_self(ce, regs, num_regs, active);
 		if (err)
-			return err;
+			break;
 	}
+	mutex_unlock(&i915->uabi_engines_mutex);
 
-	return 0;
+	return err;
 }
 
 static int
@@ -3396,6 +3401,9 @@ void i915_oa_init_reg_state(const struct intel_context *ce,
 			    const struct intel_engine_cs *engine)
 {
 	struct i915_perf_stream *stream;
+
+	if (IS_SRIOV_VF(engine->i915))
+		return;
 
 	if (engine->class != RENDER_CLASS)
 		return;
@@ -5057,6 +5065,10 @@ static void i915_perf_init_info(struct drm_i915_private *i915)
 int i915_perf_init(struct drm_i915_private *i915)
 {
 	struct i915_perf *perf = &i915->perf;
+
+	/* XXX const struct i915_perf_ops! */
+	if (IS_SRIOV_VF(i915))
+		return 0;
 
 	perf->oa_formats = oa_formats;
 	if (IS_HASWELL(i915)) {

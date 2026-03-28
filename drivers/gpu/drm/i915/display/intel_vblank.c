@@ -316,19 +316,24 @@ static void intel_vblank_section_exit(struct intel_display *display)
 	spin_unlock(&i915->uncore.lock);
 }
 
-static void intel_vblank_section_enter_irqf(struct intel_display *display, unsigned long *flags)
+
+#ifdef CONFIG_PREEMPT_RT
+static __maybe_unused void intel_vblank_section_enter_irqf(struct intel_display *display,
+						  unsigned long *flags)
 	__acquires(i915->uncore.lock)
 {
 	struct drm_i915_private *i915 = to_i915(display->drm);
 	spin_lock_irqsave(&i915->uncore.lock, *flags);
 }
 
-static void intel_vblank_section_exit_irqf(struct intel_display *display, unsigned long flags)
+static __maybe_unused void intel_vblank_section_exit_irqf(struct intel_display *display,
+						 unsigned long flags)
 	__releases(i915->uncore.lock)
 {
 	struct drm_i915_private *i915 = to_i915(display->drm);
 	spin_unlock_irqrestore(&i915->uncore.lock, flags);
 }
+#endif // CONFIG_PREEMPT_RT
 #else
 static void intel_vblank_section_enter(struct intel_display *display)
 {
@@ -338,16 +343,20 @@ static void intel_vblank_section_exit(struct intel_display *display)
 {
 }
 
-static void intel_vblank_section_enter_irqf(struct intel_display *display, unsigned long *flags)
+#ifdef CONFIG_PREEMPT_RT
+static __maybe_unused void intel_vblank_section_enter_irqf(struct intel_display *display,
+						  unsigned long *flags)
 {
 	*flags = 0;
 }
 
-static void intel_vblank_section_exit_irqf(struct intel_display *display, unsigned long flags)
+static __maybe_unused void intel_vblank_section_exit_irqf(struct intel_display *display,
+						 unsigned long flags)
 {
 	if (flags)
 		return;
 }
+#endif // CONFIG_PREEMPT_RT
 #endif
 
 static bool i915_get_crtc_scanoutpos(struct drm_crtc *_crtc,
@@ -361,7 +370,9 @@ static bool i915_get_crtc_scanoutpos(struct drm_crtc *_crtc,
 	enum pipe pipe = crtc->pipe;
 	int position;
 	int vbl_start, vbl_end, hsync_start, htotal, vtotal;
+#ifdef CONFIG_PREEMPT_RT
 	unsigned long irqflags;
+#endif
 	bool use_scanline_counter = DISPLAY_VER(display) >= 5 ||
 		display->platform.g4x || DISPLAY_VER(display) == 2 ||
 		crtc->mode_flags & I915_MODE_FLAG_USE_SCANLINE_COUNTER;
@@ -384,7 +395,12 @@ static bool i915_get_crtc_scanoutpos(struct drm_crtc *_crtc,
 	 * timing critical raw register reads, potentially with
 	 * preemption disabled, so the following code must not block.
 	 */
+
+#ifdef CONFIG_PREEMPT_RT
 	intel_vblank_section_enter_irqf(display, &irqflags);
+#else
+	intel_vblank_section_enter(display);
+#endif
 
 	if (IS_ENABLED(CONFIG_PREEMPT_RT))
 		preempt_disable();
@@ -454,7 +470,11 @@ static bool i915_get_crtc_scanoutpos(struct drm_crtc *_crtc,
 	if (IS_ENABLED(CONFIG_PREEMPT_RT))
 		preempt_enable();
 
+#ifdef CONFIG_PREEMPT_RT
 	intel_vblank_section_exit_irqf(display, irqflags);
+#else
+	intel_vblank_section_exit(display);
+#endif
 
 	/*
 	 * While in vblank, position will be negative
@@ -489,14 +509,24 @@ bool intel_crtc_get_vblank_timestamp(struct drm_crtc *crtc, int *max_error,
 int intel_get_crtc_scanline(struct intel_crtc *crtc)
 {
 	struct intel_display *display = to_intel_display(crtc);
+#ifdef CONFIG_PREEMPT_RT
 	unsigned long irqflags;
+#endif
 	int position;
 
+#ifdef CONFIG_PREEMPT_RT
 	intel_vblank_section_enter_irqf(display, &irqflags);
+#else
+	intel_vblank_section_enter(display);
+#endif
 
 	position = __intel_get_crtc_scanline(crtc);
 
+#ifdef CONFIG_PREEMPT_RT
 	intel_vblank_section_exit_irqf(display, irqflags);
+#else
+	intel_vblank_section_exit(display);
+#endif
 
 	return position;
 }

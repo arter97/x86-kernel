@@ -120,7 +120,6 @@ int virtio_gpu_find_vqs(struct virtio_gpu_device *vgdev)
 		{ "control", virtio_gpu_ctrl_ack },
 		{ "cursor", virtio_gpu_cursor_ack },
 	};
-
 	struct virtqueue *vqs[2];
 	int ret;
 
@@ -226,7 +225,6 @@ int virtio_gpu_init(struct virtio_device *vdev, struct drm_device *dev)
 		DRM_ERROR("failed to find virt queues\n");
 		goto err_vqs;
 	}
-
 	ret = virtio_gpu_alloc_vbufs(vgdev);
 	if (ret) {
 		DRM_ERROR("failed to alloc vbufs\n");

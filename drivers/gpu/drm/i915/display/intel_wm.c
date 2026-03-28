@@ -7,11 +7,19 @@
 
 #include <drm/drm_print.h>
 
+#include "i915_drv.h"
+
+/* xe builds i915 display code with compat headers; avoid pulling i915 SR-IOV. */
+#ifndef _XE_I915_DRV_H_
+#include "i915_sriov.h"
+#endif
 #include "i9xx_wm.h"
 #include "intel_display_core.h"
 #include "intel_display_types.h"
 #include "intel_wm.h"
 #include "skl_watermark.h"
+
+static const struct intel_wm_funcs nop_wm_funcs;
 
 /**
  * intel_update_watermarks - update FIFO watermark values based on current modes
@@ -171,6 +179,14 @@ void intel_print_wm_latency(struct intel_display *display,
 
 void intel_wm_init(struct intel_display *display)
 {
+	struct drm_i915_private *i915 = to_i915(display->drm);
+
+	if (IS_SRIOV_VF(i915)) {
+		/* XXX */
+		display->funcs.wm = &nop_wm_funcs;
+		return;
+	}
+
 	if (DISPLAY_VER(display) >= 9)
 		skl_wm_init(display);
 	else

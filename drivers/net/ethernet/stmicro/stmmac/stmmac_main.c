@@ -389,23 +389,18 @@ static void stmmac_eee_ctrl_timer(struct timer_list *t)
 /* stmmac_get_tx_hwtstamp - get HW TX timestamps
  * @priv: driver private structure
  * @p : descriptor pointer
- * @skb : the socket buffer
+ * @hwtstamp: hardware timestamp
  * Description :
  * This function will read timestamp from the descriptor & pass it to stack.
  * and also perform some sanity checks.
  */
 static void stmmac_get_tx_hwtstamp(struct stmmac_priv *priv,
-				   struct dma_desc *p, struct sk_buff *skb)
+				   struct dma_desc *p, ktime_t *hwtstamp)
 {
-	struct skb_shared_hwtstamps shhwtstamp;
 	bool found = false;
 	u64 ns = 0;
 
 	if (!priv->hwts_tx_en)
-		return;
-
-	/* exit if skb doesn't support hw tstamp */
-	if (likely(!skb || !(skb_shinfo(skb)->tx_flags & SKBTX_IN_PROGRESS)))
 		return;
 
 	/* check tx tstamp status */
@@ -419,12 +414,8 @@ static void stmmac_get_tx_hwtstamp(struct stmmac_priv *priv,
 	if (found) {
 		ns -= priv->plat->cdc_error_adj;
 
-		memset(&shhwtstamp, 0, sizeof(struct skb_shared_hwtstamps));
-		shhwtstamp.hwtstamp = ns_to_ktime(ns);
-
+		*hwtstamp = ns_to_ktime(ns);
 		netdev_dbg(priv->dev, "get valid TX hw timestamp %llu\n", ns);
-		/* pass tstamp to stack */
-		skb_tstamp_tx(skb, &shhwtstamp);
 	}
 }
 
@@ -432,15 +423,14 @@ static void stmmac_get_tx_hwtstamp(struct stmmac_priv *priv,
  * @priv: driver private structure
  * @p : descriptor pointer
  * @np : next descriptor pointer
- * @skb : the socket buffer
+ * @hwtstamp: hardware timestamp
  * Description :
  * This function will read received packet's timestamp from the descriptor
  * and pass it to stack. It also perform some sanity checks.
  */
 static void stmmac_get_rx_hwtstamp(struct stmmac_priv *priv, struct dma_desc *p,
-				   struct dma_desc *np, struct sk_buff *skb)
+				   struct dma_desc *np, ktime_t *hwtstamp)
 {
-	struct skb_shared_hwtstamps *shhwtstamp = NULL;
 	struct dma_desc *desc = p;
 	u64 ns = 0;
 
@@ -457,11 +447,10 @@ static void stmmac_get_rx_hwtstamp(struct stmmac_priv *priv, struct dma_desc *p,
 		ns -= priv->plat->cdc_error_adj;
 
 		netdev_dbg(priv->dev, "get valid RX hw timestamp %llu\n", ns);
-		shhwtstamp = skb_hwtstamps(skb);
-		memset(shhwtstamp, 0, sizeof(struct skb_shared_hwtstamps));
-		shhwtstamp->hwtstamp = ns_to_ktime(ns);
+		*hwtstamp = ns_to_ktime(ns);
 	} else  {
 		netdev_dbg(priv->dev, "cannot get RX hw timestamp\n");
+		*hwtstamp = 0;
 	}
 }
 
@@ -628,6 +617,7 @@ static int stmmac_hwtstamp_set(struct net_device *dev,
 		case HWTSTAMP_FILTER_ALL:
 			/* time stamp any incoming packet */
 			config->rx_filter = HWTSTAMP_FILTER_ALL;
+			priv->hwts_all = HWTSTAMP_FILTER_ALL;
 			tstamp_all = PTP_TCR_TSENALL;
 			break;
 
@@ -1103,6 +1093,24 @@ static void stmmac_check_pcs_mode(struct stmmac_priv *priv)
 	}
 }
 
+static int stmmac_get_phydev(struct stmmac_priv *priv, struct phy_device **phydev)
+{
+	int addr = priv->plat->phy_addr;
+
+	if (addr < 0) {
+		netdev_err(priv->dev, "no phy found\n");
+		return -ENODEV;
+	}
+
+	*phydev = mdiobus_get_phy(priv->mii, addr);
+	if (!*phydev) {
+		netdev_err(priv->dev, "no phy at addr %d\n", addr);
+		return -ENODEV;
+	}
+
+	return 0;
+}
+
 /**
  * stmmac_init_phy - PHY initialization
  * @dev: net device structure
@@ -1140,19 +1148,10 @@ static int stmmac_init_phy(struct net_device *dev)
 	 * manually parse it
 	 */
 	if (!phy_fwnode || IS_ERR(phy_fwnode)) {
-		int addr = priv->plat->phy_addr;
 		struct phy_device *phydev;
-
-		if (addr < 0) {
-			netdev_err(priv->dev, "no phy found\n");
-			return -ENODEV;
-		}
-
-		phydev = mdiobus_get_phy(priv->mii, addr);
-		if (!phydev) {
-			netdev_err(priv->dev, "no phy at addr %d\n", addr);
-			return -ENODEV;
-		}
+		ret = stmmac_get_phydev(priv, &phydev);
+		if (ret)
+			return ret;
 
 		ret = phylink_connect_phy(priv->phylink, phydev);
 	} else {
@@ -1199,7 +1198,6 @@ static int stmmac_phy_setup(struct stmmac_priv *priv)
 
 	config->dev = &priv->dev->dev;
 	config->type = PHYLINK_NETDEV;
-	config->mac_managed_pm = true;
 
 	/* Stmmac always requires an RX clock for hardware initialization */
 	config->mac_requires_rxc = true;
@@ -1255,6 +1253,15 @@ static int stmmac_phy_setup(struct stmmac_priv *priv)
 	fwnode = priv->plat->port_node;
 	if (!fwnode)
 		fwnode = dev_fwnode(priv->device);
+
+	/* In the case where kernel driver has no access to modify the clock
+	 * rate after it is increased by 2.5 times in the BIOS to support 2.5G
+	 * mode, link speeds other than 2.5Gbps are not supported. Thus, remove
+	 * them from mac_capabilities.
+	 */
+	if (priv->plat->fixed_2G5_clock_rate && priv->plat->max_speed == 2500)
+		priv->phylink_config.mac_capabilities &=
+			~(MAC_10 | MAC_100 | MAC_1000);
 
 	phylink = phylink_create(config, fwnode, priv->plat->phy_interface,
 				 &stmmac_phylink_mac_ops);
@@ -2576,7 +2583,10 @@ static bool stmmac_xdp_xmit_zc(struct stmmac_priv *priv, u32 queue, u32 budget)
 
 		tx_q->tx_count_frames++;
 
-		if (!priv->tx_coal_frames[queue])
+		if (unlikely(priv->hwts_all)) {
+			stmmac_enable_tx_timestamp(priv, tx_desc);
+			set_ic = true;
+		} else if (!priv->tx_coal_frames[queue])
 			set_ic = false;
 		else if (tx_q->tx_count_frames % priv->tx_coal_frames[queue] == 0)
 			set_ic = true;
@@ -2713,8 +2723,15 @@ static int stmmac_tx_clean(struct stmmac_priv *priv, int budget, u32 queue,
 			} else {
 				tx_packets++;
 			}
-			if (skb) {
-				stmmac_get_tx_hwtstamp(priv, p, skb);
+			if (skb &&
+			    skb_shinfo(skb)->tx_flags & SKBTX_IN_PROGRESS) {
+				struct skb_shared_hwtstamps shhwtstamp;
+
+				memset(&shhwtstamp, 0,
+				       sizeof(struct skb_shared_hwtstamps));
+				stmmac_get_tx_hwtstamp(priv, p,
+						       &shhwtstamp.hwtstamp);
+				skb_tstamp_tx(skb, &shhwtstamp);
 			} else if (tx_q->xsk_pool &&
 				   xp_tx_metadata_enabled(tx_q->xsk_pool)) {
 				struct stmmac_xsk_tx_complete tx_compl = {
@@ -2725,6 +2742,14 @@ static int stmmac_tx_clean(struct stmmac_priv *priv, int budget, u32 queue,
 				xsk_tx_metadata_complete(&tx_q->tx_skbuff_dma[entry].xsk_meta,
 							 &stmmac_xsk_tx_metadata_ops,
 							 &tx_compl);
+			} else if (unlikely(priv->hwts_all) &&
+				   tx_q->tx_skbuff_dma[entry].buf_type ==
+				   STMMAC_TXBUF_T_XSK_TX) {
+				ktime_t tx_hwtstamp = { 0 };
+
+				stmmac_get_tx_hwtstamp(priv, p, &tx_hwtstamp);
+				trace_printk("XDP TX HW TS %llu\n",
+					     tx_hwtstamp);
 			}
 		}
 
@@ -4055,6 +4080,29 @@ static int stmmac_release(struct net_device *dev)
 	return 0;
 }
 
+void stmmac_rearm_wol(struct net_device *dev)
+{
+	struct stmmac_priv *priv = netdev_priv(dev);
+
+	if (priv->plat->flags & STMMAC_FLAG_USE_PHY_WOL) {
+		struct ethtool_wolinfo wol =  { .cmd = ETHTOOL_GWOL };
+
+		phylink_ethtool_get_wol(priv->phylink, &wol);
+
+		if (wol.wolopts) {
+			phylink_ethtool_set_wol(priv->phylink, &wol);
+			device_set_wakeup_enable(priv->device, !!wol.wolopts);
+		}
+	}
+}
+EXPORT_SYMBOL_GPL(stmmac_rearm_wol);
+
+static int stmmac_stop(struct net_device *dev)
+{
+	stmmac_rearm_wol(dev);
+	return stmmac_release(dev);
+}
+
 static bool stmmac_vlan_insert(struct stmmac_priv *priv, struct sk_buff *skb,
 			       struct stmmac_tx_queue *tx_q)
 {
@@ -5100,6 +5148,7 @@ static void stmmac_dispatch_skb_zc(struct stmmac_priv *priv, u32 queue,
 {
 	struct stmmac_rxq_stats *rxq_stats = &priv->xstats.rxq_stats[queue];
 	struct stmmac_channel *ch = &priv->channel[queue];
+	struct skb_shared_hwtstamps *shhwtstamp = NULL;
 	unsigned int len = xdp->data_end - xdp->data;
 	enum pkt_hash_types hash_type;
 	int coe = priv->hw->rx_csum;
@@ -5112,7 +5161,9 @@ static void stmmac_dispatch_skb_zc(struct stmmac_priv *priv, u32 queue,
 		return;
 	}
 
-	stmmac_get_rx_hwtstamp(priv, p, np, skb);
+	shhwtstamp = skb_hwtstamps(skb);
+	memset(shhwtstamp, 0, sizeof(struct skb_shared_hwtstamps));
+	stmmac_get_rx_hwtstamp(priv, p, np, &shhwtstamp->hwtstamp);
 	if (priv->hw->hw_vlan_en)
 		/* MAC level stripping. */
 		stmmac_rx_hw_vlan(priv, priv->hw, p, skb);
@@ -5301,7 +5352,7 @@ read_again:
 			buf->xdp = NULL;
 			dirty++;
 			error = 1;
-			if (!priv->hwts_rx_en)
+			if (!priv->hwts_rx_en || !priv->hwts_all)
 				rx_errors++;
 		}
 
@@ -5325,6 +5376,16 @@ read_again:
 		ctx->priv = priv;
 		ctx->desc = p;
 		ctx->ndesc = np;
+
+		if (unlikely(priv->hwts_all)) {
+			/* We use XDP meta data to store T/S */
+			buf->xdp->data_meta = buf->xdp->data - sizeof(ktime_t);
+
+			stmmac_get_rx_hwtstamp(priv, p, np,
+					       (ktime_t *)buf->xdp->data_meta);
+		} else {
+			buf->xdp->data_meta = buf->xdp->data;
+		}
 
 		/* XDP ZC Frame only support primary buffers for now */
 		buf1_len = stmmac_rx_buf1_len(priv, p, status, len);
@@ -5436,6 +5497,7 @@ static int stmmac_rx(struct stmmac_priv *priv, int limit, u32 queue)
 				    rx_q->dma_rx_phy, desc_size);
 	}
 	while (count < limit) {
+		struct skb_shared_hwtstamps *shhwtstamp = NULL;
 		unsigned int buf1_len = 0, buf2_len = 0;
 		enum pkt_hash_types hash_type;
 		struct stmmac_rx_buffer *buf;
@@ -5629,7 +5691,9 @@ drain_data:
 
 		/* Got entire packet into SKB. Finish it. */
 
-		stmmac_get_rx_hwtstamp(priv, p, np, skb);
+		shhwtstamp = skb_hwtstamps(skb);
+		memset(shhwtstamp, 0, sizeof(struct skb_shared_hwtstamps));
+		stmmac_get_rx_hwtstamp(priv, p, np, &shhwtstamp->hwtstamp);
 
 		if (priv->hw->hw_vlan_en)
 			/* MAC level stripping. */
@@ -5898,6 +5962,8 @@ static netdev_features_t stmmac_fix_features(struct net_device *dev,
 					     netdev_features_t features)
 {
 	struct stmmac_priv *priv = netdev_priv(dev);
+	u32 tx_cnt = priv->plat->tx_queues_to_use;
+	u32 chan;
 
 	if (priv->plat->rx_coe == STMMAC_RX_COE_NONE)
 		features &= ~NETIF_F_RXCSUM;
@@ -5921,6 +5987,16 @@ static netdev_features_t stmmac_fix_features(struct net_device *dev,
 			priv->tso = false;
 	}
 
+	for (chan = 0; chan < tx_cnt; chan++) {
+		struct stmmac_tx_queue *tx_q = &priv->dma_conf.tx_queue[chan];
+
+		/* TSO and TBS cannot co-exist */
+		if (tx_q->tbs & STMMAC_TBS_AVAIL)
+			continue;
+
+		tx_q->mss = 0;
+		stmmac_enable_tso(priv, priv->ioaddr, priv->tso, chan);
+	}
 	return features;
 }
 
@@ -5971,7 +6047,7 @@ static void stmmac_common_interrupt(struct stmmac_priv *priv)
 	queues_count = (rx_cnt > tx_cnt) ? rx_cnt : tx_cnt;
 
 	if (priv->irq_wake)
-		pm_wakeup_event(priv->device, 0);
+		pm_wakeup_hard_event(priv->device);
 
 	if (priv->dma_cap.estsel)
 		stmmac_est_irq_status(priv, priv, priv->dev,
@@ -7090,7 +7166,7 @@ static void stmmac_get_stats64(struct net_device *dev, struct rtnl_link_stats64 
 static const struct net_device_ops stmmac_netdev_ops = {
 	.ndo_open = stmmac_open,
 	.ndo_start_xmit = stmmac_xmit,
-	.ndo_stop = stmmac_release,
+	.ndo_stop = stmmac_stop,
 	.ndo_change_mtu = stmmac_change_mtu,
 	.ndo_fix_features = stmmac_fix_features,
 	.ndo_set_features = stmmac_set_features,
@@ -7415,6 +7491,7 @@ int stmmac_dvr_probe(struct device *device,
 {
 	struct net_device *ndev = NULL;
 	struct stmmac_priv *priv;
+	struct phy_device *phydev;
 	u32 rxq;
 	int i, ret = 0;
 
@@ -7661,6 +7738,11 @@ int stmmac_dvr_probe(struct device *device,
 	ret = stmmac_pcs_setup(ndev);
 	if (ret)
 		goto error_pcs_setup;
+
+	ret = stmmac_get_phydev(priv, &phydev);
+	if (ret)
+		return ret;
+	phydev->mac_managed_pm = true;
 
 	ret = stmmac_phy_setup(priv);
 	if (ret) {

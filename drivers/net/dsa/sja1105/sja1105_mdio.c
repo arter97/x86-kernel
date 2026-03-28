@@ -409,7 +409,7 @@ static int sja1105_mdiobus_pcs_register(struct sja1105_private *priv)
 		    priv->phy_mode[port] != PHY_INTERFACE_MODE_2500BASEX)
 			continue;
 
-		pcs = xpcs_create_pcs_mdiodev(bus, port);
+		pcs = xpcs_create_pcs_mdiodev(bus, port, false);
 		if (IS_ERR(pcs)) {
 			rc = PTR_ERR(pcs);
 			goto out_pcs_free;

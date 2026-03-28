@@ -10,6 +10,7 @@
 #include <drm/drm_print.h>
 #include <drm/intel/pciids.h>
 
+#include "i915_drv.h"
 #include "i915_reg.h"
 #include "intel_cx0_phy_regs.h"
 #include "intel_de.h"
@@ -74,7 +75,7 @@ struct platform_desc {
 
 #define ID(id) (id)
 
-static const struct intel_display_device_info no_display = {};
+const struct intel_display_device_info no_display = {};
 
 #define PIPE_A_OFFSET		0x70000
 #define PIPE_B_OFFSET		0x71000
@@ -1528,6 +1529,22 @@ probe_gmdid_display(struct intel_display *display, struct intel_display_ip_ver *
 	val = ioread32(addr);
 	pci_iounmap(pdev, addr);
 
+	if (val == 0xffffffff) {
+		/*
+		 * Bugs in PCI programming (or failing hardware) can occasionally cause
+		 * lost access to the MMIO BAR.  When this happens, register reads will
+		 * come back with 0xFFFFFFFF for every register, including GMD_ID, and
+		 * then we may wrongly claim that we are using future display IP version.
+		 *
+		 * Additionally, when running on the VF devices, read of GMD_ID register
+		 * might also return 0xFFFFFFFF as this register is not available for VFs.
+		 *
+		 * Disable display if that happen. Proper handling will be done later.
+		 */
+		drm_info(display->drm, "Cannot read valid display IP version; disabling display.\n");
+		return &no_display;
+	}
+
 	if (val == 0) {
 		drm_dbg_kms(display->drm, "Device doesn't have display\n");
 		return NULL;
@@ -1749,6 +1766,7 @@ void intel_display_device_remove(struct intel_display *display)
 
 static void __intel_display_device_info_runtime_init(struct intel_display *display)
 {
+	struct drm_i915_private *i915 = to_i915(display->drm);
 	struct intel_display_runtime_info *display_runtime = DISPLAY_RUNTIME_INFO(display);
 	enum pipe pipe;
 
@@ -1905,9 +1923,11 @@ static void __intel_display_device_info_runtime_init(struct intel_display *displ
 		display_runtime->edp_typec_support =
 			intel_de_read(display, PICA_PHY_CONFIG_CONTROL) & EDP_ON_TYPEC;
 
-	display_runtime->rawclk_freq = intel_read_rawclk(display);
-	drm_dbg_kms(display->drm, "rawclk rate: %d kHz\n",
+	if (!IS_SRIOV_VF(i915)) {
+		display_runtime->rawclk_freq = intel_read_rawclk(display);
+		drm_dbg_kms(display->drm, "rawclk rate: %d kHz\n",
 		    display_runtime->rawclk_freq);
+	}
 
 	return;
 

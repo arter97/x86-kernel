@@ -31,6 +31,9 @@
 #include <linux/module.h>
 #include <linux/slab.h>
 #include <linux/string_helpers.h>
+#ifdef CONFIG_SYSCTL
+#include <linux/sysctl.h>
+#endif
 
 #include <drm/display/drm_dp_helper.h>
 #include <drm/display/drm_dp_tunnel.h>
@@ -140,6 +143,10 @@ static void intel_set_pipe_src_size(const struct intel_crtc_state *crtc_state);
 static void hsw_set_transconf(const struct intel_crtc_state *crtc_state);
 static void bdw_set_pipe_misc(struct intel_dsb *dsb,
 			      const struct intel_crtc_state *crtc_state);
+
+#ifdef CONFIG_SYSCTL
+static unsigned int sysctl_pageflip_wait = 1;
+#endif /* CONFIG_SYSCTL */
 
 /* returns HPLL frequency in kHz */
 int vlv_get_hpll_vco(struct drm_device *drm)
@@ -4543,6 +4550,7 @@ copy_joiner_crtc_state_modeset(struct intel_atomic_state *state,
 	drm_mode_copy(&secondary_crtc_state->hw.adjusted_mode,
 		      &primary_crtc_state->hw.adjusted_mode);
 	secondary_crtc_state->hw.scaling_filter = primary_crtc_state->hw.scaling_filter;
+	secondary_crtc_state->dpll_hw_state.cx0pll = primary_crtc_state->dpll_hw_state.cx0pll;
 
 	if (primary_crtc_state->dp_tunnel_ref.tunnel)
 		drm_dp_tunnel_ref_get(primary_crtc_state->dp_tunnel_ref.tunnel,
@@ -7454,7 +7462,15 @@ static void intel_atomic_commit_tail(struct intel_atomic_state *state)
 	 * - switch over to the vblank wait helper in the core after that since
 	 *   we don't need out special handling any more.
 	 */
-	drm_atomic_helper_wait_for_flip_done(display->drm, &state->base);
+	/* FIXME: VPP team need to optimize multiple display performance
+	 * by skipping flip waiting. This might introduce display corruption
+	 * issue. Only if user echo 0 to /proc/sys/kernel/pageflip_wait, wait
+	 * is skipped.
+	 */
+#ifdef CONFIG_SYSCTL
+	if (sysctl_pageflip_wait)
+#endif /* CONFIG_SYSCTL */
+		drm_atomic_helper_wait_for_flip_done(display->drm, &state->base);
 
 	for_each_new_intel_crtc_in_state(state, crtc, new_crtc_state, i) {
 		if (new_crtc_state->do_async_flip)
@@ -8129,6 +8145,41 @@ static const struct intel_display_funcs i9xx_display_funcs = {
 	.fixup_initial_plane_config = i9xx_fixup_initial_plane_config,
 };
 
+#ifdef CONFIG_SYSCTL
+static int pageflip_wait_migration_handler(const struct ctl_table *table, int write,
+			    void *buffer, size_t *lenp, loff_t *ppos)
+{
+	int ret;
+
+	ret = proc_dointvec_minmax(table, write, buffer, lenp, ppos);
+	if (write) {
+		if (!sysctl_pageflip_wait)
+			pr_info("no page flip waiting for vpp testing\n");
+		else
+			pr_info("waiting for page flip, ignore vpp case\n");
+	}
+	return ret;
+}
+
+static struct ctl_table pageflip_wait_sysctl[] = {
+	{
+		.procname	= "pageflip_wait",
+		.data		= &sysctl_pageflip_wait,
+		.maxlen		= sizeof(unsigned int),
+		.mode		= 0644,
+		.proc_handler	= pageflip_wait_migration_handler,
+		.extra1		= SYSCTL_ZERO,
+		.extra2		= SYSCTL_ONE,
+	},
+};
+
+static int pageflip_wait_sysctl_init(void)
+{
+	register_sysctl("kernel", pageflip_wait_sysctl);
+	return 0;
+}
+#endif /* CONFIG_SYSCTL */
+
 /**
  * intel_init_display_hooks - initialize the display modesetting hooks
  * @display: display device private
@@ -8147,6 +8198,9 @@ void intel_init_display_hooks(struct intel_display *display)
 	} else {
 		display->funcs.display = &i9xx_display_funcs;
 	}
+#ifdef CONFIG_SYSCTL
+	pageflip_wait_sysctl_init();
+#endif /* CONFIG_SYSCTL */
 }
 
 int intel_initial_commit(struct intel_display *display)

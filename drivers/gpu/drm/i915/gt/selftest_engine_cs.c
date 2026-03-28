@@ -142,7 +142,7 @@ static int perf_mi_bb_start(void *arg)
 		return 0;
 
 	wakeref = perf_begin(gt);
-	for_each_engine(engine, gt, id) {
+	for_each_enabled_engine(engine, gt, id) {
 		struct intel_context *ce = engine->kernel_context;
 		struct i915_vma *batch;
 		u32 cycles[COUNT];
@@ -270,7 +270,7 @@ static int perf_mi_noop(void *arg)
 		return 0;
 
 	wakeref = perf_begin(gt);
-	for_each_engine(engine, gt, id) {
+	for_each_enabled_engine(engine, gt, id) {
 		struct intel_context *ce = engine->kernel_context;
 		struct i915_vma *base, *nop;
 		u32 cycles[COUNT];

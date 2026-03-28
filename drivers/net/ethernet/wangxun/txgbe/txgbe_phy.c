@@ -151,7 +151,7 @@ static int txgbe_mdio_pcs_init(struct txgbe *txgbe)
 	if (ret)
 		return ret;
 
-	pcs = xpcs_create_pcs_mdiodev(mii_bus, 0);
+	pcs = xpcs_create_pcs_mdiodev(mii_bus, 0, false);
 	if (IS_ERR(pcs))
 		return PTR_ERR(pcs);
 

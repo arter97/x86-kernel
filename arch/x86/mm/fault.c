@@ -31,6 +31,8 @@
 #include <asm/cpu_entry_area.h>		/* exception stack		*/
 #include <asm/pgtable_areas.h>		/* VMALLOC_START, ...		*/
 #include <asm/kvm_para.h>		/* kvm_handle_async_pf		*/
+#include <asm/insn.h>
+#include <asm/insn-eval.h>
 #include <asm/vdso.h>			/* fixup_vdso_exception()	*/
 #include <asm/irq_stack.h>
 #include <asm/fred.h>
@@ -736,6 +738,37 @@ kernelmode_fixup_or_oops(struct pt_regs *regs, unsigned long error_code,
 	page_fault_oops(regs, error_code, address);
 }
 
+static void show_faulting_insn(struct pt_regs *regs, const char *loglvl)
+{
+	u8 insn_buf[MAX_INSN_SIZE];
+	struct insn insn;
+	int copied = MAX_INSN_SIZE;
+
+	if (user_mode(regs)) {
+		if (regs != task_pt_regs(current))
+			goto unavailable;
+
+		copied -= copy_from_user_nmi(insn_buf, (void __user *)regs->ip,
+					     MAX_INSN_SIZE);
+		if (!copied || !insn_decode_from_regs(&insn, regs, insn_buf, copied))
+			goto unavailable;
+	} else {
+		if (copy_from_kernel_nofault(insn_buf, (void *)regs->ip,
+					     MAX_INSN_SIZE))
+			goto unavailable;
+
+		if (insn_decode_kernel(&insn, insn_buf) < 0)
+			goto unavailable;
+	}
+
+	printk("%sinsn=[%*ph] (%u bytes)\n", loglvl, insn.length, insn_buf,
+	       (unsigned int)insn.length);
+	return;
+
+unavailable:
+	printk("%sinsn=<unavailable>\n", loglvl);
+}
+
 /*
  * Print out info about fatal segfaults, if the show_unhandled_signals
  * sysctl is set:
@@ -808,6 +841,7 @@ show_signal_msg(struct pt_regs *regs, unsigned long error_code,
 
 	printk(KERN_CONT "\n");
 
+	show_faulting_insn(regs, loglvl);
 	show_opcodes(regs, loglvl);
 }
 

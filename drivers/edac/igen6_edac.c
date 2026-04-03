@@ -522,6 +522,11 @@ static u64 rpl_p_err_addr(u64 ecclog)
 	return ECC_ERROR_LOG_ADDR45(ecclog);
 }
 
+static inline u64 field_get(u64 mask, u64 reg)
+{
+	return (reg & mask) >> __ffs64(mask);
+}
+
 static enum mem_type ptl_h_get_mem_type(struct igen6_imc *imc)
 {
 	u32 mtype, val;
@@ -1451,7 +1456,7 @@ static struct igen6_pvt *igen6_pvt_setup(struct pci_dev *pdev)
 	u64 mchbar;
 	int rc;
 
-	pvt = kzalloc_obj(*igen6_pvt);
+	pvt = kzalloc(sizeof(*pvt), GFP_KERNEL);
 	if (!pvt)
 		return NULL;
 

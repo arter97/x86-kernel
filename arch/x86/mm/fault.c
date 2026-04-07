@@ -754,9 +754,47 @@ show_signal_msg(struct pt_regs *regs, unsigned long error_code,
 	if (!printk_ratelimit())
 		return;
 
-	printk("%s%s[%d]: segfault at %lx ip %px sp %px error %lx",
-		loglvl, tsk->comm, task_pid_nr(tsk), address,
-		(void *)regs->ip, (void *)regs->sp, error_code);
+	{
+		int ip_node = -1, sp_node = -1, fault_node = -1;
+
+		if (tsk->mm) {
+			pgd_t *pgd; p4d_t *p4d; pud_t *pud; pmd_t *pmd; pte_t *pte;
+			struct page *page;
+			unsigned long addrs[] = { regs->ip, regs->sp, address };
+			int *nodes[] = { &ip_node, &sp_node, &fault_node };
+			int i;
+
+			for (i = 0; i < 3; i++) {
+				pgd = pgd_offset(tsk->mm, addrs[i]);
+				if (pgd_none(*pgd) || pgd_bad(*pgd)) continue;
+				p4d = p4d_offset(pgd, addrs[i]);
+				if (p4d_none(*p4d) || p4d_bad(*p4d)) continue;
+				pud = pud_offset(p4d, addrs[i]);
+				if (pud_none(*pud) || pud_bad(*pud)) continue;
+				pmd = pmd_offset(pud, addrs[i]);
+				if (pmd_none(*pmd)) continue;
+				if (pmd_trans_huge(*pmd)) {
+					page = pmd_page(*pmd);
+					*nodes[i] = page_to_nid(page);
+					continue;
+				}
+				if (pmd_bad(*pmd)) continue;
+				pte = pte_offset_map(pmd, addrs[i]);
+				if (!pte || pte_none(*pte)) {
+					if (pte) pte_unmap(pte);
+					continue;
+				}
+				page = pte_page(*pte);
+				*nodes[i] = page_to_nid(page);
+				pte_unmap(pte);
+			}
+		}
+
+		printk("%s%s[%d]: segfault at %lx ip %px sp %px error %lx ip_node:%d sp_node:%d fault_node:%d",
+			loglvl, tsk->comm, task_pid_nr(tsk), address,
+			(void *)regs->ip, (void *)regs->sp, error_code,
+			ip_node, sp_node, fault_node);
+	}
 
 	print_vma_addr(KERN_CONT " in ", regs->ip);
 

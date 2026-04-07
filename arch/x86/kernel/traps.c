@@ -224,15 +224,65 @@ do_trap_no_signal(struct task_struct *tsk, int trapnr, const char *str,
 	return -1;
 }
 
+static int __page_numa_node(struct mm_struct *mm, unsigned long addr)
+{
+	pgd_t *pgd;
+	p4d_t *p4d;
+	pud_t *pud;
+	pmd_t *pmd;
+	pte_t *pte;
+	struct page *page;
+
+	if (!mm)
+		return -1;
+
+	pgd = pgd_offset(mm, addr);
+	if (pgd_none(*pgd) || pgd_bad(*pgd))
+		return -1;
+	p4d = p4d_offset(pgd, addr);
+	if (p4d_none(*p4d) || p4d_bad(*p4d))
+		return -1;
+	pud = pud_offset(p4d, addr);
+	if (pud_none(*pud) || pud_bad(*pud))
+		return -1;
+	pmd = pmd_offset(pud, addr);
+	if (pmd_none(*pmd))
+		return -1;
+	if (pmd_trans_huge(*pmd)) {
+		page = pmd_page(*pmd);
+		return page_to_nid(page);
+	}
+	if (pmd_bad(*pmd))
+		return -1;
+	pte = pte_offset_map(pmd, addr);
+	if (!pte || pte_none(*pte)) {
+		if (pte)
+			pte_unmap(pte);
+		return -1;
+	}
+	page = pte_page(*pte);
+	pte_unmap(pte);
+	return page_to_nid(page);
+}
+
 static void show_signal(struct task_struct *tsk, int signr,
 			const char *type, const char *desc,
 			struct pt_regs *regs, long error_code)
 {
 	if (show_unhandled_signals && unhandled_signal(tsk, signr) &&
 	    printk_ratelimit()) {
-		pr_info("%s[%d] %s%s ip:%lx sp:%lx error:%lx",
+		int ip_node = -1, sp_node = -1;
+
+		if (tsk->mm) {
+			mmap_read_lock(tsk->mm);
+			ip_node = __page_numa_node(tsk->mm, regs->ip);
+			sp_node = __page_numa_node(tsk->mm, regs->sp);
+			mmap_read_unlock(tsk->mm);
+		}
+
+		pr_info("%s[%d] %s%s ip:%lx sp:%lx error:%lx ip_node:%d sp_node:%d",
 			tsk->comm, task_pid_nr(tsk), type, desc,
-			regs->ip, regs->sp, error_code);
+			regs->ip, regs->sp, error_code, ip_node, sp_node);
 		print_vma_addr(KERN_CONT " in ", regs->ip);
 		pr_cont("\n");
 	}

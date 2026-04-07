@@ -326,10 +326,16 @@ int virtio_gpu_object_restore_all(struct virtio_gpu_device *vgdev)
 		} else if (curr->params.virgl) {
 			virtio_gpu_cmd_resource_create_3d(vgdev, curr->bo, &curr->params,
 							  NULL, NULL);
+			if (curr->bo->attached)
+				curr->bo->attached = false;
+
 			virtio_gpu_object_attach(vgdev, curr->bo, ents, nents);
 		} else {
 			virtio_gpu_cmd_create_resource(vgdev, curr->bo, &curr->params,
 						       NULL, NULL);
+			if (curr->bo->attached)
+				curr->bo->attached = false;
+
 			virtio_gpu_object_attach(vgdev, curr->bo, ents, nents);
 		}
 	}

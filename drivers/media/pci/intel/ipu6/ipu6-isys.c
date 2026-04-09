@@ -28,9 +28,14 @@
 #include <media/ipu-bridge.h>
 #include <media/media-device.h>
 #include <media/media-entity.h>
-#include <media/v4l2-async.h>
-#include <media/v4l2-device.h>
+#if !IS_ENABLED(CONFIG_VIDEO_INTEL_IPU_USE_PLATFORMDATA)
 #include <media/v4l2-fwnode.h>
+#include <media/v4l2-ctrls.h>
+#include <media/v4l2-device.h>
+#include <media/v4l2-event.h>
+#include <media/v4l2-ioctl.h>
+#include <media/v4l2-async.h>
+#endif
 
 #include "ipu6-bus.h"
 #include "ipu6-cpd.h"
@@ -99,6 +104,57 @@ enum ltr_did_type {
 };
 
 #define ISYS_PM_QOS_VALUE	300
+#if IS_ENABLED(CONFIG_VIDEO_INTEL_IPU_USE_PLATFORMDATA)
+/*
+ * The param was passed from module to indicate if port
+ * could be optimized.
+ */
+static bool csi2_port_optimized = true;
+module_param(csi2_port_optimized, bool, 0660);
+MODULE_PARM_DESC(csi2_port_optimized, "IPU CSI2 port optimization");
+#endif
+
+#if IS_ENABLED(CONFIG_VIDEO_INTEL_IPU_USE_PLATFORMDATA)
+struct isys_i2c_test {
+	u8 bus_nr;
+	u16 addr;
+	struct i2c_client *client;
+};
+
+static int isys_i2c_test(struct device *dev, void *priv)
+{
+	struct i2c_client *client = i2c_verify_client(dev);
+	struct isys_i2c_test *test = priv;
+
+	if (!client)
+		return 0;
+
+	if (i2c_adapter_id(client->adapter) != test->bus_nr ||
+	    client->addr != test->addr)
+		return 0;
+
+	test->client = client;
+
+	return 0;
+}
+
+static struct
+i2c_client *isys_find_i2c_subdev(struct i2c_adapter *adapter,
+				 struct ipu6_isys_subdev_info *sd_info)
+{
+	struct i2c_board_info *info = &sd_info->i2c.board_info;
+	struct isys_i2c_test test = {
+		.bus_nr = i2c_adapter_id(adapter),
+		.addr = info->addr,
+	};
+	int rval;
+
+	rval = i2c_for_each_dev(&test, isys_i2c_test);
+	if (rval || !test.client)
+		return NULL;
+	return test.client;
+}
+#endif
 
 static int isys_isr_one(struct ipu6_bus_device *adev);
 
@@ -153,6 +209,153 @@ unregister_subdev:
 	return ret;
 }
 
+#if IS_ENABLED(CONFIG_VIDEO_INTEL_IPU_USE_PLATFORMDATA)
+static int isys_register_ext_subdev(struct ipu6_isys *isys,
+				    struct ipu6_isys_subdev_info *sd_info)
+{
+	struct i2c_adapter *adapter;
+	struct v4l2_subdev *sd;
+	struct i2c_client *client;
+	int rval;
+	int bus;
+
+	bus = ipu6_get_i2c_bus_id(sd_info->i2c.i2c_adapter_id,
+			sd_info->i2c.i2c_adapter_bdf,
+			sizeof(sd_info->i2c.i2c_adapter_bdf));
+	if (bus < 0) {
+		dev_err(&isys->adev->auxdev.dev,
+			"getting i2c bus id for adapter %d (bdf %s) failed",
+			sd_info->i2c.i2c_adapter_id,
+			sd_info->i2c.i2c_adapter_bdf);
+		return -ENOENT;
+	}
+	dev_info(&isys->adev->auxdev.dev,
+		 "got i2c bus id %d for adapter %d (bdf %s)", bus,
+		 sd_info->i2c.i2c_adapter_id,
+		 sd_info->i2c.i2c_adapter_bdf);
+	adapter = i2c_get_adapter(bus);
+	if (!adapter) {
+		dev_warn(&isys->adev->auxdev.dev, "can't find adapter\n");
+		return -ENOENT;
+	}
+
+	dev_info(&isys->adev->auxdev.dev,
+		 "creating new i2c subdev for %s (address %2.2x, bus %d)",
+		 sd_info->i2c.board_info.type, sd_info->i2c.board_info.addr,
+		 bus);
+
+	if (sd_info->csi2) {
+		dev_info(&isys->adev->auxdev.dev, "sensor device on CSI port: %d\n",
+			 sd_info->csi2->port);
+		if (sd_info->csi2->port >= isys->pdata->ipdata->csi2.nports ||
+		    !isys->csi2[sd_info->csi2->port].isys) {
+			dev_warn(&isys->adev->auxdev.dev, "invalid csi2 port %u\n",
+				 sd_info->csi2->port);
+			rval = -EINVAL;
+			goto skip_put_adapter;
+		}
+	} else {
+		dev_info(&isys->adev->auxdev.dev, "non camera subdevice\n");
+	}
+
+	client = isys_find_i2c_subdev(adapter, sd_info);
+	if (client) {
+		dev_dbg(&isys->adev->auxdev.dev, "Device exists\n");
+		rval = 0;
+		goto skip_put_adapter;
+	}
+
+	sd = v4l2_i2c_new_subdev_board(&isys->v4l2_dev, adapter,
+				       &sd_info->i2c.board_info, NULL);
+	if (!sd) {
+		dev_warn(&isys->adev->auxdev.dev, "can't create new i2c subdev\n");
+		rval = -EINVAL;
+		goto skip_put_adapter;
+	}
+
+	if (!sd_info->csi2)
+		return 0;
+
+	return isys_complete_ext_device_registration(isys, sd, sd_info->csi2);
+
+skip_put_adapter:
+	i2c_put_adapter(adapter);
+
+	return rval;
+}
+
+static int isys_unregister_ext_subdev(struct ipu6_isys *isys,
+				      struct ipu6_isys_subdev_info *sd_info)
+{
+	struct i2c_adapter *adapter;
+	struct i2c_client *client;
+	int bus;
+
+	bus = ipu6_get_i2c_bus_id(sd_info->i2c.i2c_adapter_id,
+			sd_info->i2c.i2c_adapter_bdf,
+			sizeof(sd_info->i2c.i2c_adapter_bdf));
+	if (bus < 0) {
+		dev_err(&isys->adev->auxdev.dev,
+			"getting i2c bus id for adapter %d (bdf %s) failed\n",
+			sd_info->i2c.i2c_adapter_id,
+			sd_info->i2c.i2c_adapter_bdf);
+		return -ENOENT;
+	}
+	dev_dbg(&isys->adev->auxdev.dev,
+		 "got i2c bus id %d for adapter %d (bdf %s)\n", bus,
+		 sd_info->i2c.i2c_adapter_id,
+		 sd_info->i2c.i2c_adapter_bdf);
+	adapter = i2c_get_adapter(bus);
+	if (!adapter) {
+		dev_warn(&isys->adev->auxdev.dev, "can't find adapter\n");
+		return -ENOENT;
+	}
+
+	dev_dbg(&isys->adev->auxdev.dev,
+		 "unregister i2c subdev for %s (address %2.2x, bus %d)\n",
+		 sd_info->i2c.board_info.type, sd_info->i2c.board_info.addr,
+		 bus);
+
+	client = isys_find_i2c_subdev(adapter, sd_info);
+	if (!client) {
+		dev_dbg(&isys->adev->auxdev.dev, "Device not exists\n");
+		goto skip_put_adapter;
+	}
+
+	i2c_unregister_device(client);
+
+skip_put_adapter:
+	i2c_put_adapter(adapter);
+
+	return 0;
+}
+
+static void isys_register_ext_subdevs(struct ipu6_isys *isys)
+{
+	struct ipu6_isys_subdev_pdata *spdata = isys->pdata->spdata;
+	struct ipu6_isys_subdev_info **sd_info;
+
+	if (!spdata) {
+		dev_info(&isys->adev->auxdev.dev, "no subdevice info provided\n");
+		return;
+	}
+	for (sd_info = spdata->subdevs; *sd_info; sd_info++)
+		isys_register_ext_subdev(isys, *sd_info);
+}
+
+static void isys_unregister_ext_subdevs(struct ipu6_isys *isys)
+{
+	struct ipu6_isys_subdev_pdata *spdata = isys->pdata->spdata;
+	struct ipu6_isys_subdev_info **sd_info;
+
+	if (!spdata)
+		return;
+
+	for (sd_info = spdata->subdevs; *sd_info; sd_info++)
+		isys_unregister_ext_subdev(isys, *sd_info);
+}
+#endif
+
 static void isys_stream_init(struct ipu6_isys *isys)
 {
 	u32 i;
@@ -184,10 +387,43 @@ static int isys_csi2_register_subdevices(struct ipu6_isys *isys)
 {
 	const struct ipu6_isys_internal_csi2_pdata *csi2_pdata =
 		&isys->pdata->ipdata->csi2;
+#if IS_ENABLED(CONFIG_VIDEO_INTEL_IPU_USE_PLATFORMDATA)
+	struct ipu6_isys_subdev_pdata *spdata = isys->pdata->spdata;
+	struct ipu6_isys_subdev_info **sd_info;
+	DECLARE_BITMAP(csi2_enable, 32);
+#endif
 	unsigned int i;
 	int ret;
 
+#if IS_ENABLED(CONFIG_VIDEO_INTEL_IPU_USE_PLATFORMDATA)
+	/*
+	 * Here is somewhat a workaround, let each platform decide
+	 * if csi2 port can be optimized, which means only registered
+	 * port from pdata would be enabled.
+	 */
+	if (csi2_port_optimized && spdata) {
+		bitmap_zero(csi2_enable, 32);
+		for (sd_info = spdata->subdevs; *sd_info; sd_info++) {
+			if ((*sd_info)->csi2) {
+				i = (*sd_info)->csi2->port;
+				if (i >= csi2_pdata->nports) {
+					dev_warn(&isys->adev->auxdev.dev,
+						 "invalid csi2 port %u\n", i);
+					continue;
+				}
+				bitmap_set(csi2_enable, i, 1);
+			}
+		}
+	} else {
+		bitmap_fill(csi2_enable, 32);
+	}
+#endif
+
 	for (i = 0; i < csi2_pdata->nports; i++) {
+#if IS_ENABLED(CONFIG_VIDEO_INTEL_IPU_USE_PLATFORMDATA)
+		if (!test_bit(i, csi2_enable))
+			continue;
+#endif
 		ret = ipu6_isys_csi2_init(&isys->csi2[i], isys,
 					  isys->pdata->base +
 					  CSI_REG_PORT_BASE(i), i);
@@ -211,10 +447,43 @@ static int isys_csi2_create_media_links(struct ipu6_isys *isys)
 	const struct ipu6_isys_internal_csi2_pdata *csi2_pdata =
 		&isys->pdata->ipdata->csi2;
 	struct device *dev = &isys->adev->auxdev.dev;
+#if IS_ENABLED(CONFIG_VIDEO_INTEL_IPU_USE_PLATFORMDATA)
+	struct ipu6_isys_subdev_pdata *spdata = isys->pdata->spdata;
+	struct ipu6_isys_subdev_info **sd_info;
+	DECLARE_BITMAP(csi2_enable, 32);
+#endif
 	unsigned int i, j;
 	int ret;
 
+#if IS_ENABLED(CONFIG_VIDEO_INTEL_IPU_USE_PLATFORMDATA)
+	/*
+	 * Here is somewhat a workaround, let each platform decide
+	 * if csi2 port can be optimized, which means only registered
+	 * port from pdata would be enabled.
+	 */
+	if (csi2_port_optimized && spdata) {
+		bitmap_zero(csi2_enable, 32);
+		for (sd_info = spdata->subdevs; *sd_info; sd_info++) {
+			if ((*sd_info)->csi2) {
+				i = (*sd_info)->csi2->port;
+				if (i >= csi2_pdata->nports) {
+					dev_warn(&isys->adev->auxdev.dev,
+						 "invalid csi2 port %u\n", i);
+					continue;
+				}
+				bitmap_set(csi2_enable, i, 1);
+			}
+		}
+	} else {
+		bitmap_fill(csi2_enable, 32);
+	}
+#endif
+
 	for (i = 0; i < csi2_pdata->nports; i++) {
+#if IS_ENABLED(CONFIG_VIDEO_INTEL_IPU_USE_PLATFORMDATA)
+		if (!test_bit(i, csi2_enable))
+			continue;
+#endif
 		struct media_entity *sd = &isys->csi2[i].asd.sd.entity;
 
 		for (j = 0; j < NR_OF_CSI2_SRC_PADS; j++) {
@@ -249,10 +518,43 @@ static int isys_register_video_devices(struct ipu6_isys *isys)
 {
 	const struct ipu6_isys_internal_csi2_pdata *csi2_pdata =
 		&isys->pdata->ipdata->csi2;
+#if IS_ENABLED(CONFIG_VIDEO_INTEL_IPU_USE_PLATFORMDATA)
+	struct ipu6_isys_subdev_pdata *spdata = isys->pdata->spdata;
+	struct ipu6_isys_subdev_info **sd_info;
+	DECLARE_BITMAP(csi2_enable, 32);
+#endif
 	unsigned int i, j;
 	int ret;
 
+#if IS_ENABLED(CONFIG_VIDEO_INTEL_IPU_USE_PLATFORMDATA)
+	/*
+	 * Here is somewhat a workaround, let each platform decide
+	 * if csi2 port can be optimized, which means only registered
+	 * port from pdata would be enabled.
+	 */
+	if (csi2_port_optimized && spdata) {
+		bitmap_zero(csi2_enable, 32);
+		for (sd_info = spdata->subdevs; *sd_info; sd_info++) {
+			if ((*sd_info)->csi2) {
+				i = (*sd_info)->csi2->port;
+				if (i >= csi2_pdata->nports) {
+					dev_warn(&isys->adev->auxdev.dev,
+						 "invalid csi2 port %u\n", i);
+					continue;
+				}
+				bitmap_set(csi2_enable, i, 1);
+			}
+		}
+	} else {
+		bitmap_fill(csi2_enable, 32);
+	}
+#endif
+
 	for (i = 0; i < csi2_pdata->nports; i++) {
+#if IS_ENABLED(CONFIG_VIDEO_INTEL_IPU_USE_PLATFORMDATA)
+		if (!test_bit(i, csi2_enable))
+			continue;
+#endif
 		for (j = 0; j < NR_OF_CSI2_SRC_PADS; j++) {
 			struct ipu6_isys_video *av = &isys->csi2[i].av[j];
 
@@ -680,6 +982,7 @@ static void isys_iwake_watermark_cleanup(struct ipu6_isys *isys)
 	mutex_destroy(&iwake_watermark->mutex);
 }
 
+#if !IS_ENABLED(CONFIG_VIDEO_INTEL_IPU_USE_PLATFORMDATA)
 /* The .bound() notifier callback when a match is found */
 static int isys_notifier_bound(struct v4l2_async_notifier *notifier,
 			       struct v4l2_subdev *sd,
@@ -793,6 +1096,7 @@ static void isys_notifier_cleanup(struct ipu6_isys *isys)
 	v4l2_async_nf_unregister(&isys->notifier);
 	v4l2_async_nf_cleanup(&isys->notifier);
 }
+#endif
 
 static int isys_register_devices(struct ipu6_isys *isys)
 {
@@ -830,11 +1134,22 @@ static int isys_register_devices(struct ipu6_isys *isys)
 	if (ret)
 		goto out_isys_unregister_subdevices;
 
+#if !IS_ENABLED(CONFIG_VIDEO_INTEL_IPU_USE_PLATFORMDATA)
 	ret = isys_notifier_init(isys);
 	if (ret)
 		goto out_isys_unregister_subdevices;
+#else
+	isys_register_ext_subdevs(isys);
+#endif
+
+	ret = v4l2_device_register_subdev_nodes(&isys->v4l2_dev);
+	if (ret)
+		goto out_isys_unregister_ext_subdevs;
 
 	return 0;
+
+out_isys_unregister_ext_subdevs:
+	isys_unregister_ext_subdevs(isys);
 
 out_isys_unregister_subdevices:
 	isys_csi2_unregister_subdevices(isys);
@@ -858,6 +1173,9 @@ static void isys_unregister_devices(struct ipu6_isys *isys)
 {
 	isys_unregister_video_devices(isys);
 	isys_csi2_unregister_subdevices(isys);
+#if IS_ENABLED(CONFIG_VIDEO_INTEL_IPU_USE_PLATFORMDATA)
+	isys_unregister_ext_subdevs(isys);
+#endif
 	v4l2_device_unregister(&isys->v4l2_dev);
 	media_device_unregister(&isys->media_dev);
 	media_device_cleanup(&isys->media_dev);
@@ -1184,7 +1502,9 @@ static void isys_remove(struct auxiliary_device *auxdev)
 	free_fw_msg_bufs(isys);
 
 	isys_unregister_devices(isys);
+#if !IS_ENABLED(CONFIG_VIDEO_INTEL_IPU_USE_PLATFORMDATA)
 	isys_notifier_cleanup(isys);
+#endif
 
 	cpu_latency_qos_remove_request(&isys->pm_qos);
 

@@ -567,6 +567,27 @@ static int ipu6_isys_mcd_phy_ready(struct ipu6_isys *isys, u8 id)
 	return ret;
 }
 
+#if IS_ENABLED(CONFIG_VIDEO_INTEL_IPU_USE_PLATFORMDATA)
+static int ipu6_isys_mcd_phy_common_init(struct ipu6_isys *isys, struct ipu6_isys_csi2_config *cfg)
+{
+	unsigned int phy_id;
+	void __iomem *phy_base;
+	struct ipu6_bus_device *adev = to_ipu6_bus_device(&isys->adev->auxdev.dev);
+	struct ipu6_device *isp = adev->isp;
+	void __iomem *isp_base = isp->base;
+	unsigned int i;
+
+	phy_id = cfg->port / 4;
+	phy_base = isp_base + IPU6_ISYS_MCD_PHY_BASE(phy_id);
+
+	for (i = 0 ; i < ARRAY_SIZE(common_init_regs); i++) {
+		writel(common_init_regs[i].val,
+			phy_base + common_init_regs[i].reg);
+	}
+
+	return 0;
+}
+#else
 static void ipu6_isys_mcd_phy_common_init(struct ipu6_isys *isys)
 {
 	struct ipu6_bus_device *adev = isys->adev;
@@ -588,6 +609,7 @@ static void ipu6_isys_mcd_phy_common_init(struct ipu6_isys *isys)
 			       phy_base + common_init_regs[i].reg);
 	}
 }
+#endif
 
 static int ipu6_isys_driver_port_to_phy_port(struct ipu6_isys_csi2_config *cfg)
 {
@@ -619,6 +641,55 @@ static int ipu6_isys_driver_port_to_phy_port(struct ipu6_isys_csi2_config *cfg)
 	return ret;
 }
 
+#if IS_ENABLED(CONFIG_VIDEO_INTEL_IPU_USE_PLATFORMDATA)
+static int ipu6_isys_mcd_phy_config(struct ipu6_isys *isys, struct ipu6_isys_csi2_config *cfg)
+{
+	unsigned int phy_port, phy_id;
+	void __iomem *phy_base;
+	struct ipu6_bus_device *adev = to_ipu6_bus_device(&isys->adev->auxdev.dev);
+	struct ipu6_device *isp = adev->isp;
+	void __iomem *isp_base = isp->base;
+	const struct phy_reg **phy_config_regs;
+	struct ipu6_isys_subdev_pdata *spdata = isys->pdata->spdata;
+	struct ipu6_isys_subdev_info **subdevs, *sd_info;
+	int i;
+
+	if (!spdata) {
+		dev_err(&isys->adev->auxdev.dev, "no subdevice info provided\n");
+		return -EINVAL;
+	}
+
+	phy_id = cfg->port / 4;
+	phy_base = isp_base + IPU6_ISYS_MCD_PHY_BASE(phy_id);
+	for (subdevs = spdata->subdevs; *subdevs; subdevs++) {
+		sd_info = *subdevs;
+		if (!sd_info->csi2)
+			continue;
+
+		phy_port = ipu6_isys_driver_port_to_phy_port(sd_info->csi2);
+		if (phy_port < 0) {
+			dev_err(&isys->adev->auxdev.dev, "invalid port %d for lane %d",
+					cfg->port, cfg->nlanes);
+			return -ENXIO;
+		}
+
+		if ((sd_info->csi2->port / 4) != phy_id)
+			continue;
+
+		dev_dbg(&isys->adev->auxdev.dev, "port%d PHY%u lanes %u\n",
+			phy_port, phy_id, cfg->nlanes);
+
+		phy_config_regs = config_regs[sd_info->csi2->nlanes/2];
+
+		for (i = 0; phy_config_regs[phy_port][i].reg; i++) {
+			writel(phy_config_regs[phy_port][i].val,
+				phy_base + phy_config_regs[phy_port][i].reg);
+		}
+	}
+
+	return 0;
+}
+#else
 static int ipu6_isys_mcd_phy_config(struct ipu6_isys *isys)
 {
 	struct device *dev = &isys->adev->auxdev.dev;
@@ -658,6 +729,7 @@ static int ipu6_isys_mcd_phy_config(struct ipu6_isys *isys)
 
 	return 0;
 }
+#endif
 
 #define CSI_MCD_PHY_NUM		2
 static refcount_t phy_power_ref_count[CSI_MCD_PHY_NUM];
@@ -698,9 +770,14 @@ int ipu6_isys_mcd_phy_set_power(struct ipu6_isys *isys,
 			return ret;
 
 		ipu6_isys_mcd_phy_reset(isys, phy_id, 0);
+#if IS_ENABLED(CONFIG_VIDEO_INTEL_IPU_USE_PLATFORMDATA)
+		ipu6_isys_mcd_phy_common_init(isys, cfg);
+		ret = ipu6_isys_mcd_phy_config(isys, cfg);
+#else
 		ipu6_isys_mcd_phy_common_init(isys);
 
 		ret = ipu6_isys_mcd_phy_config(isys);
+#endif
 		if (ret)
 			return ret;
 

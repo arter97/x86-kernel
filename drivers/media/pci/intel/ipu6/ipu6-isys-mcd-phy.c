@@ -567,7 +567,7 @@ static int ipu6_isys_mcd_phy_ready(struct ipu6_isys *isys, u8 id)
 	return ret;
 }
 
-#if IS_ENABLED(CONFIG_VIDEO_INTEL_IPU_USE_PLATFORMDATA)
+#if IS_ENABLED(CONFIG_INTEL_IPU_ACPI)
 static int ipu6_isys_mcd_phy_common_init(struct ipu6_isys *isys, struct ipu6_isys_csi2_config *cfg)
 {
 	unsigned int phy_id;
@@ -641,7 +641,7 @@ static int ipu6_isys_driver_port_to_phy_port(struct ipu6_isys_csi2_config *cfg)
 	return ret;
 }
 
-#if IS_ENABLED(CONFIG_VIDEO_INTEL_IPU_USE_PLATFORMDATA)
+#if IS_ENABLED(CONFIG_INTEL_IPU_ACPI)
 static int ipu6_isys_mcd_phy_config(struct ipu6_isys *isys, struct ipu6_isys_csi2_config *cfg)
 {
 	unsigned int phy_id;
@@ -771,7 +771,7 @@ int ipu6_isys_mcd_phy_set_power(struct ipu6_isys *isys,
 			return ret;
 
 		ipu6_isys_mcd_phy_reset(isys, phy_id, 0);
-#if IS_ENABLED(CONFIG_VIDEO_INTEL_IPU_USE_PLATFORMDATA)
+#if IS_ENABLED(CONFIG_INTEL_IPU_ACPI)
 		ipu6_isys_mcd_phy_common_init(isys, cfg);
 		ret = ipu6_isys_mcd_phy_config(isys, cfg);
 #else

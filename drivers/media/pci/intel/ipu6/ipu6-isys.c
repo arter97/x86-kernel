@@ -28,7 +28,7 @@
 #include <media/ipu-bridge.h>
 #include <media/media-device.h>
 #include <media/media-entity.h>
-#if !IS_ENABLED(CONFIG_VIDEO_INTEL_IPU_USE_PLATFORMDATA)
+#if !IS_ENABLED(CONFIG_INTEL_IPU_ACPI)
 #include <media/v4l2-fwnode.h>
 #include <media/v4l2-ctrls.h>
 #include <media/v4l2-device.h>
@@ -104,7 +104,7 @@ enum ltr_did_type {
 };
 
 #define ISYS_PM_QOS_VALUE	300
-#if IS_ENABLED(CONFIG_VIDEO_INTEL_IPU_USE_PLATFORMDATA)
+#if IS_ENABLED(CONFIG_INTEL_IPU_ACPI)
 /*
  * The param was passed from module to indicate if port
  * could be optimized.
@@ -112,9 +112,7 @@ enum ltr_did_type {
 static bool csi2_port_optimized = true;
 module_param(csi2_port_optimized, bool, 0660);
 MODULE_PARM_DESC(csi2_port_optimized, "IPU CSI2 port optimization");
-#endif
 
-#if IS_ENABLED(CONFIG_VIDEO_INTEL_IPU_USE_PLATFORMDATA)
 struct isys_i2c_test {
 	u8 bus_nr;
 	u16 addr;
@@ -209,7 +207,7 @@ unregister_subdev:
 	return ret;
 }
 
-#if IS_ENABLED(CONFIG_VIDEO_INTEL_IPU_USE_PLATFORMDATA)
+#if IS_ENABLED(CONFIG_INTEL_IPU_ACPI)
 static int isys_register_ext_subdev(struct ipu6_isys *isys,
 				    struct ipu_isys_subdev_info *sd_info)
 {
@@ -388,7 +386,7 @@ static int isys_csi2_register_subdevices(struct ipu6_isys *isys)
 {
 	const struct ipu6_isys_internal_csi2_pdata *csi2_pdata =
 		&isys->pdata->ipdata->csi2;
-#if IS_ENABLED(CONFIG_VIDEO_INTEL_IPU_USE_PLATFORMDATA)
+#if IS_ENABLED(CONFIG_INTEL_IPU_ACPI)
 	struct ipu_isys_subdev_pdata *spdata = isys->pdata->spdata;
 	struct ipu_isys_subdev_info **sd_info;
 	DECLARE_BITMAP(csi2_enable, 32);
@@ -396,7 +394,7 @@ static int isys_csi2_register_subdevices(struct ipu6_isys *isys)
 	unsigned int i;
 	int ret;
 
-#if IS_ENABLED(CONFIG_VIDEO_INTEL_IPU_USE_PLATFORMDATA)
+#if IS_ENABLED(CONFIG_INTEL_IPU_ACPI)
 	/*
 	 * Here is somewhat a workaround, let each platform decide
 	 * if csi2 port can be optimized, which means only registered
@@ -421,7 +419,7 @@ static int isys_csi2_register_subdevices(struct ipu6_isys *isys)
 #endif
 
 	for (i = 0; i < csi2_pdata->nports; i++) {
-#if IS_ENABLED(CONFIG_VIDEO_INTEL_IPU_USE_PLATFORMDATA)
+#if IS_ENABLED(CONFIG_INTEL_IPU_ACPI)
 		if (!test_bit(i, csi2_enable))
 			continue;
 #endif
@@ -448,7 +446,7 @@ static int isys_csi2_create_media_links(struct ipu6_isys *isys)
 	const struct ipu6_isys_internal_csi2_pdata *csi2_pdata =
 		&isys->pdata->ipdata->csi2;
 	struct device *dev = &isys->adev->auxdev.dev;
-#if IS_ENABLED(CONFIG_VIDEO_INTEL_IPU_USE_PLATFORMDATA)
+#if IS_ENABLED(CONFIG_INTEL_IPU_ACPI)
 	struct ipu_isys_subdev_pdata *spdata = isys->pdata->spdata;
 	struct ipu_isys_subdev_info **sd_info;
 	DECLARE_BITMAP(csi2_enable, 32);
@@ -456,7 +454,7 @@ static int isys_csi2_create_media_links(struct ipu6_isys *isys)
 	unsigned int i, j;
 	int ret;
 
-#if IS_ENABLED(CONFIG_VIDEO_INTEL_IPU_USE_PLATFORMDATA)
+#if IS_ENABLED(CONFIG_INTEL_IPU_ACPI)
 	/*
 	 * Here is somewhat a workaround, let each platform decide
 	 * if csi2 port can be optimized, which means only registered
@@ -481,7 +479,7 @@ static int isys_csi2_create_media_links(struct ipu6_isys *isys)
 #endif
 
 	for (i = 0; i < csi2_pdata->nports; i++) {
-#if IS_ENABLED(CONFIG_VIDEO_INTEL_IPU_USE_PLATFORMDATA)
+#if IS_ENABLED(CONFIG_INTEL_IPU_ACPI)
 		if (!test_bit(i, csi2_enable))
 			continue;
 #endif
@@ -519,7 +517,7 @@ static int isys_register_video_devices(struct ipu6_isys *isys)
 {
 	const struct ipu6_isys_internal_csi2_pdata *csi2_pdata =
 		&isys->pdata->ipdata->csi2;
-#if IS_ENABLED(CONFIG_VIDEO_INTEL_IPU_USE_PLATFORMDATA)
+#if IS_ENABLED(CONFIG_INTEL_IPU_ACPI)
 	struct ipu_isys_subdev_pdata *spdata = isys->pdata->spdata;
 	struct ipu_isys_subdev_info **sd_info;
 	DECLARE_BITMAP(csi2_enable, 32);
@@ -527,7 +525,7 @@ static int isys_register_video_devices(struct ipu6_isys *isys)
 	unsigned int i, j;
 	int ret;
 
-#if IS_ENABLED(CONFIG_VIDEO_INTEL_IPU_USE_PLATFORMDATA)
+#if IS_ENABLED(CONFIG_INTEL_IPU_ACPI)
 	/*
 	 * Here is somewhat a workaround, let each platform decide
 	 * if csi2 port can be optimized, which means only registered
@@ -552,7 +550,7 @@ static int isys_register_video_devices(struct ipu6_isys *isys)
 #endif
 
 	for (i = 0; i < csi2_pdata->nports; i++) {
-#if IS_ENABLED(CONFIG_VIDEO_INTEL_IPU_USE_PLATFORMDATA)
+#if IS_ENABLED(CONFIG_INTEL_IPU_ACPI)
 		if (!test_bit(i, csi2_enable))
 			continue;
 #endif
@@ -983,7 +981,7 @@ static void isys_iwake_watermark_cleanup(struct ipu6_isys *isys)
 	mutex_destroy(&iwake_watermark->mutex);
 }
 
-#if !IS_ENABLED(CONFIG_VIDEO_INTEL_IPU_USE_PLATFORMDATA)
+#if !IS_ENABLED(CONFIG_INTEL_IPU_ACPI)
 /* The .bound() notifier callback when a match is found */
 static int isys_notifier_bound(struct v4l2_async_notifier *notifier,
 			       struct v4l2_subdev *sd,
@@ -1135,20 +1133,20 @@ static int isys_register_devices(struct ipu6_isys *isys)
 	if (ret)
 		goto out_isys_unregister_subdevices;
 
-#if !IS_ENABLED(CONFIG_VIDEO_INTEL_IPU_USE_PLATFORMDATA)
+#if !IS_ENABLED(CONFIG_INTEL_IPU_ACPI)
 	ret = isys_notifier_init(isys);
 	if (ret)
 		goto out_isys_unregister_subdevices;
 #else
 	isys_register_ext_subdevs(isys);
 #endif
-#if IS_ENABLED(CONFIG_VIDEO_INTEL_IPU_USE_PLATFORMDATA)
+#if IS_ENABLED(CONFIG_INTEL_IPU_ACPI)
 	ret = v4l2_device_register_subdev_nodes(&isys->v4l2_dev);
 	if (ret)
 		goto out_isys_unregister_ext_subdevs;
 #endif
 	return 0;
-#if IS_ENABLED(CONFIG_VIDEO_INTEL_IPU_USE_PLATFORMDATA)
+#if IS_ENABLED(CONFIG_INTEL_IPU_ACPI)
 out_isys_unregister_ext_subdevs:
 	isys_unregister_ext_subdevs(isys);
 #endif
@@ -1174,7 +1172,7 @@ static void isys_unregister_devices(struct ipu6_isys *isys)
 {
 	isys_unregister_video_devices(isys);
 	isys_csi2_unregister_subdevices(isys);
-#if IS_ENABLED(CONFIG_VIDEO_INTEL_IPU_USE_PLATFORMDATA)
+#if IS_ENABLED(CONFIG_INTEL_IPU_ACPI)
 	isys_unregister_ext_subdevs(isys);
 #endif
 	v4l2_device_unregister(&isys->v4l2_dev);
@@ -1503,7 +1501,7 @@ static void isys_remove(struct auxiliary_device *auxdev)
 	free_fw_msg_bufs(isys);
 
 	isys_unregister_devices(isys);
-#if !IS_ENABLED(CONFIG_VIDEO_INTEL_IPU_USE_PLATFORMDATA)
+#if !IS_ENABLED(CONFIG_INTEL_IPU_ACPI)
 	isys_notifier_cleanup(isys);
 #endif
 

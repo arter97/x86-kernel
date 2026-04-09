@@ -10,7 +10,7 @@
 #include <linux/pm_qos.h>
 #include <linux/spinlock_types.h>
 #include <linux/types.h>
-#if IS_ENABLED(CONFIG_VIDEO_INTEL_IPU_USE_PLATFORMDATA)
+#if IS_ENABLED(CONFIG_INTEL_IPU_ACPI)
 #include <linux/clkdev.h>
 #endif
 #include <media/media-device.h>
@@ -62,11 +62,7 @@ struct ipu6_bus_device;
 #define IPU6EP_MTL_LTR_VALUE			1023
 #define IPU6EP_MTL_MIN_MEMOPEN_TH		0xc
 
-#if (IS_ENABLED(CONFIG_VIDEO_INTEL_IPU_USE_PLATFORMDATA) \
-	&& IS_ENABLED(CONFIG_VIDEO_INTEL_IPU_PDATA_DYNAMIC_LOADING)) \
-	|| IS_ENABLED(CONFIG_INTEL_IPU_ACPI)
-#define IPU_SPDATA_NAME_LEN	20
-#define IPU_SPDATA_BDF_LEN	32
+#if IS_ENABLED(CONFIG_INTEL_IPU_ACPI)
 #define IPU_SPDATA_GPIO_NUM 	4
 #define IPU_SPDATA_IRQ_PIN_NAME_LEN 16
 #endif
@@ -172,7 +168,7 @@ struct ipu6_isys {
 	spinlock_t listlock;	/* Protect framebuflist */
 	struct list_head framebuflist;
 	struct list_head framebuflist_fw;
-#if !IS_ENABLED(CONFIG_VIDEO_INTEL_IPU_USE_PLATFORMDATA)
+#if !IS_ENABLED(CONFIG_INTEL_IPU_ACPI)
 	struct v4l2_async_notifier notifier;
 #endif
 	struct isys_iwake_watermark iwake_watermark;
@@ -192,66 +188,22 @@ struct isys_fw_msgs {
 	struct list_head head;
 	dma_addr_t dma_addr;
 };
-#if IS_ENABLED(CONFIG_VIDEO_INTEL_IPU_USE_PLATFORMDATA)
+#if IS_ENABLED(CONFIG_INTEL_IPU_ACPI)
 struct ipu6_isys_subdev_i2c_info {
 	struct i2c_board_info board_info;
 	int i2c_adapter_id;
 	char i2c_adapter_bdf[32];
 };
 #endif
-#if (IS_ENABLED(CONFIG_VIDEO_INTEL_IPU_USE_PLATFORMDATA) \
-	&& IS_ENABLED(CONFIG_VIDEO_INTEL_IPU_PDATA_DYNAMIC_LOADING)) \
-	|| IS_ENABLED(CONFIG_INTEL_IPU_ACPI)
-#define IPU_SPDATA_NAME_LEN	20
-#define IPU_SPDATA_BDF_LEN	32
+#if IS_ENABLED(CONFIG_INTEL_IPU_ACPI)
 #define IPU_SPDATA_GPIO_NUM 	4
 #define IPU_SPDATA_IRQ_PIN_NAME_LEN 16
 #endif
 
-#if IS_ENABLED(CONFIG_VIDEO_INTEL_IPU_USE_PLATFORMDATA) \
-	&& IS_ENABLED(CONFIG_VIDEO_INTEL_IPU_PDATA_DYNAMIC_LOADING)
-/**
- * struct ipu6_spdata_rep - override subdev platform data
- *
- * @name: i2c_board_info.type
- * @i2c_adapter_bdf_o: old i2c adapter bdf
- * @slave_addr_o: old i2c slave address
- * @i2c_adapter_bdf_n: new i2c adapter bdf
- * @slave_addr_n: new i2c slave address
- *
- * identify a subdev with @name, @i2c_adapter_bdf_o and @slave_addr_o and
- * configure it to use the new  @i2c_adapter_bdf_n and @slave_addr_n
- */
-struct ipu6_spdata_rep {
-	/* i2c old information */
-	char name[IPU6_SPDATA_NAME_LEN];
-	unsigned int port_o;
-	char i2c_adapter_bdf_o[IPU6_SPDATA_BDF_LEN];
-	uint32_t slave_addr_o;
-
-	/* i2c new information */
-	unsigned int port_n;
-	char i2c_adapter_bdf_n[IPU6_SPDATA_BDF_LEN];
-	uint32_t slave_addr_n;
-
-	/* sensor_platform */
-	unsigned int lanes;
-	int gpios[IPU6_SPDATA_GPIO_NUM];
-	int irq_pin;
-	unsigned int irq_pin_flags;
-	char irq_pin_name[IPU6_SPDATA_IRQ_PIN_NAME_LEN];
-	char suffix;
-};
-#endif
-
 struct ipu_isys_subdev_info {
 	struct ipu6_isys_csi2_config *csi2;
-	struct ipu6_isys_subdev_i2c_info i2c;
-#if IS_ENABLED(CONFIG_VIDEO_INTEL_IPU_USE_PLATFORMDATA) \
-	&& IS_ENABLED(CONFIG_VIDEO_INTEL_IPU_PDATA_DYNAMIC_LOADING)
-	void (*fixup_spdata)(const void *spdata_rep, void *spdata);
-#endif
 #if IS_ENABLED(CONFIG_INTEL_IPU_ACPI)
+	struct ipu6_isys_subdev_i2c_info i2c;
 	char *acpi_hid;
 #endif
 };

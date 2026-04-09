@@ -390,7 +390,7 @@ static struct ipu6_bus_device *
 ipu6_isys_init(struct pci_dev *pdev, struct device *parent,
 	       struct ipu6_buttress_ctrl *ctrl, void __iomem *base,
 	       const struct ipu6_isys_internal_pdata *ipdata,
-#if IS_ENABLED(CONFIG_VIDEO_INTEL_IPU_USE_PLATFORMDATA)
+#if IS_ENABLED(CONFIG_INTEL_IPU_ACPI)
 	       struct ipu_isys_subdev_pdata *spdata
 #endif
 			)
@@ -415,7 +415,7 @@ ipu6_isys_init(struct pci_dev *pdev, struct device *parent,
 
 	pdata->base = base;
 	pdata->ipdata = ipdata;
-#if IS_ENABLED(CONFIG_VIDEO_INTEL_IPU_USE_PLATFORMDATA)
+#if IS_ENABLED(CONFIG_INTEL_IPU_ACPI)
 	pdata->spdata = spdata;
 #endif
 	/* Override the isys freq */
@@ -556,59 +556,6 @@ static void ipu6_configure_vc_mechanism(struct ipu6_device *isp)
 	writel(val, isp->base + BUTTRESS_REG_BTRS_CTRL);
 }
 
-#if IS_ENABLED(CONFIG_VIDEO_INTEL_IPU_USE_PLATFORMDATA)
-#if IS_ENABLED(CONFIG_VIDEO_INTEL_IPU_PDATA_DYNAMIC_LOADING)
-static inline int match_spdata(struct ipu_isys_subdev_info *sd,
-			const struct ipu6_spdata_rep *rep)
-{
-	if (strcmp(sd->i2c.board_info.type, rep->name))
-		return 0;
-
-	if (strcmp(sd->i2c.i2c_adapter_bdf, rep->i2c_adapter_bdf_o))
-		return 0;
-
-	if (sd->i2c.board_info.addr != rep->slave_addr_o)
-		return 0;
-
-	if (sd->csi2->port != rep->port_o)
-		return 0;
-
-	return 1;
-}
-
-static void fixup_spdata(const void *spdata_rep,
-			 struct ipu_isys_subdev_pdata *spdata)
-{
-	const struct ipu6_spdata_rep *rep = spdata_rep;
-	struct ipu_isys_subdev_info **subdevs, *sd_info;
-
-	if (!spdata)
-		return;
-
-	for (; rep->name[0]; rep++) {
-		for (subdevs = spdata->subdevs; *subdevs; subdevs++) {
-			sd_info = *subdevs;
-
-			if (!sd_info->csi2)
-				continue;
-
-			if (match_spdata(sd_info, rep)) {
-				strcpy(sd_info->i2c.i2c_adapter_bdf,
-						rep->i2c_adapter_bdf_n);
-				sd_info->i2c.board_info.addr =
-					rep->slave_addr_n;
-				sd_info->csi2->port = rep->port_n;
-
-				if (sd_info->fixup_spdata)
-					sd_info->fixup_spdata(rep,
-					sd_info->i2c.board_info.platform_data);
-			}
-		}
-	}
-}
-#endif
-#endif
-
 static int ipu6_pci_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 {
 	struct ipu6_buttress_ctrl *isys_ctrl = NULL, *psys_ctrl = NULL;
@@ -708,16 +655,6 @@ static int ipu6_pci_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 		goto out_ipu6_bus_del_devices;
 	}
 
-#if IS_ENABLED(CONFIG_VIDEO_INTEL_IPU_USE_PLATFORMDATA)
-#if IS_ENABLED(CONFIG_VIDEO_INTEL_IPU_PDATA_DYNAMIC_LOADING)
-	rval = request_firmware(&isp->spdata_fw, IPU6_SPDATA_NAME, &pdev->dev);
-	if (rval)
-		dev_warn(&isp->pdev->dev, "no spdata replace, using default\n");
-	else
-		fixup_spdata(isp->spdata_fw->data, pdev->dev.platform_data);
-#endif
-#endif
-
 	isys_ctrl = devm_kmemdup(dev, &isys_buttress_ctrl,
 				 sizeof(isys_buttress_ctrl), GFP_KERNEL);
 	if (!isys_ctrl) {
@@ -727,7 +664,7 @@ static int ipu6_pci_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 
 	isp->isys = ipu6_isys_init(pdev, dev, isys_ctrl, isys_base,
 				   &isys_ipdata,
-#if IS_ENABLED(CONFIG_VIDEO_INTEL_IPU_USE_PLATFORMDATA)
+#if IS_ENABLED(CONFIG_INTEL_IPU_ACPI)
 				  pdev->dev.platform_data
 #endif
 					);
@@ -824,11 +761,6 @@ out_ipu6_bus_del_devices:
 		ipu6_mmu_cleanup(isp->isys->mmu);
 	ipu6_bus_del_devices(pdev);
 	release_firmware(isp->cpd_fw);
-#if IS_ENABLED(CONFIG_VIDEO_INTEL_IPU_USE_PLATFORMDATA)
-#if IS_ENABLED(CONFIG_VIDEO_INTEL_IPU_PDATA_DYNAMIC_LOADING)
-	release_firmware(isp->spdata_fw);
-#endif
-#endif
 buttress_exit:
 	ipu6_buttress_exit(isp);
 

@@ -23,12 +23,6 @@ struct ipu6_bus_device;
 #define IPU6EPMTL_FIRMWARE_NAME		"intel/ipu/ipu6epmtl_fw.bin"
 #define IPU6EPADLN_FIRMWARE_NAME	"intel/ipu/ipu6epadln_fw.bin"
 
-#if IS_ENABLED(CONFIG_VIDEO_INTEL_IPU_USE_PLATFORMDATA) \
-	&& IS_ENABLED(CONFIG_VIDEO_INTEL_IPU_PDATA_DYNAMIC_LOADING)
-/* array of struct ipu6_spdata_rep terminated by NULL */
-#define IPU6_SPDATA_NAME		"ipu6v1_spdata.bin"
-#endif
-
 enum ipu6_version {
 	IPU6_VER_INVALID = 0,
 	IPU6_VER_6 = 1,
@@ -86,11 +80,6 @@ struct ipu6_device {
 	const struct firmware *cpd_fw;
 	const char *cpd_fw_name;
 	u32 cpd_metadata_cmpnt_size;
-#if IS_ENABLED(CONFIG_VIDEO_INTEL_IPU_USE_PLATFORMDATA)
-#if IS_ENABLED(CONFIG_VIDEO_INTEL_IPU_PDATA_DYNAMIC_LOADING)
-	const struct firmware *spdata_fw;
-#endif
-#endif
 	void __iomem *base;
 	bool need_ipc_reset;
 	bool secure_mode;
@@ -333,7 +322,7 @@ struct ipu6_isys_internal_pdata {
 struct ipu6_isys_pdata {
 	void __iomem *base;
 	const struct ipu6_isys_internal_pdata *ipdata;
-#if IS_ENABLED(CONFIG_VIDEO_INTEL_IPU_USE_PLATFORMDATA)
+#if IS_ENABLED(CONFIG_INTEL_IPU_ACPI)
 	struct ipu_isys_subdev_pdata *spdata;
 #endif
 };

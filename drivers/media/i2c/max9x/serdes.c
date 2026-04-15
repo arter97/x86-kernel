@@ -15,10 +15,9 @@
  *
  * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
- *
- * SPDX-License-Identifier: GPL-2.0
- * Copyright (C) 2025 Intel Corporation
  */
+// SPDX-License-Identifier: GPL-2.0
+// Copyright (C) 2025 Intel Corporation
 
 #include <linux/kernel.h>
 #include <linux/i2c.h>

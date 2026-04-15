@@ -126,6 +126,15 @@ enum ipu7_insys_frame_format_type {
 	IPU_INSYS_FRAME_FORMAT_ARGB888 = 31,
 	IPU_INSYS_FRAME_FORMAT_BGRA888 = 32,
 	IPU_INSYS_FRAME_FORMAT_ABGR888 = 33,
+	IPU_INSYS_FRAME_FORMAT_RGB888 = 34,
+	IPU_INSYS_FRAME_FORMAT_YUV420_LEGACY = 35,
+	IPU_INSYS_FRAME_FORMAT_RAW6 = 36,
+	IPU_INSYS_FRAME_FORMAT_RAW7 = 37,
+	IPU_INSYS_FRAME_FORMAT_RGB444 = 38,
+	IPU_INSYS_FRAME_FORMAT_RGB666 = 39,
+	IPU_INSYS_FRAME_FORMAT_RAW20 = 40,
+	IPU_INSYS_FRAME_FORMAT_P010 = 41,
+	IPU_INSYS_FRAME_FORMAT_RGB555 = 42,
 	N_IPU_INSYS_FRAME_FORMAT
 };
 
@@ -248,6 +257,11 @@ struct ipu7_insys_output_link {
 	u8 pad[2];
 };
 
+struct ipu7_insys_output_cropping_v1 {
+	u16 line_top;
+	u16 line_bottom;
+};
+
 struct ipu7_insys_output_cropping {
 	u16 line_top;
 	u16 line_bottom;
@@ -258,6 +272,18 @@ struct ipu7_insys_output_dpcm {
 	u8 type;
 	u8 predictor;
 	u8 pad;
+};
+
+struct ipu7_insys_output_pin_v1 {
+	struct ipu7_insys_output_link link;
+	struct ipu7_insys_output_cropping_v1 crop;
+	struct ipu7_insys_output_dpcm dpcm;
+	u32 stride;
+	u16 ft;
+	u8 send_irq;
+	u8 input_pin_id;
+	u8 early_ack_en;
+	u8 pad[3];
 };
 
 struct ipu7_insys_output_pin {
@@ -282,6 +308,17 @@ struct ipu7_insys_input_pin {
 	u8 pad[2];
 };
 
+struct ipu7_insys_stream_cfg_v1 {
+	struct ipu7_insys_input_pin input_pins[4];
+	struct ipu7_insys_output_pin_v1 output_pins[4];
+	u16 stream_msg_map;
+	u8 port_id;
+	u8 vc;
+	u8 nof_input_pins;
+	u8 nof_output_pins;
+	u8 pad[2];
+};
+
 struct ipu7_insys_stream_cfg {
 	struct ipu7_insys_input_pin input_pins[4];
 	struct ipu7_insys_output_pin output_pins[4];
@@ -293,12 +330,34 @@ struct ipu7_insys_stream_cfg {
 	u8 pad[2];
 };
 
+struct ipu7_insys_buffset_v1 {
+	struct ipu7_insys_capture_output_pin_payload output_pins[4];
+	u8 capture_msg_map;
+	u8 frame_id;
+	u8 skip_frame;
+	u8 pad[5];
+};
+
 struct ipu7_insys_buffset {
 	struct ipu7_insys_capture_output_pin_payload output_pins[4];
 	u8 capture_msg_map;
 	u8 frame_id;
 	u8 skip_frame;
 	u8 pad[5];
+};
+
+struct ipu7_insys_resp_v1 {
+	u64 buf_id;
+	struct ipu7_insys_capture_output_pin_payload pin;
+	struct ia_gofo_msg_err error_info;
+	u32 timestamp[2];
+	u8 type;
+	u8 msg_link_streaming_mode;
+	u8 stream_id;
+	u8 pin_id;
+	u8 frame_id;
+	u8 skip_frame;
+	u16 mipi_fn;
 };
 
 struct ipu7_insys_resp {

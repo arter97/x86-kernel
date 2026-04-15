@@ -241,7 +241,7 @@ static int ipu7_dma_buf_vmap(struct dma_buf *dmabuf, struct iosys_map *map)
 		return -EINVAL;
 
 	attach = list_last_entry(&dmabuf->attachments,
-				 struct dma_buf_attachment, node);
+					struct dma_buf_attachment, node);
 	ipu7_attach = attach->priv;
 
 	if (!ipu7_attach || !ipu7_attach->pages || !ipu7_attach->npages)

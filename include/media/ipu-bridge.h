@@ -96,7 +96,9 @@ struct ipu_sensor_ssdb {
 	u8 pprval;
 	u8 pprunit;
 	u8 flashid;
-	u8 reserved2[8];
+	u8 reserved2[5];
+	u8 phyconfig;
+	u8 reserved3[7];
 } __packed;
 
 struct ipu_property_names {
@@ -145,11 +147,12 @@ struct ipu_sensor {
 	u32 rotation;
 	enum v4l2_fwnode_orientation orientation;
 	const char *vcm_type;
+	u8 phyconfig;
 
 	struct ipu_property_names prop_names;
 	struct property_entry ep_properties[5];
 	struct property_entry dev_properties[5];
-	struct property_entry ipu_properties[3];
+	struct property_entry ipu_properties[4];
 	struct property_entry ivsc_properties[1];
 	struct property_entry ivsc_sensor_ep_properties[4];
 	struct property_entry ivsc_ipu_ep_properties[4];

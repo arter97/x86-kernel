@@ -18,6 +18,9 @@
 #include <linux/pm_runtime.h>
 #include <linux/spinlock.h>
 #include <linux/string.h>
+#ifdef CONFIG_VIDEO_INTEL_IPU7_ISYS_RESET
+#include <linux/delay.h>
+#endif
 
 #include <media/media-entity.h>
 #include <media/v4l2-dev.h>
@@ -90,8 +93,43 @@ const struct ipu7_isys_pixelformat ipu7_isys_pfmts[] = {
 
 static int video_open(struct file *file)
 {
+#ifdef CONFIG_VIDEO_INTEL_IPU7_ISYS_RESET
+	struct ipu7_isys_video *av = video_drvdata(file);
+	struct ipu7_isys *isys = av->isys;
+	struct ipu7_bus_device *adev = isys->adev;
+
+	mutex_lock(&isys->reset_mutex);
+	if (isys->need_reset) {
+		mutex_unlock(&isys->reset_mutex);
+		dev_warn(&adev->auxdev.dev, "isys power cycle required\n");
+		return -EIO;
+	}
+	mutex_unlock(&isys->reset_mutex);
+
+#endif
 	return v4l2_fh_open(file);
 }
+
+#ifdef CONFIG_VIDEO_INTEL_IPU7_ISYS_RESET
+static int video_release(struct file *file)
+{
+	struct ipu7_isys_video *av = video_drvdata(file);
+
+	dev_dbg(&av->isys->adev->auxdev.dev,
+		"release: %s: enter\n", av->vdev.name);
+	mutex_lock(&av->isys->reset_mutex);
+	while (av->isys->state & RESET_STATE_IN_RESET) {
+		mutex_unlock(&av->isys->reset_mutex);
+		dev_dbg(&av->isys->adev->auxdev.dev,
+			"release: %s: wait for reset\n", av->vdev.name);
+		usleep_range(10000, 11000);
+		mutex_lock(&av->isys->reset_mutex);
+	}
+	mutex_unlock(&av->isys->reset_mutex);
+	return vb2_fop_release(file);
+}
+
+#endif
 
 const struct ipu7_isys_pixelformat *ipu7_isys_get_isys_format(u32 pixelformat)
 {
@@ -418,9 +456,22 @@ static int ipu7_isys_fw_pin_cfg(struct ipu7_isys_video *av,
 	/* output pin crop */
 	output_pin->crop.line_top = 0;
 	output_pin->crop.line_bottom = 0;
+	output_pin->crop.column_left = 0;
+	output_pin->crop.column_right = 0;
 
 	/* output de-compression */
 	output_pin->dpcm.enable = 0;
+
+	/* upipe_cfg */
+	output_pin->upipe_pin_cfg.opaque_pin_cfg = 0;
+	output_pin->upipe_pin_cfg.plane_offset_1 = 0;
+	output_pin->upipe_pin_cfg.plane_offset_2 = 0;
+	output_pin->upipe_pin_cfg.single_uob_fifo = 0;
+	output_pin->upipe_pin_cfg.shared_uob_fifo = 0;
+	output_pin->upipe_enable = 0;
+	output_pin->binning_factor = 0;
+	/* stupid setting, even unused, SW still need to set a valid value */
+	output_pin->cfa_dim = IPU_INSYS_CFA_DIM_2x2;
 
 	/* frame format type */
 	pfmt = ipu7_isys_get_isys_format(av->pix_fmt.pixelformat);
@@ -587,7 +638,11 @@ static void stop_streaming_firmware(struct ipu7_isys_video *av)
 	}
 
 	tout = wait_for_completion_timeout(&stream->stream_stop_completion,
+#ifdef CONFIG_VIDEO_INTEL_IPU7_ISYS_RESET
+				       FW_CALL_TIMEOUT_JIFFIES_RESET);
+#else
 					   FW_CALL_TIMEOUT_JIFFIES);
+#endif
 	if (!tout)
 		dev_warn(dev, "stream stop time out\n");
 	else if (stream->error)
@@ -612,13 +667,24 @@ static void close_streaming_firmware(struct ipu7_isys_video *av)
 	}
 
 	tout = wait_for_completion_timeout(&stream->stream_close_completion,
+#ifdef CONFIG_VIDEO_INTEL_IPU7_ISYS_RESET
+					   FW_CALL_TIMEOUT_JIFFIES_RESET);
+#else
 					   FW_CALL_TIMEOUT_JIFFIES);
+#endif
 	if (!tout)
 		dev_warn(dev, "stream close time out\n");
 	else if (stream->error)
 		dev_warn(dev, "stream close error: %d\n", stream->error);
 	else
 		dev_dbg(dev, "close stream: complete\n");
+
+#ifdef CONFIG_VIDEO_INTEL_IPU7_ISYS_RESET
+		stream->last_sequence = atomic_read(&stream->sequence);
+		dev_dbg(dev, "ip->last_sequence = %d\n",
+			stream->last_sequence);
+
+#endif
 
 	put_stream_opened(av);
 }
@@ -634,7 +700,18 @@ int ipu7_isys_video_prepare_stream(struct ipu7_isys_video *av,
 		return -EINVAL;
 
 	stream->nr_queues = nr_queues;
+#ifdef CONFIG_VIDEO_INTEL_IPU7_ISYS_RESET
+	if (av->isys->state & RESET_STATE_IN_RESET) {
+		atomic_set(&stream->sequence, stream->last_sequence);
+		dev_dbg(&av->isys->adev->auxdev.dev,
+			"atomic_set : stream->last_sequence = %d\n",
+			stream->last_sequence);
+	} else {
+		atomic_set(&stream->sequence, 0);
+	}
+#else
 	atomic_set(&stream->sequence, 0);
+#endif
 	atomic_set(&stream->buf_id, 0);
 
 	stream->seq_index = 0;
@@ -868,7 +945,11 @@ static const struct v4l2_file_operations isys_fops = {
 	.unlocked_ioctl = video_ioctl2,
 	.mmap = vb2_fop_mmap,
 	.open = video_open,
+#ifdef CONFIG_VIDEO_INTEL_IPU7_ISYS_RESET
+	.release = video_release,
+#else
 	.release = vb2_fop_release,
+#endif
 };
 
 int ipu7_isys_fw_open(struct ipu7_isys *isys)
@@ -907,6 +988,28 @@ out:
 	return ret;
 }
 
+#ifdef CONFIG_VIDEO_INTEL_IPU7_ISYS_RESET
+void ipu7_isys_fw_close(struct ipu7_isys *isys)
+{
+	mutex_lock(&isys->mutex);
+
+	isys->ref_count--;
+
+	if (!isys->ref_count)
+		ipu7_fw_isys_close(isys);
+
+	mutex_unlock(&isys->mutex);
+
+	mutex_lock(&isys->reset_mutex);
+	if (isys->need_reset) {
+		mutex_unlock(&isys->reset_mutex);
+		pm_runtime_put_sync(&isys->adev->auxdev.dev);
+	} else {
+		mutex_unlock(&isys->reset_mutex);
+		pm_runtime_put(&isys->adev->auxdev.dev);
+	}
+}
+#else
 void ipu7_isys_fw_close(struct ipu7_isys *isys)
 {
 	mutex_lock(&isys->mutex);
@@ -919,6 +1022,7 @@ void ipu7_isys_fw_close(struct ipu7_isys *isys)
 	mutex_unlock(&isys->mutex);
 	pm_runtime_put(&isys->adev->auxdev.dev);
 }
+#endif
 
 int ipu7_isys_setup_video(struct ipu7_isys_video *av,
 			  struct media_entity **source_entity, int *nr_queues)
@@ -1053,6 +1157,12 @@ int ipu7_isys_video_init(struct ipu7_isys_video *av)
 
 	__ipu_isys_vidioc_try_fmt_vid_cap(av, &format);
 	av->pix_fmt = format.fmt.pix;
+
+#ifdef CONFIG_VIDEO_INTEL_IPU7_ISYS_RESET
+	av->reset = false;
+	av->skipframe = 0;
+	av->start_streaming = 0;
+#endif
 
 	video_set_drvdata(&av->vdev, av);
 

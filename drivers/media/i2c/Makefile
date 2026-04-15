@@ -63,6 +63,8 @@ obj-$(CONFIG_VIDEO_IMX412) += imx412.o
 obj-$(CONFIG_VIDEO_IMX415) += imx415.o
 obj-$(CONFIG_VIDEO_IR_I2C) += ir-kbd-i2c.o
 obj-$(CONFIG_VIDEO_ISL7998X) += isl7998x.o
+obj-$(CONFIG_VIDEO_MAX9X) += max9x/
+obj-$(CONFIG_VIDEO_ISX031) += isx031.o
 obj-$(CONFIG_VIDEO_KS0127) += ks0127.o
 obj-$(CONFIG_VIDEO_LM3560) += lm3560.o
 obj-$(CONFIG_VIDEO_LM3646) += lm3646.o
@@ -170,3 +172,4 @@ obj-$(CONFIG_VIDEO_WM8775) += wm8775.o
 obj-$(CONFIG_VIDEO_LT6911GXD) += lt6911gxd.o
 obj-$(CONFIG_VIDEO_MAX9X) += max9x/
 obj-$(CONFIG_VIDEO_ISX031) += isx031.o
+

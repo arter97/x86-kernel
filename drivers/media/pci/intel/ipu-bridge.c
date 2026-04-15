@@ -99,8 +99,8 @@ static const struct ipu_sensor_config ipu_supported_sensors[] = {
 	IPU_SENSOR_CONFIG("OVTI8856", 3, 180000000, 360000000, 720000000),
 	/* Toshiba T4KA3 */
 	IPU_SENSOR_CONFIG("XMCC0003", 1, 321468000),
-	/* OnSemiconductor ar0234 */
-	IPU_SENSOR_CONFIG("INTC10C0", 1, 360000000),
+	/* Lontium lt6911gxd */
+	IPU_SENSOR_CONFIG("INTC1124", 0),
 };
 
 static const struct ipu_property_names prop_names = {

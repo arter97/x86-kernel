@@ -13,6 +13,9 @@
 struct firmware;
 struct pci_dev;
 struct ipu6_bus_device;
+#ifdef CONFIG_DEBUG_FS
+struct dentry;
+#endif
 
 #define IPU6_NAME			"intel-ipu6"
 #define IPU6_MEDIA_DEV_MODEL_NAME	"ipu6"
@@ -77,6 +80,9 @@ struct ipu6_device {
 	struct ipu6_bus_device *psys;
 	struct ipu6_buttress buttress;
 
+#ifdef CONFIG_DEBUG_FS
+	struct dentry *ipu_dir;
+#endif
 	const struct firmware *cpd_fw;
 	const char *cpd_fw_name;
 	u32 cpd_metadata_cmpnt_size;

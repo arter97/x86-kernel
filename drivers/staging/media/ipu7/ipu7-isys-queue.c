@@ -1141,6 +1141,7 @@ void ipu7_isys_queue_buf_ready(struct ipu7_isys_stream *stream,
 		spin_unlock_irqrestore(&aq->lock, flags);
 
 		ipu7_isys_buf_calc_sequence_time(ib, time);
+
 #ifdef CONFIG_VIDEO_INTEL_IPU7_ISYS_RESET
 		if (!IA_GOFO_MSG_ERR_IS_OK(info->error_info)) {
 			vbuf = to_vb2_v4l2_buffer(vb);

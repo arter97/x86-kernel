@@ -5,6 +5,7 @@
 
 #include <linux/bitfield.h>
 #include <linux/bits.h>
+#include <linux/debugfs.h>
 #include <linux/dma-mapping.h>
 #include <linux/err.h>
 #include <linux/firmware.h>
@@ -389,9 +390,9 @@ static void ipu6_internal_pdata_init(struct ipu6_device *isp)
 static struct ipu6_bus_device *
 ipu6_isys_init(struct pci_dev *pdev, struct device *parent,
 	       struct ipu6_buttress_ctrl *ctrl, void __iomem *base,
-	       const struct ipu6_isys_internal_pdata *ipdata,
+	       const struct ipu6_isys_internal_pdata *ipdata
 #if IS_ENABLED(CONFIG_INTEL_IPU_ACPI)
-	       struct ipu_isys_subdev_pdata *spdata
+	       , struct ipu_isys_subdev_pdata *spdata
 #endif
 			)
 {
@@ -591,6 +592,11 @@ static int ipu6_pci_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 	pci_set_drvdata(pdev, isp);
 	pci_set_master(pdev);
 
+#ifdef CONFIG_DEBUG_FS
+	isp->ipu_dir = debugfs_create_dir(dev_name(dev), NULL);
+	if (IS_ERR(isp->ipu_dir))
+		isp->ipu_dir = NULL;
+#endif
 	isp->cpd_metadata_cmpnt_size = sizeof(struct ipu6_cpd_metadata_cmpnt);
 	switch (id->device) {
 	case PCI_DEVICE_ID_INTEL_IPU6:
@@ -665,9 +671,9 @@ static int ipu6_pci_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 	}
 
 	isp->isys = ipu6_isys_init(pdev, dev, isys_ctrl, isys_base,
-				   &isys_ipdata,
+				   &isys_ipdata
 #if IS_ENABLED(CONFIG_INTEL_IPU_ACPI)
-				  pdev->dev.platform_data
+				   , pdev->dev.platform_data
 #endif
 					);
 	if (IS_ERR(isp->isys)) {
@@ -762,6 +768,7 @@ out_ipu6_bus_del_devices:
 	if (!IS_ERR_OR_NULL(isp->isys) && !IS_ERR_OR_NULL(isp->isys->mmu))
 		ipu6_mmu_cleanup(isp->isys->mmu);
 	ipu6_bus_del_devices(pdev);
+	debugfs_remove_recursive(isp->ipu_dir);
 	release_firmware(isp->cpd_fw);
 buttress_exit:
 	ipu6_buttress_exit(isp);
@@ -782,6 +789,7 @@ static void ipu6_pci_remove(struct pci_dev *pdev)
 	ipu6_buttress_exit(isp);
 
 	ipu6_bus_del_devices(pdev);
+	debugfs_remove_recursive(isp->ipu_dir);
 
 	pm_runtime_forbid(&pdev->dev);
 	pm_runtime_get_noresume(&pdev->dev);

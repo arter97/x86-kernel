@@ -10,9 +10,7 @@
 #include <linux/pm_qos.h>
 #include <linux/spinlock_types.h>
 #include <linux/types.h>
-#if IS_ENABLED(CONFIG_INTEL_IPU_ACPI)
 #include <linux/clkdev.h>
-#endif
 #include <media/media-device.h>
 #include <media/v4l2-async.h>
 #include <media/v4l2-device.h>

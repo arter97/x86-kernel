@@ -258,7 +258,6 @@ void ipu7_dma_free(struct ipu7_bus_device *sys, size_t size, void *vaddr,
 		return;
 
 	iova = find_iova(&mmu->dmap->iovad, PHYS_PFN(dma_handle));
-
 	if (WARN_ON(!iova))
 		return;
 
@@ -352,7 +351,6 @@ void ipu7_dma_unmap_sg(struct ipu7_bus_device *sys, struct scatterlist *sglist,
 		return;
 
 	iova = find_iova(&mmu->dmap->iovad, PHYS_PFN(sg_dma_address(sglist)));
-
 	if (WARN_ON(!iova))
 		return;
 

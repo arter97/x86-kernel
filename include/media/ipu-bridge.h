@@ -96,7 +96,6 @@ struct ipu_sensor_ssdb {
 	u8 pprval;
 	u8 pprunit;
 	u8 flashid;
-	u8 reserved2[5];
 	u8 phyconfig;
 	u8 reserved3[7];
 } __packed;

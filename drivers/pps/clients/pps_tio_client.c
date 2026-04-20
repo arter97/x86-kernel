@@ -16,8 +16,6 @@
 #include <linux/spinlock.h>
 #include <linux/timekeeping.h>
 
-#include <asm/cpu_device_id.h>
-
 #include "pps_tio_plat.h"
 
 #define INTERVAL_MS	ms_to_ktime(100)

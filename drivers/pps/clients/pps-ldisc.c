@@ -14,7 +14,7 @@
 #include <linux/bug.h>
 
 struct pps_ldisc_dev {
-	struct pps_device *pps;
+	struct tty_struct *tty;
 	struct pps_source_info info;
 };
 
@@ -48,27 +48,35 @@ static int pps_tty_open(struct tty_struct *tty)
 	struct tty_driver *drv = tty->driver;
 	int index = tty->index + drv->name_base;
 	struct pps_ldisc_dev *lddev;
+	struct pps_device *pps;
 	int ret;
 
 	lddev = kzalloc(sizeof(*lddev), GFP_KERNEL);
 	if (!lddev)
 		return -ENOMEM;
 
+	lddev->tty = tty;
 	lddev->info.owner = THIS_MODULE;
 	lddev->info.dev = NULL;
 	snprintf(lddev->info.name, PPS_MAX_NAME_LEN, "%s%d", drv->driver_name, index);
 	snprintf(lddev->info.path, PPS_MAX_NAME_LEN, "/dev/%s%d", drv->name, index);
-	lddev->info.mode = PPS_CAPTUREBOTH | PPS_OFFSETASSERT | \
-			   PPS_OFFSETCLEAR | PPS_CANWAIT | PPS_TSFMT_TSPEC;
 
-	lddev->pps = pps_register_source(&lddev->info, PPS_CAPTUREBOTH | \
-				PPS_OFFSETASSERT | PPS_OFFSETCLEAR);
-	if (IS_ERR(lddev->pps)) {
+	lddev->info.mode = PPS_CAPTUREBOTH |
+			PPS_OFFSETASSERT |
+			PPS_OFFSETCLEAR |
+			PPS_CANWAIT |
+			PPS_TSFMT_TSPEC;
+
+	pps = pps_register_source(&lddev->info,
+				  PPS_CAPTUREBOTH |
+				  PPS_OFFSETASSERT |
+				  PPS_OFFSETCLEAR);
+	if (IS_ERR(pps)) {
+		ret =  PTR_ERR(pps);
 		pr_err("cannot register PPS source \"%s\"\n", lddev->info.path);
-		kfree(lddev);
-		return PTR_ERR(lddev->pps);
+		goto err_free;
 	}
-	lddev->pps->lookup_cookie = tty;
+	pps->lookup_cookie = tty;
 
 	/* Now open the base class N_TTY ldisc */
 	ret = alias_n_tty_open(tty);
@@ -77,14 +85,14 @@ static int pps_tty_open(struct tty_struct *tty)
 		goto err_unregister;
 	}
 
-	dev_dbg(&lddev->pps->dev, "source \"%s\" added\n", lddev->info.path);
-
-	tty->disc_data = lddev;
+	dev_dbg(&pps->dev, "source \"%s\" added\n", lddev->info.path);
 
 	return 0;
 
 err_unregister:
-	pps_unregister_source(lddev->pps);
+	pps_unregister_source(pps);
+err_free:
+	kfree(lddev);
 	return ret;
 }
 
@@ -92,18 +100,20 @@ static void (*alias_n_tty_close)(struct tty_struct *tty);
 
 static void pps_tty_close(struct tty_struct *tty)
 {
-	struct pps_ldisc_dev *lddev = tty->disc_data;
+	struct pps_device *pps = pps_lookup_dev(tty);
+	struct pps_ldisc_dev *lddev;
 
 	alias_n_tty_close(tty);
 
-	if (WARN_ON(!lddev))
+	if (WARN_ON(!pps))
 		return;
 
-	dev_info(&lddev->pps->dev, "removed\n");
-	pps_unregister_source(lddev->pps);
-	kfree(lddev);
+	dev_info(&pps->dev, "removed\n");
 
-	tty->disc_data = NULL;
+	/* recover container from info pointer */
+	lddev = container_of(pps->info, struct pps_ldisc_dev, info);
+	pps_unregister_source(pps);
+	kfree(lddev);
 }
 
 static struct tty_ldisc_ops pps_ldisc_ops;

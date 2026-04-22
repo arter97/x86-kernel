@@ -90,6 +90,23 @@ find_pps_gen_device()
 	return 1
 }
 
+# Find the Intel TIO platform device sysfs path
+find_tio_platform_device()
+{
+	local acpi_id dev_path
+
+	for acpi_id in $ACPI_IDS; do
+		for dev_path in /sys/devices/platform/${acpi_id}*/; do
+			if [ -d "$dev_path" ]; then
+				echo "$dev_path"
+				return 0
+			fi
+		done
+	done
+	return 1
+}
+
+
 # Find a PPS device whose name matches a pattern
 find_pps_by_name()
 {

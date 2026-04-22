@@ -20,6 +20,13 @@ The common test framework is provided by ``pps_tio_common.sh``.
   ``tio_mode`` sysfs attribute validation (default value, mode switching, and
   invalid value rejection).
 
+- **PPS Client** (``pps_tio_client``) - The test script
+  ``test_pps_client_tio.sh`` verifies the PPS client driver functionality
+  including module loading, PPS client device discovery, sysfs attribute
+  validation (assert, clear, echo, mode, name, path, poll), mode flags
+  verification (PPS_CANPOLL, PPS_CAPTUREASSERT, PPS_CANWAIT, PPS_TSFMT_TSPEC),
+  poll enable/disable operations, and assert event capture.
+
 Prerequisites
 =============
 
@@ -46,6 +53,7 @@ built-in)::
   CONFIG_PPS_GENERATOR=m
   CONFIG_PPS_GENERATOR_TIO=m
   CONFIG_INTEL_TIO_PLAT=m
+  CONFIG_PPS_CLIENT_TIO=m
 
 Running the Tests
 =================
@@ -55,6 +63,7 @@ Run individual tests as root using the kselftest framework::
   $ cd tools/testing/selftests/drivers/platform/x86/intel/pps
   $ sudo ./test_pps_gen_tio.sh
   $ sudo ./test_pps_platform_tio.sh
+  $ sudo ./test_pps_client_tio.sh
 
 Or using the kselftest runner from the kernel tree::
 
@@ -97,6 +106,32 @@ The script runs the following test cases:
    the mode switches back to ``generator``.
 7. **Reject invalid tio_mode** - Writes an invalid value (``2``) to ``tio_mode``
    and verifies it is rejected.
+
+PPS Client Tests (test_pps_client_tio.sh)
+------------------------------------------
+
+The script runs the following test cases:
+
+1. **Module info verification** - Checks ``modinfo pps_tio_client`` is available.
+2. **Module loading** - Loads the ``pps_tio_plat`` and ``pps_tio_client``
+   modules if not already loaded.
+3. **Client mode setup** - Switches ``tio_mode`` to ``client`` as a
+   prerequisite for client tests.
+4. **PPS client device discovery** - Verifies a PPS device with name
+   ``intel_tio_client`` appears under ``/sys/class/pps/``.
+5. **Sysfs attribute verification** - Checks for expected attributes: ``assert``,
+   ``clear``, ``dev``, ``echo``, ``mode``, ``name``, ``path``, ``poll``,
+   ``uevent``.
+6. **Mode flags verification** - Reads the ``mode`` attribute and verifies
+   PPS_CANPOLL (0x200), PPS_CAPTUREASSERT (0x01), PPS_CANWAIT (0x100), and
+   PPS_TSFMT_TSPEC (0x1000) flags are set.
+7. **Enable PPS client poll** - Writes ``1`` to the ``poll`` attribute.
+8. **Assert event capture** - Verifies PPS assert event sequence numbers
+   advance over time (requires loopback: TIO output → TIO input).
+9. **Disable PPS client poll** - Writes ``0`` to the ``poll`` attribute.
+10. **Echo attribute** - Verifies the ``echo`` sysfs attribute is readable.
+11. **Path attribute** - Verifies the ``path`` sysfs attribute is readable.
+12. **Clear attribute** - Verifies the ``clear`` sysfs attribute is readable.
 
 Output
 ======

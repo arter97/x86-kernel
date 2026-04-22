@@ -76,6 +76,19 @@ test_exit()
 	pps_cleanup
 }
 
+# Find the first PPS generator device under the given class path
+find_pps_gen_device()
+{
+	local pps_gen_class="$1"
+	local gen_dev
+
+	for gen_dev in ${pps_gen_class}/pps-gen*; do
+		[ -d "$gen_dev" ] || continue
+		basename "$gen_dev"
+		return 0
+	done
+	return 1
+}
 
 # Find a PPS device whose name matches a pattern
 find_pps_by_name()

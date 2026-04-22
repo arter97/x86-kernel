@@ -71,6 +71,7 @@ setup_load_modules()
 				append_log "[$INFO] Loaded module $mod"
 			else
 				append_log "[$SKIP] Cannot load module $mod (no hardware?)"
+				return 1
 			fi
 		fi
 	done
@@ -321,9 +322,18 @@ test_pps_client_tio()
 	append_log "[$INFO] Test started at $(date)"
 
 	# Prerequisites: module verification, load modules, switch to client mode
-	append_log "[$INFO] --- Prerequisites ---"
-	check_modinfo "$MOD_CLIENT"
-	setup_load_modules
+	local modinfo_failed=0 load_failed=0
+
+	append_log "[$INFO] --- Prerequisites: Module Verification ---"
+	check_modinfo "$MOD_CLIENT" || modinfo_failed=1
+	setup_load_modules || load_failed=1
+
+	if [ "$modinfo_failed" -ne 0 ] && [ "$load_failed" -ne 0 ]; then
+		append_log "[$SKIP] Module verification failed: module not available and cannot be loaded, skipping remaining tests"
+		return
+	fi
+
+	append_log "[$INFO] --- Prerequisites: Client Mode Setup ---"
 	setup_client_mode
 
 	# Phase 1: Client device tests

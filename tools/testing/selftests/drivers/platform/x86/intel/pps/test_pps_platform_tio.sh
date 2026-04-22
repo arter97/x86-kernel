@@ -53,6 +53,7 @@ test_load_module()
 			append_log "[$PASS] Loaded module $MOD_PLAT"
 		else
 			append_log "[$SKIP] Cannot load module $MOD_PLAT (no hardware?)"
+			return 1
 		fi
 	fi
 }
@@ -160,9 +161,17 @@ test_pps_platform_tio()
 	append_log "[$INFO] Test started at $(date)"
 
 	# Phase 1: Module verification
+	# Remaining phases are skipped when both modinfo and module load fail.
+	local modinfo_failed=0 load_failed=0
+
 	append_log "[$INFO] --- Phase 1: Module Verification ---"
-	check_modinfo "$MOD_PLAT"
-	test_load_module
+	check_modinfo "$MOD_PLAT" || modinfo_failed=1
+	test_load_module || load_failed=1
+
+	if [ "$modinfo_failed" -ne 0 ] && [ "$load_failed" -ne 0 ]; then
+		append_log "[$SKIP] Phase 1 failed: module not available and cannot be loaded, skipping remaining tests"
+		return
+	fi
 
 	# Phase 2: Platform device tests
 	append_log "[$INFO] --- Phase 2: Platform Device Tests ---"

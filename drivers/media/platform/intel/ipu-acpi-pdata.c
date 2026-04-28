@@ -337,16 +337,11 @@ static void update_subdev(struct device *dev,
 	update_uint(dev, "pdata lanes", &(old_pdata)->lanes, new_pdata->lanes);
 	update_hex(dev, "pdata I2C slave addr", &(old_pdata)->i2c_slave_address,
 		new_pdata->i2c_slave_address);
-	update_int(dev, "pdata irq_pin", &(old_pdata)->irq_pin,
-		new_pdata->irq_pin);
-	update_str(dev, "pdata irq_pin_name", old_pdata->irq_pin_name,
-		new_pdata->irq_pin_name);
-	update_int(dev, "pdata reset_pin", (unsigned int *)&(old_pdata)->reset_pin,
-		new_pdata->reset_pin);
-	update_int(dev, "pdata detect_pin", (unsigned int *)&(old_pdata)->detect_pin,
-		new_pdata->detect_pin);
-	update_inta(dev, "pdata gpios", old_pdata->gpios, new_pdata->gpios,
-		IPU_SPDATA_GPIO_NUM);
+	update_int(dev, "pdata irq_pin", &(old_pdata)->irq_pin, new_pdata->irq_pin);
+	update_str(dev, "pdata irq_pin_name", old_pdata->irq_pin_name, new_pdata->irq_pin_name);
+	update_int(dev, "pdata reset_pin", (unsigned int *)&(old_pdata)->reset_pin, new_pdata->reset_pin);
+	update_int(dev, "pdata detect_pin", (unsigned int *)&(old_pdata)->detect_pin, new_pdata->detect_pin);
+	update_inta(dev, "pdata gpios", old_pdata->gpios, new_pdata->gpios, IPU_SPDATA_GPIO_NUM);
 }
 
 static void update_serdes_subdev(struct device *dev,
@@ -664,7 +659,7 @@ static int set_serdes_subdev(struct ipu_isys_subdev_info **serdes_sd,
 		serdes_sdinfo[i].ser_phys_addr = serdes_info.ser_phys_addr;
 
 		memcpy(serdes_sdinfo[i].ser_gpio, serdes_info.ser_gpio,
-			sizeof(struct gpiod_lookup) * MAX_SER_GPIO_NUM);
+				sizeof(struct gpiod_lookup) * MAX_SER_GPIO_NUM);
 		serdes_sdinfo[i].sensor_dt = serdes_info.sensor_dt;
 	}
 

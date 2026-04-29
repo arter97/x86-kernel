@@ -48,6 +48,7 @@ struct ptp_clock {
 	dev_t devid;
 	int index; /* index into clocks.map */
 	struct pps_device *pps_source;
+	struct pps_source_info pps_info;
 	long dialed_frequency; /* remembers the frequency adjustment */
 	struct list_head tsevqs; /* timestamp fifo list */
 	spinlock_t tsevqs_lock; /* protects tsevqs from concurrent access */

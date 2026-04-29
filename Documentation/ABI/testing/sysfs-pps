@@ -71,3 +71,10 @@ Description:
 
 		If the source is not connected with any device the content
 		of this file is empty.
+
+What:		/sys/class/pps/ppsX/poll
+Date:		April 2026
+Contact:	Subramanian Mohan <subramanian.mohan@intel.com>
+Description:
+		This write-only file enables or disables the polling of
+		PPS signal.

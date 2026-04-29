@@ -13,6 +13,11 @@
 #include <linux/pps_kernel.h>
 #include <linux/bug.h>
 
+struct pps_ldisc_dev {
+	struct pps_device *pps;
+	struct pps_source_info info;
+};
+
 static void pps_tty_dcd_change(struct tty_struct *tty, bool active)
 {
 	struct pps_device *pps;
@@ -40,41 +45,46 @@ static int (*alias_n_tty_open)(struct tty_struct *tty);
 
 static int pps_tty_open(struct tty_struct *tty)
 {
-	struct pps_source_info info;
 	struct tty_driver *drv = tty->driver;
 	int index = tty->index + drv->name_base;
-	struct pps_device *pps;
+	struct pps_ldisc_dev *lddev;
 	int ret;
 
-	info.owner = THIS_MODULE;
-	info.dev = NULL;
-	snprintf(info.name, PPS_MAX_NAME_LEN, "%s%d", drv->driver_name, index);
-	snprintf(info.path, PPS_MAX_NAME_LEN, "/dev/%s%d", drv->name, index);
-	info.mode = PPS_CAPTUREBOTH | \
-			PPS_OFFSETASSERT | PPS_OFFSETCLEAR | \
-			PPS_CANWAIT | PPS_TSFMT_TSPEC;
+	lddev = kzalloc(sizeof(*lddev), GFP_KERNEL);
+	if (!lddev)
+		return -ENOMEM;
 
-	pps = pps_register_source(&info, PPS_CAPTUREBOTH | \
+	lddev->info.owner = THIS_MODULE;
+	lddev->info.dev = NULL;
+	snprintf(lddev->info.name, PPS_MAX_NAME_LEN, "%s%d", drv->driver_name, index);
+	snprintf(lddev->info.path, PPS_MAX_NAME_LEN, "/dev/%s%d", drv->name, index);
+	lddev->info.mode = PPS_CAPTUREBOTH | PPS_OFFSETASSERT | \
+			   PPS_OFFSETCLEAR | PPS_CANWAIT | PPS_TSFMT_TSPEC;
+
+	lddev->pps = pps_register_source(&lddev->info, PPS_CAPTUREBOTH | \
 				PPS_OFFSETASSERT | PPS_OFFSETCLEAR);
-	if (IS_ERR(pps)) {
-		pr_err("cannot register PPS source \"%s\"\n", info.path);
-		return PTR_ERR(pps);
+	if (IS_ERR(lddev->pps)) {
+		pr_err("cannot register PPS source \"%s\"\n", lddev->info.path);
+		kfree(lddev);
+		return PTR_ERR(lddev->pps);
 	}
-	pps->lookup_cookie = tty;
+	lddev->pps->lookup_cookie = tty;
 
 	/* Now open the base class N_TTY ldisc */
 	ret = alias_n_tty_open(tty);
 	if (ret < 0) {
-		pr_err("cannot open tty ldisc \"%s\"\n", info.path);
+		pr_err("cannot open tty ldisc \"%s\"\n", lddev->info.path);
 		goto err_unregister;
 	}
 
-	dev_dbg(&pps->dev, "source \"%s\" added\n", info.path);
+	dev_dbg(&lddev->pps->dev, "source \"%s\" added\n", lddev->info.path);
+
+	tty->disc_data = lddev;
 
 	return 0;
 
 err_unregister:
-	pps_unregister_source(pps);
+	pps_unregister_source(lddev->pps);
 	return ret;
 }
 
@@ -82,15 +92,18 @@ static void (*alias_n_tty_close)(struct tty_struct *tty);
 
 static void pps_tty_close(struct tty_struct *tty)
 {
-	struct pps_device *pps = pps_lookup_dev(tty);
+	struct pps_ldisc_dev *lddev = tty->disc_data;
 
 	alias_n_tty_close(tty);
 
-	if (WARN_ON(!pps))
+	if (WARN_ON(!lddev))
 		return;
 
-	dev_info(&pps->dev, "removed\n");
-	pps_unregister_source(pps);
+	dev_info(&lddev->pps->dev, "removed\n");
+	pps_unregister_source(lddev->pps);
+	kfree(lddev);
+
+	tty->disc_data = NULL;
 }
 
 static struct tty_ldisc_ops pps_ldisc_ops;

@@ -17,6 +17,9 @@
 #include <linux/pm_runtime.h>
 #include <linux/spinlock.h>
 #include <linux/string.h>
+#ifdef CONFIG_VIDEO_INTEL_IPU6_ISYS_RESET
+#include <linux/delay.h>
+#endif
 
 #include <media/media-entity.h>
 #include <media/v4l2-ctrls.h>
@@ -112,6 +115,25 @@ static int video_open(struct file *file)
 	return v4l2_fh_open(file);
 }
 
+#ifdef CONFIG_VIDEO_INTEL_IPU6_ISYS_RESET
+static int video_release(struct file *file)
+{
+	struct ipu6_isys_video *av = video_drvdata(file);
+	dev_dbg(&av->isys->adev->auxdev.dev,
+		"release: %s: enter\n", av->vdev.name);
+	mutex_lock(&av->isys->reset_mutex);
+	while (av->isys->in_reset) {
+		mutex_unlock(&av->isys->reset_mutex);
+		dev_dbg(&av->isys->adev->auxdev.dev,
+			"release: %s: wait for reset\n", av->vdev.name);
+		usleep_range(10000, 11000);
+		mutex_lock(&av->isys->reset_mutex);
+	}
+	mutex_unlock(&av->isys->reset_mutex);
+	return vb2_fop_release(file);
+}
+
+#endif
 const struct ipu6_isys_pixelformat *
 ipu6_isys_get_isys_format(u32 pixelformat, u32 type)
 {
@@ -506,7 +528,7 @@ static int ipu6_isys_fw_pin_cfg(struct ipu6_isys_video *av,
 	output_pin->csi_be_soc_pixel_remapping =
 		CSI_BE_SOC_PIXEL_REMAPPING_FLAG_NO_REMAPPING;
 
-	output_pin->snoopable = true;
+	output_pin->snoopable = false;
 	output_pin->error_handling_enable = false;
 	output_pin->sensor_type = isys->sensor_type++;
 	if (isys->sensor_type > isys->pdata->ipdata->sensor_type_end)
@@ -515,6 +537,21 @@ static int ipu6_isys_fw_pin_cfg(struct ipu6_isys_video *av,
 	return 0;
 }
 
+#ifdef CONFIG_VIDEO_INTEL_IPU6_ISYS_RESET
+bool is_support_vc(struct ipu6_isys_video *av)
+{
+	struct media_pad *remote_pad = media_pad_remote_pad_first(av->vdev.entity.pads);
+	struct v4l2_subdev *sd;
+	struct device *dev = &av->isys->adev->auxdev.dev;
+
+	sd = media_entity_to_v4l2_subdev(remote_pad->entity);
+	struct ipu6_isys_subdev *asd = to_ipu6_isys_subdev(sd);
+	struct ipu6_isys_csi2 *csi2 = to_ipu6_isys_csi2(asd);
+	dev_dbg(dev, "csi2->is_multiple = %d\n", csi2->is_multiple);
+	return csi2->is_multiple;
+}
+
+#endif
 static int start_stream_firmware(struct ipu6_isys_video *av,
 				 struct ipu6_isys_buffer_list *bl)
 {
@@ -595,8 +632,11 @@ static int start_stream_firmware(struct ipu6_isys_video *av,
 	}
 
 	reinit_completion(&stream->stream_start_completion);
-
+#ifdef CONFIG_VIDEO_INTEL_IPU6_ISYS_RESET
+	if (bl && is_support_vc(av)) {
+#else
 	if (bl) {
+#endif
 		send_type = IPU6_FW_ISYS_SEND_TYPE_STREAM_START_AND_CAPTURE;
 		ipu6_fw_isys_dump_frame_buff_set(dev, buf,
 						 stream_cfg->nof_output_pins);
@@ -626,7 +666,25 @@ static int start_stream_firmware(struct ipu6_isys_video *av,
 		ret = -EIO;
 		goto out_stream_close;
 	}
+#ifdef CONFIG_VIDEO_INTEL_IPU6_ISYS_RESET
+	if (bl && !is_support_vc(av)) {
+		dev_dbg(dev, "start stream: capture\n");
+		send_type = IPU6_FW_ISYS_SEND_TYPE_STREAM_CAPTURE;
+		ipu6_fw_isys_dump_frame_buff_set(dev, buf, stream_cfg->nof_output_pins);
+		ret = ipu6_fw_isys_complex_cmd(av->isys, stream->stream_handle,
+					       buf, msg->dma_addr, sizeof(*buf),
+					       send_type);
+
+		if (ret < 0) {
+			dev_err(dev, "can't queue buffers (%d)\n", ret);
+			goto out_stream_close;
+		}
+	} else
+		dev_dbg(dev, "start stream: complete\n");
+
+#else
 	dev_dbg(dev, "start stream: complete\n");
+#endif
 
 	return 0;
 
@@ -673,7 +731,11 @@ static void stop_streaming_firmware(struct ipu6_isys_video *av)
 	}
 
 	tout = wait_for_completion_timeout(&stream->stream_stop_completion,
+#ifdef CONFIG_VIDEO_INTEL_IPU6_ISYS_RESET
+				      IPU6_LIB_CALL_TIMEOUT_JIFFIES_RESET);
+#else
 					   IPU6_FW_CALL_TIMEOUT_JIFFIES);
+#endif
 	if (!tout)
 		dev_warn(dev, "stream stop time out\n");
 	else if (stream->error)
@@ -698,7 +760,11 @@ static void close_streaming_firmware(struct ipu6_isys_video *av)
 	}
 
 	tout = wait_for_completion_timeout(&stream->stream_close_completion,
+#ifdef CONFIG_VIDEO_INTEL_IPU6_ISYS_RESET
+					   IPU6_LIB_CALL_TIMEOUT_JIFFIES_RESET);
+#else
 					   IPU6_FW_CALL_TIMEOUT_JIFFIES);
+#endif
 	if (!tout)
 		dev_warn(dev, "stream close time out\n");
 	else if (stream->error)
@@ -706,6 +772,12 @@ static void close_streaming_firmware(struct ipu6_isys_video *av)
 	else
 		dev_dbg(dev, "close stream: complete\n");
 
+#ifdef CONFIG_VIDEO_INTEL_IPU6_ISYS_RESET
+		stream->last_sequence = atomic_read(&stream->sequence);
+		dev_dbg(dev, "IPU_ISYS_RESET: ip->last_sequence = %d\n",
+			stream->last_sequence);
+
+#endif
 	put_stream_opened(av);
 }
 
@@ -720,7 +792,18 @@ int ipu6_isys_video_prepare_stream(struct ipu6_isys_video *av,
 		return -EINVAL;
 
 	stream->nr_queues = nr_queues;
+#ifdef CONFIG_VIDEO_INTEL_IPU6_ISYS_RESET
+	if (av->isys->in_reset) {
+		atomic_set(&stream->sequence, stream->last_sequence);
+		dev_dbg(&av->isys->adev->auxdev.dev,
+			"atomic_set : stream->last_sequence = %d\n",
+			stream->last_sequence);
+	} else {
+		atomic_set(&stream->sequence, 0);
+	}
+# else
 	atomic_set(&stream->sequence, 0);
+#endif
 
 	stream->seq_index = 0;
 	memset(stream->seq, 0, sizeof(stream->seq));
@@ -964,35 +1047,14 @@ ipu6_isys_query_stream_by_source(struct ipu6_isys *isys, int source, u8 vc)
 	return stream;
 }
 
-static u64 get_stream_mask_by_pipeline(struct ipu6_isys_video *__av)
-{
-	struct media_pipeline *pipeline =
-		media_entity_pipeline(&__av->vdev.entity);
-	unsigned int i;
-	u64 stream_mask = 0;
-
-	for (i = 0; i < NR_OF_CSI2_SRC_PADS; i++) {
-		struct ipu6_isys_video *av = &__av->csi2->av[i];
-
-		if (pipeline == media_entity_pipeline(&av->vdev.entity))
-			stream_mask |= BIT_ULL(av->source_stream);
-	}
-
-	return stream_mask;
-}
-
 int ipu6_isys_video_set_streaming(struct ipu6_isys_video *av, int state,
 				  struct ipu6_isys_buffer_list *bl)
 {
-	struct v4l2_subdev_krouting *routing;
 	struct ipu6_isys_stream *stream = av->stream;
-	struct v4l2_subdev_state *subdev_state;
 	struct device *dev = &av->isys->adev->auxdev.dev;
 	struct v4l2_subdev *sd;
 	struct media_pad *r_pad;
-	u32 sink_pad, sink_stream;
-	u64 r_stream;
-	u64 stream_mask = 0;
+	u32 r_stream = 0;
 	int ret = 0;
 
 	dev_dbg(dev, "set stream: %d\n", state);
@@ -1002,29 +1064,21 @@ int ipu6_isys_video_set_streaming(struct ipu6_isys_video *av, int state,
 
 	sd = &stream->asd->sd;
 	r_pad = media_pad_remote_pad_first(&av->pad);
-	r_stream = ipu6_isys_get_src_stream_by_src_pad(sd, r_pad->index);
-
-	subdev_state = v4l2_subdev_lock_and_get_active_state(sd);
-	routing = &subdev_state->routing;
-	ret = v4l2_subdev_routing_find_opposite_end(routing, r_pad->index,
-						    r_stream, &sink_pad,
-						    &sink_stream);
-	v4l2_subdev_unlock_state(subdev_state);
-	if (ret)
-		return ret;
-
-	stream_mask = get_stream_mask_by_pipeline(av);
+	r_stream = av->vc;
 	if (!state) {
 		stop_streaming_firmware(av);
 
 		/* stop sub-device which connects with video */
-		dev_dbg(dev, "stream off entity %s pad:%d mask:0x%llx\n",
-			sd->name, r_pad->index, stream_mask);
+		dev_dbg(dev, "disable streams %s pad:%d mask:0x%llx for %s\n",
+			sd->name, r_pad->index, BIT_ULL(r_stream),
+			stream->source_entity->name);
 		ret = v4l2_subdev_disable_streams(sd, r_pad->index,
-						  stream_mask);
-		if (ret)
-			dev_err(dev, "stream off %s failed with %d\n", sd->name,
-				ret);
+						  BIT_ULL(r_stream));
+		if (ret) {
+			dev_err(dev, "disable streams %s failed with %d\n",
+				sd->name, ret);
+			return ret;
+		}
 
 		close_streaming_firmware(av);
 	} else {
@@ -1035,12 +1089,14 @@ int ipu6_isys_video_set_streaming(struct ipu6_isys_video *av, int state,
 		}
 
 		/* start sub-device which connects with video */
-		dev_dbg(dev, "stream on %s pad %d mask 0x%llx\n", sd->name,
-			r_pad->index, stream_mask);
-		ret = v4l2_subdev_enable_streams(sd, r_pad->index, stream_mask);
+		dev_dbg(dev, "enable streams %s pad: %d mask:0x%llx for %s\n",
+			sd->name, r_pad->index, BIT_ULL(r_stream),
+			stream->source_entity->name);
+		ret = v4l2_subdev_enable_streams(sd, r_pad->index,
+						 BIT_ULL(r_stream));
 		if (ret) {
-			dev_err(dev, "stream on %s failed with %d\n", sd->name,
-				ret);
+			dev_err(dev, "enable streams %s failed with %d\n",
+				sd->name, ret);
 			goto out_media_entity_stop_streaming_firmware;
 		}
 	}
@@ -1088,7 +1144,11 @@ static const struct v4l2_file_operations isys_fops = {
 	.unlocked_ioctl = video_ioctl2,
 	.mmap = vb2_fop_mmap,
 	.open = video_open,
+#ifdef CONFIG_VIDEO_INTEL_IPU6_ISYS_RESET
+	.release = video_release,
+#else
 	.release = vb2_fop_release,
+#endif
 };
 
 int ipu6_isys_fw_open(struct ipu6_isys *isys)
@@ -1201,8 +1261,6 @@ int ipu6_isys_setup_video(struct ipu6_isys_video *av,
 	/* Find the root */
 	state = v4l2_subdev_lock_and_get_active_state(remote_sd);
 	for_each_active_route(&state->routing, r) {
-		(*nr_queues)++;
-
 		if (r->source_pad == remote_pad->index)
 			route = r;
 	}
@@ -1217,11 +1275,13 @@ int ipu6_isys_setup_video(struct ipu6_isys_video *av,
 
 	ret = ipu6_isys_csi2_get_remote_desc(av->source_stream,
 					     to_ipu6_isys_csi2(asd),
-					     *source_entity, &entry);
+					     *source_entity, &entry,
+					      nr_queues);
 	if (ret == -ENOIOCTLCMD) {
 		av->vc = 0;
 		av->dt = ipu6_isys_mbus_code_to_mipi(pfmt->code);
-	} else if (!ret) {
+		*nr_queues = 1;
+	} else if (*nr_queues && !ret) {
 		dev_dbg(dev, "Framedesc: stream %u, len %u, vc %u, dt %#x\n",
 			entry.stream, entry.length, entry.bus.csi2.vc,
 			entry.bus.csi2.dt);
@@ -1305,6 +1365,11 @@ int ipu6_isys_video_init(struct ipu6_isys_video *av)
 	av->pix_fmt = format.fmt.pix;
 	__ipu6_isys_vidioc_try_fmt_meta_cap(av, &format_meta);
 	av->meta_fmt = format_meta.fmt.meta;
+#ifdef CONFIG_VIDEO_INTEL_IPU6_ISYS_RESET
+	av->reset = false;
+	av->skipframe = 0;
+	av->start_streaming = 0;
+#endif
 
 	video_set_drvdata(&av->vdev, av);
 

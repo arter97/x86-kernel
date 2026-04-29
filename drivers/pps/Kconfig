@@ -42,4 +42,6 @@ source "drivers/pps/clients/Kconfig"
 
 source "drivers/pps/generators/Kconfig"
 
+source "drivers/pps/intel_pps_tio/Kconfig"
+
 endif # PPS

@@ -35,3 +35,20 @@ config PPS_CLIENT_GPIO
 	  GPIO. To be useful you must also register a platform device
 	  specifying the GPIO pin and other options, usually in your board
 	  setup.
+
+config PPS_CLIENT_TIO
+	tristate "PPS client using TIO"
+	depends on INTEL_TIO_PLAT
+	help
+	This driver registers a Pulse-Per-Second (PPS) source using
+	Intel Time I/O (TIO) TGPIO hardware which captures ART
+	(Always Running Timer)timestamps.This hardware is present
+	on 2019 and newer Intel CPUs.The device is instantiated by the
+	Intel TIO platform driver and operates as an auxiliary child device.
+
+	Since the hardware does not provide an interrupt for PPS capture
+	events, the driver polls the hardware using a high-resolution timer
+	and converts ART timestamps to system wall time before reporting
+	them to the PPS subsystem.
+
+	If unsure, say N.

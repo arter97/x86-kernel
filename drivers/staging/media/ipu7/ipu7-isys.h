@@ -25,6 +25,11 @@
 #include "ipu7-isys-csi2.h"
 #include "ipu7-isys-video.h"
 
+#ifdef CONFIG_DEBUG_FS
+struct dentry;
+
+#endif
+
 #define IPU_ISYS_ENTITY_PREFIX		"Intel IPU7"
 
 /* FW support max 16 streams */
@@ -44,8 +49,16 @@
 #define IPU_ISYS_MAX_WIDTH		8160U
 #define IPU_ISYS_MAX_HEIGHT		8190U
 
+#ifdef CONFIG_VIDEO_INTEL_IPU7_ISYS_RESET
+#define RESET_STATE_IN_RESET                 1U
+#define RESET_STATE_IN_STOP_STREAMING        2U
+#endif
+
 #define FW_CALL_TIMEOUT_JIFFIES		\
 	msecs_to_jiffies(IPU_LIB_CALL_TIMEOUT_MS)
+#ifdef CONFIG_VIDEO_INTEL_IPU7_ISYS_RESET
+#define FW_CALL_TIMEOUT_JIFFIES_RESET	msecs_to_jiffies(200)
+#endif
 
 struct isys_fw_log {
 	struct mutex mutex; /* protect whole struct */
@@ -53,6 +66,13 @@ struct isys_fw_log {
 	void *addr;
 	u32 count; /* running counter of log */
 	u32 size; /* actual size of log content, in bits */
+};
+
+struct ipu7_isys_abi_ops {
+	size_t (*prepare_payload)(void *cpu_mapped_buf, u16 send_type,
+				  size_t size);
+	void (*decode_resp)(struct ipu7_insys_resp *dst, const void *token);
+	size_t resp_queue_token_size;
 };
 
 /*
@@ -68,6 +88,9 @@ struct isys_fw_log {
  * @streams_lock: serialise access to streams
  * @streams: streams per firmware stream ID
  * @syscom: fw communication layer context
+#ifdef CONFIG_VIDEO_INTEL_IPU7_ISYS_RESET
+ * @need_reset: Isys requires d0i0->i3 transition
+#endif
  * @ref_count: total number of callers fw open
  * @mutex: serialise access isys video open/release related operations
  * @stream_mutex: serialise stream start and stop, queueing requests
@@ -92,6 +115,10 @@ struct ipu7_isys {
 	unsigned int ref_count;
 	unsigned int stream_opened;
 
+#ifdef CONFIG_DEBUG_FS
+	struct dentry *debugfsdir;
+#endif
+
 	struct mutex mutex;	/* Serialise isys video open/release related */
 	struct mutex stream_mutex;	/* Stream start, stop, queueing reqs */
 
@@ -106,9 +133,16 @@ struct ipu7_isys {
 	struct list_head framebuflist;
 	struct list_head framebuflist_fw;
 	struct v4l2_async_notifier notifier;
+	struct ipu7_isys_abi_ops abi_ops;
+	struct ipu7_insys_resp resp;
 
 	struct ipu7_insys_config *subsys_config;
 	dma_addr_t subsys_config_dma_addr;
+#ifdef CONFIG_VIDEO_INTEL_IPU7_ISYS_RESET
+	struct mutex reset_mutex;
+	bool need_reset;
+	int state;
+#endif
 };
 
 struct isys_fw_msgs {
@@ -125,6 +159,21 @@ struct ipu7_isys_csi2_config {
 	unsigned int nlanes;
 	unsigned int port;
 	enum v4l2_mbus_type bus_type;
+};
+
+struct ipu7_isys_subdev_i2c_info {
+	struct i2c_board_info board_info;
+	int i2c_adapter_id;
+	char i2c_adapter_bdf[32];
+};
+
+struct ipu7_isys_subdev_info {
+	struct ipu7_isys_csi2_config *csi2;
+	struct ipu7_isys_subdev_i2c_info i2c;
+};
+
+struct ipu7_isys_subdev_pdata {
+	struct ipu7_isys_subdev_info **subdevs;
 };
 
 struct sensor_async_sd {

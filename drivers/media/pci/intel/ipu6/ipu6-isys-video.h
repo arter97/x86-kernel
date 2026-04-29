@@ -45,6 +45,9 @@ struct ipu6_isys_stream {
 	struct mutex mutex;
 	struct media_entity *source_entity;
 	atomic_t sequence;
+#ifdef CONFIG_VIDEO_INTEL_IPU6_ISYS_RESET
+	int last_sequence;
+#endif
 	unsigned int seq_index;
 	struct sequence_info seq[IPU6_ISYS_MAX_PARALLEL_SOF];
 	int stream_source;
@@ -95,6 +98,11 @@ struct ipu6_isys_video {
 	u32 source_stream;
 	u8 vc;
 	u8 dt;
+#ifdef CONFIG_VIDEO_INTEL_IPU6_ISYS_RESET
+	unsigned int reset;
+	unsigned int skipframe;
+	unsigned int start_streaming;
+#endif
 };
 
 #define ipu6_isys_queue_to_video(__aq) \
@@ -131,5 +139,8 @@ u32 ipu6_isys_get_data_size(struct ipu6_isys_video *av);
 u32 ipu6_isys_get_bytes_per_line(struct ipu6_isys_video *av);
 u32 ipu6_isys_get_frame_width(struct ipu6_isys_video *av);
 u32 ipu6_isys_get_frame_height(struct ipu6_isys_video *av);
+#ifdef CONFIG_VIDEO_INTEL_IPU6_ISYS_RESET
+bool is_support_vc(struct ipu6_isys_video *av);
+#endif
 
 #endif /* IPU6_ISYS_VIDEO_H */

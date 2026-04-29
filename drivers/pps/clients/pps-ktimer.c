@@ -41,7 +41,7 @@ static void pps_ktimer_event(struct timer_list *unused)
  * The PPS info struct
  */
 
-static struct pps_source_info pps_ktimer_info = {
+static const struct pps_source_info pps_ktimer_info = {
 	.name		= "ktimer",
 	.path		= "",
 	.mode		= PPS_CAPTUREASSERT | PPS_OFFSETASSERT |

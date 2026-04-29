@@ -133,7 +133,7 @@ static long pps_cdev_ioctl(struct file *file,
 		}
 
 		/* Check for supported capabilities */
-		if ((params.mode & ~pps->info.mode) != 0) {
+		if ((params.mode & ~pps->info->mode) != 0) {
 			dev_dbg(&pps->dev, "unsupported capabilities (%x)\n",
 								params.mode);
 			return -EINVAL;
@@ -151,7 +151,7 @@ static long pps_cdev_ioctl(struct file *file,
 								params.mode);
 			pps->params.mode |= PPS_TSFMT_TSPEC;
 		}
-		if (pps->info.mode & PPS_CANWAIT)
+		if (pps->info->mode & PPS_CANWAIT)
 			pps->params.mode |= PPS_CANWAIT;
 		pps->params.api_version = PPS_API_VERS;
 
@@ -170,7 +170,7 @@ static long pps_cdev_ioctl(struct file *file,
 	case PPS_GETCAP:
 		dev_dbg(&pps->dev, "PPS_GETCAP\n");
 
-		err = put_user(pps->info.mode, iuarg);
+		err = put_user(pps->info->mode, iuarg);
 		if (err)
 			return -EFAULT;
 
@@ -222,7 +222,7 @@ static long pps_cdev_ioctl(struct file *file,
 			return -EFAULT;
 
 		/* Check for supported capabilities */
-		if ((bind_args.edge & ~pps->info.mode) != 0) {
+		if ((bind_args.edge & ~pps->info->mode) != 0) {
 			dev_err(&pps->dev, "unsupported capabilities (%x)\n",
 					bind_args.edge);
 			return -EINVAL;
@@ -371,7 +371,7 @@ int pps_register_cdev(struct pps_device *pps)
 	if (err < 0) {
 		if (err == -ENOSPC) {
 			pr_err("%s: too many PPS sources in the system\n",
-			       pps->info.name);
+			       pps->info->name);
 			err = -EBUSY;
 		}
 		kfree(pps);
@@ -380,7 +380,7 @@ int pps_register_cdev(struct pps_device *pps)
 	pps->id = err;
 
 	pps->dev.class = pps_class;
-	pps->dev.parent = pps->info.dev;
+	pps->dev.parent = pps->info->dev;
 	pps->dev.devt = MKDEV(pps_major, pps->id);
 	dev_set_drvdata(&pps->dev, pps);
 	dev_set_name(&pps->dev, "pps%d", pps->id);
@@ -389,7 +389,7 @@ int pps_register_cdev(struct pps_device *pps)
 	if (err)
 		goto free_idr;
 
-	pr_debug("source %s got cdev (%d:%d)\n", pps->info.name, pps_major,
+	pr_debug("source %s got cdev (%d:%d)\n", pps->info->name, pps_major,
 		 pps->id);
 
 	get_device(&pps->dev);

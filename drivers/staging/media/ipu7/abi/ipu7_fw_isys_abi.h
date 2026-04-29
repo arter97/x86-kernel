@@ -47,7 +47,6 @@ enum ipu7_insys_resp_type {
 	IPU_INSYS_RESP_TYPE_FRAME_EOF = 8,
 	IPU_INSYS_RESP_TYPE_STREAM_START_AND_CAPTURE_DONE = 9,
 	IPU_INSYS_RESP_TYPE_STREAM_CAPTURE_DONE = 10,
-	IPU_INSYS_RESP_TYPE_PWM_IRQ = 11,
 	N_IPU_INSYS_RESP_TYPE
 };
 
@@ -126,6 +125,15 @@ enum ipu7_insys_frame_format_type {
 	IPU_INSYS_FRAME_FORMAT_ARGB888 = 31,
 	IPU_INSYS_FRAME_FORMAT_BGRA888 = 32,
 	IPU_INSYS_FRAME_FORMAT_ABGR888 = 33,
+	IPU_INSYS_FRAME_FORMAT_RGB888 = 34,
+	IPU_INSYS_FRAME_FORMAT_YUV420_LEGACY = 35,
+	IPU_INSYS_FRAME_FORMAT_RAW6 = 36,
+	IPU_INSYS_FRAME_FORMAT_RAW7 = 37,
+	IPU_INSYS_FRAME_FORMAT_RGB444 = 38,
+	IPU_INSYS_FRAME_FORMAT_RGB666 = 39,
+	IPU_INSYS_FRAME_FORMAT_RAW20 = 40,
+	IPU_INSYS_FRAME_FORMAT_P010 = 41,
+	IPU_INSYS_FRAME_FORMAT_RGB555 = 42,
 	N_IPU_INSYS_FRAME_FORMAT
 };
 
@@ -201,7 +209,8 @@ enum ipu7_insys_mipi_dt_rename_mode {
 enum ipu7_insys_output_link_dest {
 	IPU_INSYS_OUTPUT_LINK_DEST_MEM = 0,
 	IPU_INSYS_OUTPUT_LINK_DEST_PSYS = 1,
-	IPU_INSYS_OUTPUT_LINK_DEST_IPU_EXTERNAL = 2
+	IPU_INSYS_OUTPUT_LINK_DEST_IPU_EXTERNAL = 2,
+	N_IPU_INSYS_OUTPUT_LINK_DEST
 };
 
 enum ipu7_insys_dpcm_type {
@@ -220,8 +229,11 @@ enum ipu7_insys_dpcm_predictor {
 
 enum ipu7_insys_send_queue_token_flag {
 	IPU_INSYS_SEND_QUEUE_TOKEN_FLAG_NONE = 0,
-	IPU_INSYS_SEND_QUEUE_TOKEN_FLAG_FLUSH_FORCE = 1
+	IPU_INSYS_SEND_QUEUE_TOKEN_FLAG_FLUSH_FORCE = 1,
+	N_IPU_INSYS_SEND_QUEUE_TOKEN_FLAG
 };
+
+#define IPU_INSYS_MIPI_FRAME_NUMBER_DONT_CARE UINT16_MAX
 
 #pragma pack(push, 1)
 struct ipu7_insys_resolution {
@@ -248,9 +260,16 @@ struct ipu7_insys_output_link {
 	u8 pad[2];
 };
 
+struct ipu7_insys_output_cropping_v1 {
+	u16 line_top;
+	u16 line_bottom;
+};
+
 struct ipu7_insys_output_cropping {
 	u16 line_top;
 	u16 line_bottom;
+	u16 column_left;
+	u16 column_right;
 };
 
 struct ipu7_insys_output_dpcm {
@@ -260,9 +279,35 @@ struct ipu7_insys_output_dpcm {
 	u8 pad;
 };
 
-struct ipu7_insys_output_pin {
+enum ipu_insys_cfa_dim {
+	IPU_INSYS_CFA_DIM_2x2 = 0,
+	IPU_INSYS_CFA_DIM_4x4 = 1,
+	N_IPU_INSYS_CFA_DIM
+};
+
+#define IPU_INSYS_MAX_BINNING_FACTOR		(4U)
+#define IPU_INSYS_UPIPE_MAX_OUTPUTS		(2U)
+#define IPU_INSYS_UPIPE_MAX_UOB_FIFO_ALLOC	(4U)
+#define IPU_INSYS_UPIPE_STREAM_CFG_BUF_SIZE	(32U)
+#define IPU_INSYS_UPIPE_FRAME_CFG_BUF_SIZE	(36U)
+
+struct ipu7_insys_upipe_output_pin {
+	ia_gofo_addr_t opaque_pin_cfg;
+	u16 plane_offset_1;
+	u16 plane_offset_2;
+	u8 single_uob_fifo;
+	u8 shared_uob_fifo;
+	u8 pad[2];
+};
+
+struct ipu7_insys_capture_output_pin_cfg {
+	struct ipu7_insys_capture_output_pin_payload pin_payload;
+	ia_gofo_addr_t upipe_capture_cfg;
+};
+
+struct ipu7_insys_output_pin_v1 {
 	struct ipu7_insys_output_link link;
-	struct ipu7_insys_output_cropping crop;
+	struct ipu7_insys_output_cropping_v1 crop;
 	struct ipu7_insys_output_dpcm dpcm;
 	u32 stride;
 	u16 ft;
@@ -272,6 +317,21 @@ struct ipu7_insys_output_pin {
 	u8 pad[3];
 };
 
+struct ipu7_insys_output_pin {
+	struct ipu7_insys_output_link link;
+	struct ipu7_insys_output_cropping crop;
+	struct ipu7_insys_output_dpcm dpcm;
+	struct ipu7_insys_upipe_output_pin upipe_pin_cfg;
+	u32 stride;
+	u16 ft;
+	u8 upipe_enable;
+	u8 send_irq;
+	u8 input_pin_id;
+	u8 early_ack_en;
+	u8 cfa_dim;
+	u8 binning_factor;
+};
+
 struct ipu7_insys_input_pin {
 	struct ipu7_insys_resolution input_res;
 	u16 sync_msg_map;
@@ -279,6 +339,17 @@ struct ipu7_insys_input_pin {
 	u8 disable_mipi_unpacking;
 	u8 dt_rename_mode;
 	u8 mapped_dt;
+	u8 pad[2];
+};
+
+struct ipu7_insys_stream_cfg_v1 {
+	struct ipu7_insys_input_pin input_pins[4];
+	struct ipu7_insys_output_pin_v1 output_pins[4];
+	u16 stream_msg_map;
+	u8 port_id;
+	u8 vc;
+	u8 nof_input_pins;
+	u8 nof_output_pins;
 	u8 pad[2];
 };
 
@@ -293,7 +364,7 @@ struct ipu7_insys_stream_cfg {
 	u8 pad[2];
 };
 
-struct ipu7_insys_buffset {
+struct ipu7_insys_buffset_v1 {
 	struct ipu7_insys_capture_output_pin_payload output_pins[4];
 	u8 capture_msg_map;
 	u8 frame_id;
@@ -301,7 +372,15 @@ struct ipu7_insys_buffset {
 	u8 pad[5];
 };
 
-struct ipu7_insys_resp {
+struct ipu7_insys_buffset {
+	struct ipu7_insys_capture_output_pin_cfg output_pins[4];
+	u8 capture_msg_map;
+	u8 frame_id;
+	u8 skip_frame;
+	u8 pad[5];
+};
+
+struct ipu7_insys_resp_v1 {
 	u64 buf_id;
 	struct ipu7_insys_capture_output_pin_payload pin;
 	struct ia_gofo_msg_err error_info;
@@ -312,7 +391,21 @@ struct ipu7_insys_resp {
 	u8 pin_id;
 	u8 frame_id;
 	u8 skip_frame;
-	u8 pad[2];
+	u16 mipi_fn;
+};
+
+struct ipu7_insys_resp {
+	u64 buf_id;
+	struct ipu7_insys_capture_output_pin_payload pin;
+	struct ia_gofo_msg_err error_info;
+	u32 timestamp[2];
+	u16 mipi_fn;
+	u8 type;
+	u8 msg_link_streaming_mode;
+	u8 stream_id;
+	u8 pin_id;
+	u8 frame_id;
+	u8 skip_frame;
 };
 
 struct ipu7_insys_resp_queue_token {
@@ -369,6 +462,12 @@ enum insys_msg_err_stream {
 	INSYS_MSG_ERR_STREAM_INSUFFICIENT_RESOURCES_OUTPUT = 36,
 	INSYS_MSG_ERR_STREAM_WIDTH_OUTPUT_SIZE = 37,
 	INSYS_MSG_ERR_STREAM_CLOSED = 38,
+	INSYS_MSG_ERR_STREAM_BINNING_FACTOR_NOT_SUPPORTED = 39,
+	INSYS_MSG_ERR_STREAM_CFA_DIM_NOT_SUPPORTED = 40,
+	INSYS_MSG_ERR_STREAM_INVALID_UPIPE_ENABLE = 41,
+	INSYS_MSG_ERR_STREAM_INVALID_UPIPE_UOB_SINGLE = 42,
+	INSYS_MSG_ERR_STREAM_INVALID_UPIPE_UOB_SHARED = 43,
+	INSYS_MSG_ERR_STREAM_INVALID_UPIPE_OPAQUE_PIN_CFG = 44,
 	INSYS_MSG_ERR_STREAM_N
 };
 

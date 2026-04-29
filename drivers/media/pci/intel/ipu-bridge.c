@@ -34,6 +34,13 @@
  * Used to match IVSC device by ipu_bridge_match_ivsc_dev()
  */
 #define IVSC_DEV_NAME "intel_vsc"
+#define PHY_MODE_DPHY  0
+#define PHY_MODE_CPHY  1
+
+static const struct ipu_sensor_config ipu_supported_sensors_dummy[] = {
+	/* Lontium LT6911UXC dummy port for split mode */
+	IPU_SENSOR_CONFIG("INTC10B1", 0),
+};
 
 /*
  * Extend this array with ACPI Hardware IDs of devices known to be working
@@ -72,6 +79,8 @@ static const struct ipu_sensor_config ipu_supported_sensors[] = {
 	IPU_SENSOR_CONFIG("INT3537", 1, 437000000),
 	/* Lontium lt6911uxe */
 	IPU_SENSOR_CONFIG("INTC10C5", 0),
+	/* Lontium LT6911UXC */
+	IPU_SENSOR_CONFIG("INTC10B1", 0),
 	/* Omnivision OV01A10 / OV01A1S */
 	IPU_SENSOR_CONFIG("OVTI01A0", 1, 400000000),
 	IPU_SENSOR_CONFIG("OVTI01AS", 1, 400000000),
@@ -92,6 +101,8 @@ static const struct ipu_sensor_config ipu_supported_sensors[] = {
 	IPU_SENSOR_CONFIG("OVTI8856", 3, 180000000, 360000000, 720000000),
 	/* Toshiba T4KA3 */
 	IPU_SENSOR_CONFIG("XMCC0003", 1, 321468000),
+	/* Lontium lt6911gxd */
+	IPU_SENSOR_CONFIG("INTC1124", 0),
 };
 
 static const struct ipu_property_names prop_names = {
@@ -311,7 +322,9 @@ int ipu_bridge_parse_ssdb(struct acpi_device *adev, struct ipu_sensor *sensor)
 	}
 
 	sensor->link = ssdb.link;
+	sensor->pprval = ssdb.pprval;
 	sensor->lanes = ssdb.lanes;
+	sensor->phyconfig = ssdb.phyconfig;
 	sensor->mclkspeed = ssdb.mclkspeed;
 	sensor->rotation = ipu_bridge_parse_rotation(adev, &ssdb);
 	sensor->orientation = ipu_bridge_parse_orientation(adev);
@@ -330,6 +343,7 @@ static void ipu_bridge_create_fwnode_properties(
 {
 	struct ipu_property_names *names = &sensor->prop_names;
 	struct software_node *nodes = sensor->swnodes;
+	u8 bus_type;
 
 	sensor->prop_names = prop_names;
 
@@ -387,9 +401,16 @@ static void ipu_bridge_create_fwnode_properties(
 			PROPERTY_ENTRY_REF_ARRAY("lens-focus", sensor->vcm_ref);
 	}
 
+	if (sensor->phyconfig == PHY_MODE_DPHY)
+		bus_type = V4L2_FWNODE_BUS_TYPE_CSI2_DPHY;
+	else if (sensor->phyconfig == PHY_MODE_CPHY)
+		bus_type = V4L2_FWNODE_BUS_TYPE_CSI2_CPHY;
+	else
+		bus_type = V4L2_FWNODE_BUS_TYPE_GUESS;
+
 	sensor->ep_properties[0] = PROPERTY_ENTRY_U32(
 					sensor->prop_names.bus_type,
-					V4L2_FWNODE_BUS_TYPE_CSI2_DPHY);
+					bus_type);
 	sensor->ep_properties[1] = PROPERTY_ENTRY_U32_ARRAY_LEN(
 					sensor->prop_names.data_lanes,
 					bridge->data_lanes, sensor->lanes);
@@ -409,6 +430,15 @@ static void ipu_bridge_create_fwnode_properties(
 	sensor->ipu_properties[1] = PROPERTY_ENTRY_REF_ARRAY(
 					sensor->prop_names.remote_endpoint,
 					sensor->remote_ref);
+
+	/*
+	 * TODO: Remove the bus_type property for IPU
+	 * 1. keep fwnode property list no change.
+	 * 2. IPU driver needs to get bus_type from remote sensor ep.
+	 */
+	sensor->ipu_properties[2] = PROPERTY_ENTRY_U32
+					(sensor->prop_names.bus_type,
+					bus_type);
 }
 
 static void ipu_bridge_init_swnode_names(struct ipu_sensor *sensor)
@@ -470,18 +500,49 @@ static void ipu_bridge_init_swnode_group(struct ipu_sensor *sensor)
 	}
 }
 
+static struct ipu_sensor *find_real_sensor(struct ipu_bridge *bridge,
+					   struct acpi_device *adev)
+{
+	struct ipu_sensor *sensor;
+	unsigned int i;
+
+	for (i = 0; i < bridge->n_sensors; i++) {
+		sensor = &bridge->sensors[i];
+		if (sensor->adev == ACPI_PTR(acpi_dev_get(adev)))
+			return sensor;
+	}
+
+	return NULL;
+}
+
 static void ipu_bridge_create_connection_swnodes(struct ipu_bridge *bridge,
-						 struct ipu_sensor *sensor)
+						 struct ipu_sensor *sensor,
+						 bool dummy)
 {
 	struct ipu_node_names *names = &sensor->node_names;
 	struct software_node *nodes = sensor->swnodes;
 
 	ipu_bridge_init_swnode_names(sensor);
 
-	nodes[SWNODE_SENSOR_HID] = NODE_SENSOR(sensor->name,
-					       sensor->dev_properties);
-	nodes[SWNODE_SENSOR_PORT] = NODE_PORT(sensor->node_names.port,
-					      &nodes[SWNODE_SENSOR_HID]);
+	if (dummy) {
+		struct ipu_sensor *real_sensor;
+
+		real_sensor = find_real_sensor(bridge, sensor->adev);
+		nodes[SWNODE_SENSOR_HID] =
+				real_sensor->swnodes[SWNODE_SENSOR_HID];
+		/* 1 for dummy port */
+		snprintf(sensor->node_names.port,
+				sizeof(sensor->node_names.port),
+				SWNODE_GRAPH_PORT_NAME_FMT, 1);
+		nodes[SWNODE_SENSOR_PORT] = NODE_PORT(sensor->node_names.port,
+				&real_sensor->swnodes[SWNODE_SENSOR_HID]);
+	} else {
+		nodes[SWNODE_SENSOR_HID] = NODE_SENSOR(sensor->name,
+				sensor->dev_properties);
+		nodes[SWNODE_SENSOR_PORT] = NODE_PORT(sensor->node_names.port,
+				&nodes[SWNODE_SENSOR_HID]);
+	}
+
 	nodes[SWNODE_SENSOR_ENDPOINT] = NODE_ENDPOINT(
 						sensor->node_names.endpoint,
 						&nodes[SWNODE_SENSOR_PORT],
@@ -660,7 +721,7 @@ static void ipu_bridge_unregister_sensors(struct ipu_bridge *bridge)
 }
 
 static int ipu_bridge_connect_sensor(const struct ipu_sensor_config *cfg,
-				     struct ipu_bridge *bridge)
+				     struct ipu_bridge *bridge, bool dummy)
 {
 	struct fwnode_handle *fwnode, *primary;
 	struct ipu_sensor *sensor;
@@ -683,31 +744,53 @@ static int ipu_bridge_connect_sensor(const struct ipu_sensor_config *cfg,
 		if (ret)
 			goto err_put_adev;
 
+		if (dummy) {
+			if (sensor->link == sensor->pprval) {
+				acpi_dev_put(adev);
+				continue;
+			} else {
+				dev_info(ADEV_DEV(adev),
+					 "dummy sensor, link %d, pprval %d\n",
+					 sensor->link, sensor->pprval);
+				sensor->link = sensor->pprval;
+			}
+		}
+
 		snprintf(sensor->name, sizeof(sensor->name), "%s-%u",
 			 cfg->hid, sensor->link);
-
 		ret = ipu_bridge_check_ivsc_dev(sensor, adev);
 		if (ret)
 			goto err_put_adev;
 
 		ipu_bridge_create_fwnode_properties(sensor, bridge, cfg);
-		ipu_bridge_create_connection_swnodes(bridge, sensor);
+		if (dummy) {
+			/* need adev to match the dummy port with the real one */
+			sensor->adev = adev;
+		}
+		ipu_bridge_create_connection_swnodes(bridge, sensor, dummy);
 
-		ret = software_node_register_node_group(sensor->group);
+		if (dummy) {
+			ret = software_node_register_node_group(&sensor->group[1]);
+		} else {
+			ret = software_node_register_node_group(sensor->group);
+		}
 		if (ret)
 			goto err_put_ivsc;
 
+		if (!dummy) {
 		fwnode = software_node_fwnode(&sensor->swnodes[
 						      SWNODE_SENSOR_HID]);
 		if (!fwnode) {
 			ret = -ENODEV;
 			goto err_free_swnodes;
 		}
+		}
 
 		sensor->adev = ACPI_PTR(acpi_dev_get(adev));
-
-		primary = acpi_fwnode_handle(adev);
-		primary->secondary = fwnode;
+		if (!dummy) {
+			primary = acpi_fwnode_handle(adev);
+			primary->secondary = fwnode;
+		}
 
 		ret = ipu_bridge_instantiate_ivsc(sensor);
 		if (ret)
@@ -740,7 +823,16 @@ static int ipu_bridge_connect_sensors(struct ipu_bridge *bridge)
 		const struct ipu_sensor_config *cfg =
 			&ipu_supported_sensors[i];
 
-		ret = ipu_bridge_connect_sensor(cfg, bridge);
+		ret = ipu_bridge_connect_sensor(cfg, bridge, 0);
+		if (ret)
+			goto err_unregister_sensors;
+	}
+
+	for (i = 0; i < ARRAY_SIZE(ipu_supported_sensors_dummy); i++) {
+		const struct ipu_sensor_config *cfg =
+			&ipu_supported_sensors_dummy[i];
+
+		ret = ipu_bridge_connect_sensor(cfg, bridge, 1);
 		if (ret)
 			goto err_unregister_sensors;
 	}

@@ -7,6 +7,7 @@
 #include <linux/bitfield.h>
 #include <linux/bits.h>
 #include <linux/bug.h>
+#include <linux/debugfs.h>
 #include <linux/dma-mapping.h>
 #include <linux/err.h>
 #include <linux/firmware.h>
@@ -35,6 +36,10 @@
 #include "ipu7-isys-csi2-regs.h"
 #include "ipu7-mmu.h"
 #include "ipu7-platform-regs.h"
+#if IS_ENABLED(CONFIG_INTEL_IPU_ACPI)
+#include <media/ipu-get-acpi.h>
+
+#endif
 
 #define IPU_PCI_BAR		0
 #define IPU_PCI_PBBAR		4
@@ -49,6 +54,7 @@ static const unsigned int ipu7_csi_offsets[] = {
 static struct ipu_isys_internal_pdata ipu7p5_isys_ipdata = {
 	.csi2 = {
 		.gpreg = IS_IO_CSI2_GPREGS_BASE,
+		.gpreg_stride = 0x1000,
 	},
 	.hw_variant = {
 		.offset = IPU_UNIFIED_OFFSET,
@@ -789,6 +795,7 @@ static struct ipu_psys_internal_pdata ipu7p5_psys_ipdata = {
 static struct ipu_isys_internal_pdata ipu7_isys_ipdata = {
 	.csi2 = {
 		.gpreg = IS_IO_CSI2_GPREGS_BASE,
+		.gpreg_stride = 0x1000,
 	},
 	.hw_variant = {
 		.offset = IPU_UNIFIED_OFFSET,
@@ -1306,6 +1313,7 @@ static struct ipu_psys_internal_pdata ipu7_psys_ipdata = {
 static struct ipu_isys_internal_pdata ipu8_isys_ipdata = {
 	.csi2 = {
 		.gpreg = IPU8_IS_IO_CSI2_GPREGS_BASE,
+		.gpreg_stride = 0x2000,
 	},
 	.hw_variant = {
 		.offset = IPU_UNIFIED_OFFSET,
@@ -2125,9 +2133,10 @@ static int ipu7_isys_check_fwnode_graph(struct fwnode_handle *fwnode)
 
 static struct ipu7_bus_device *
 ipu7_isys_init(struct pci_dev *pdev, struct device *parent,
-	       const struct ipu_buttress_ctrl *ctrl, void __iomem *base,
-	       const struct ipu_isys_internal_pdata *ipdata,
-	       unsigned int nr)
+		const struct ipu_buttress_ctrl *ctrl, void __iomem *base,
+		struct ipu7_isys_subdev_pdata *spdata,
+		const struct ipu_isys_internal_pdata *ipdata,
+		unsigned int nr)
 {
 	struct fwnode_handle *fwnode = dev_fwnode(&pdev->dev);
 	struct ipu7_bus_device *isys_adev;
@@ -2156,6 +2165,7 @@ ipu7_isys_init(struct pci_dev *pdev, struct device *parent,
 
 	pdata->base = base;
 	pdata->ipdata = ipdata;
+	pdata->spdata = spdata;
 
 	isys_adev = ipu7_bus_initialize_device(pdev, parent, pdata, ctrl,
 					       IPU_ISYS_NAME);
@@ -2460,6 +2470,11 @@ static int ipu7_pci_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 	pci_set_drvdata(pdev, isp);
 	pci_set_master(pdev);
 
+#ifdef CONFIG_DEBUG_FS
+	isp->ipu7_dir = debugfs_create_dir(dev_name(dev), NULL);
+	if (IS_ERR(isp->ipu7_dir))
+		isp->ipu7_dir = NULL;
+#endif
 	switch (id->device) {
 	case IPU7_PCI_ID:
 		isp->hw_ver = IPU_VER_7;
@@ -2535,8 +2550,13 @@ static int ipu7_pci_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 		goto out_ipu_bus_del_devices;
 	}
 
+#if IS_ENABLED(CONFIG_INTEL_IPU_ACPI)
+	ipu_get_acpi_devices_new(&dev->platform_data);
+#endif
+
 	isp->isys = ipu7_isys_init(pdev, dev, isys_ctrl, isys_base,
-				   isys_ipdata, 0);
+					dev->platform_data,
+					isys_ipdata, 0);
 	if (IS_ERR(isp->isys)) {
 		ret = PTR_ERR(isp->isys);
 		goto out_ipu_bus_del_devices;
@@ -2622,6 +2642,7 @@ out_ipu_bus_del_devices:
 	if (!IS_ERR_OR_NULL(isp->psys))
 		pm_runtime_put_sync(&isp->psys->auxdev.dev);
 	ipu7_bus_del_devices(pdev);
+	debugfs_remove_recursive(isp->ipu7_dir);
 	release_firmware(isp->cpd_fw);
 buttress_exit:
 	ipu_buttress_exit(isp);
@@ -2647,6 +2668,7 @@ static void ipu7_pci_remove(struct pci_dev *pdev)
 	ipu7_mmu_cleanup(isp->psys->mmu);
 
 	ipu7_bus_del_devices(pdev);
+	debugfs_remove_recursive(isp->ipu7_dir);
 
 	pm_runtime_forbid(&pdev->dev);
 	pm_runtime_get_noresume(&pdev->dev);
@@ -2751,6 +2773,7 @@ static const struct dev_pm_ops ipu7_pm_ops = {
 static const struct pci_device_id ipu7_pci_tbl[] = {
 	{PCI_DEVICE(PCI_VENDOR_ID_INTEL, IPU7_PCI_ID)},
 	{PCI_DEVICE(PCI_VENDOR_ID_INTEL, IPU7P5_PCI_ID)},
+	{PCI_DEVICE(PCI_VENDOR_ID_INTEL, IPU8_PCI_ID)},
 	{0,}
 };
 MODULE_DEVICE_TABLE(pci, ipu7_pci_tbl);

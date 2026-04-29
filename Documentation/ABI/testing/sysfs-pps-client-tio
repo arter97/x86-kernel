@@ -1,0 +1,6 @@
+What:		/sys/class/pps/ppsx/poll
+Date:		April 2026
+KernelVersion:	7.10
+Contact:	Subramanian Mohan<subramanian.mohan@intel.com>
+Description:
+		Enable or disable PPS TIO client.

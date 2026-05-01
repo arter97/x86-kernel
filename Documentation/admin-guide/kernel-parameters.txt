@@ -2701,6 +2701,21 @@
 
 			The format of <cpu-list> is described above.
 
+	isol_tmr_migrate= [KNL,SMP,ISOL]
+			Provide an option to enable/disable timer migration
+			from isolated cores to noisy cores. This parameter is
+			only available when the kernel is built with
+			CONFIG_PREEMPT_RT, and depends on CONFIG_NO_HZ_COMMON.
+			Disable it when PREEMPT_RT is enabled; it can improve
+			RT performance. By default: enable
+
+			enable
+			  Enable timer migration from isolated cores to other
+			  noisy cores.
+			disable
+			  Disable timer migration from isolated cores to other
+			  noisy cores.
+
 	iucv=		[HW,NET]
 
 	ivrs_ioapic	[HW,X86-64]

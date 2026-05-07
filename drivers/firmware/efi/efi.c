@@ -81,6 +81,7 @@ struct mm_struct efi_mm = {
 
 struct workqueue_struct *efi_rts_wq;
 
+static bool __initdata efi_in_dynamic;
 static bool disable_runtime = IS_ENABLED(CONFIG_EFI_DISABLE_RUNTIME);
 static int __init setup_noefi(char *arg)
 {
@@ -114,6 +115,11 @@ static int __init parse_efi_cmdline(char *str)
 
 	if (parse_option_str(str, "runtime"))
 		disable_runtime = false;
+
+	if (parse_option_str(str, "dynamic")) {
+		disable_runtime = false;
+		efi_in_dynamic = true;
+	}
 
 	if (parse_option_str(str, "nosoftreserve"))
 		set_bit(EFI_MEM_NO_SOFT_RESERVE, &efi.flags);
@@ -401,6 +407,34 @@ static void __init efi_debugfs_init(void)
 static inline void efi_debugfs_init(void) {}
 #endif
 
+static ssize_t efi_dynamic_show(struct kobject *kobj, struct kobj_attribute *attr, char *buf)
+{
+	return sprintf(buf, "%d\n", efi_enabled(EFI_RUNTIME_SERVICES));
+}
+
+static ssize_t efi_dynamic_store(struct kobject *kobj, struct kobj_attribute *attr,
+				 const char *buf, size_t count)
+{
+	int ret;
+	bool enable;
+
+	ret = kstrtobool(buf, &enable);
+	if (ret)
+		return ret;
+
+	if (enable)
+		set_bit(EFI_RUNTIME_SERVICES, &efi.flags);
+	else {
+		if (efi_rts_wq)
+			flush_workqueue(efi_rts_wq);
+		clear_bit(EFI_RUNTIME_SERVICES, &efi.flags);
+	}
+
+	return count;
+}
+static struct kobj_attribute efi_dynamic_attr =
+	__ATTR(dynamic_enable, 0644, efi_dynamic_show, efi_dynamic_store);
+
 /*
  * We register the efi subsystem with the firmware subsystem and the
  * efivars subsystem with the efi subsystem, if the system was booted with
@@ -440,6 +474,11 @@ static int __init efisubsys_init(void)
 		pr_err("efi: Firmware registration failed.\n");
 		error = -ENOMEM;
 		goto err_destroy_wq;
+	}
+
+	if (efi_in_dynamic && efi.runtime_supported_mask) {
+		if (sysfs_create_file(efi_kobj, &efi_dynamic_attr.attr))
+			pr_warn("unable to register efi dynamic sysfs interface\n");
 	}
 
 	if (efi_rt_services_supported(EFI_RT_SUPPORTED_GET_VARIABLE |

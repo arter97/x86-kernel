@@ -32,7 +32,7 @@ static const char * const send_msg_types[N_IPU_INSYS_SEND_TYPE] = {
 };
 
 static void isys_stream_cfg_to_v1(struct ipu7_insys_stream_cfg_v1 *dst,
-				  const struct ipu7_insys_stream_cfg *src)
+								const struct ipu7_insys_stream_cfg *src)
 {
 	unsigned int i;
 
@@ -401,6 +401,10 @@ void ipu7_fw_isys_dump_stream_cfg(struct device *dev,
 			cfg->output_pins[i].crop.line_top);
 		dev_dbg(dev, "\t.crop.line_bottom = %d\n",
 			cfg->output_pins[i].crop.line_bottom);
+		dev_dbg(dev, "\t.crop.column_left = %d\n",
+			cfg->output_pins[i].crop.column_left);
+		dev_dbg(dev, "\t.crop.column_right = %d\n",
+			cfg->output_pins[i].crop.column_right);
 
 		dev_dbg(dev, "\t.dpcm_enable = %d\n",
 			cfg->output_pins[i].dpcm.enable);

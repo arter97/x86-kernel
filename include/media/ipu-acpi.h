@@ -17,10 +17,7 @@
 #define _MEDIA_IPU_ACPI_H_
 
 #include <linux/version.h>
-#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 10, 0)
-#include <media/ipu-isys.h>
-#include "ipu-isys.h"
-#else
+
 #include <linux/clkdev.h>
 #include <linux/gpio/machine.h>
 #include <linux/i2c.h>
@@ -56,7 +53,6 @@ struct ipu_isys_subdev_pdata {
 	struct ipu_isys_subdev_info **subdevs;
 	struct ipu_isys_clk_mapping *clk_map;
 };
-#endif
 
 #define MAX_ACPI_SENSOR_NUM	4
 #define MAX_ACPI_I2C_NUM	12

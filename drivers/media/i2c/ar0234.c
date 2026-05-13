@@ -651,8 +651,7 @@ static int ar0234_start_streaming(struct ar0234 *ar0234)
 		goto err_rpm_put;
 	}
 
-	usleep_range(1000, 1500);
-
+	msleep(10);
 	reg_list = &ar0234->cur_mode->reg_list;
 	ret = cci_multi_reg_write(ar0234->regmap, reg_list->regs,
 				  reg_list->num_of_regs, NULL);

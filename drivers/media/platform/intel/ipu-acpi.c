@@ -116,6 +116,9 @@ static const struct acpi_device_id ipu_acpi_match[] = {
 	{ "INTC1031", 0 },	// ISX031 HID
 	{ "INTC031M", 0 },	// D3CMC68N-115-084 ISX031 HID
 #endif
+#if IS_ENABLED(CONFIG_VIDEO_AR0234)
+	{ "INTC10C0", 0 },	// AR0234 HID
+#endif
 	{},
 };
 

@@ -258,16 +258,19 @@ static int pps_tio_aux_create(struct pps_tio *pps_tio,
 
 	pps_tio->pdata->mode = mode;
 
-	auxiliary_device_init(auxdev);
+	ret = auxiliary_device_init(auxdev);
+	if (ret)
+		goto err_aux_init;
 
 	ret = auxiliary_device_add(auxdev);
 	if (ret)
-		goto err;
+		goto err_aux_dev_add;
 
 	return 0;
 
-err:
+err_aux_dev_add:
 	auxiliary_device_uninit(auxdev);
+err_aux_init:
 	kfree(auxdev);
 	return ret;
 }

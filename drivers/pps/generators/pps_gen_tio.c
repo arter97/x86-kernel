@@ -17,8 +17,6 @@
 #include <linux/timekeeping.h>
 #include <linux/types.h>
 
-#include <asm/cpu_device_id.h>
-
 #include "pps_tio_plat.h"
 
 /* Safety time to set hrtimer early */

@@ -27,6 +27,7 @@
 #define DEFAULT_PROBE_DISPLAY		true
 #define DEFAULT_VRAM_BAR_SIZE		0
 #define DEFAULT_FORCE_PROBE		CONFIG_DRM_XE_FORCE_PROBE
+#define DEFAULT_ENABLE_STOLEN		true
 #define DEFAULT_MAX_VFS			~0
 #define DEFAULT_MAX_VFS_STR		"unlimited"
 #define DEFAULT_WEDGED_MODE		1
@@ -36,6 +37,7 @@ struct xe_modparam xe_modparam = {
 	.probe_display =	DEFAULT_PROBE_DISPLAY,
 	.guc_log_level =	DEFAULT_GUC_LOG_LEVEL,
 	.force_probe =		DEFAULT_FORCE_PROBE,
+	.enable_stolen =	DEFAULT_ENABLE_STOLEN,
 #ifdef CONFIG_PCI_IOV
 	.max_vfs =		DEFAULT_MAX_VFS,
 #endif
@@ -79,6 +81,11 @@ module_param_named_unsafe(force_probe, xe_modparam.force_probe, charp, 0400);
 MODULE_PARM_DESC(force_probe,
 		 "Force probe options for specified devices. See CONFIG_DRM_XE_FORCE_PROBE for details "
 		 "[default=" DEFAULT_FORCE_PROBE "])");
+
+module_param_named(enable_stolen, xe_modparam.enable_stolen, bool, 0600);
+MODULE_PARM_DESC(enable_stolen,
+		 "Enable stolen memory detection; set to false to disable stolen detection "
+		 "[default=true]");
 
 #ifdef CONFIG_PCI_IOV
 module_param_named(max_vfs, xe_modparam.max_vfs, uint, 0400);

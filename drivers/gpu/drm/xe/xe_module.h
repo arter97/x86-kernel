@@ -18,6 +18,7 @@ struct xe_modparam {
 	char *huc_firmware_path;
 	char *gsc_firmware_path;
 	char *force_probe;
+	bool enable_stolen;
 #ifdef CONFIG_PCI_IOV
 	unsigned int max_vfs;
 #endif

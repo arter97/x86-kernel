@@ -1179,6 +1179,9 @@ void resched_cpu(int cpu)
 }
 
 #ifdef CONFIG_NO_HZ_COMMON
+#ifdef CONFIG_PREEMPT_RT
+static int __read_mostly isolate_timer_migration_disabled;
+#endif /* CONFIG_PREEMPT_RT */
 /*
  * In the semi idle case, use the nearest busy CPU for migrating timers
  * from an idle CPU.  This is good for power-savings.
@@ -1192,6 +1195,15 @@ int get_nohz_timer_target(void)
 	int i, cpu = smp_processor_id(), default_cpu = -1;
 	struct sched_domain *sd;
 	const struct cpumask *hk_mask;
+
+#ifdef CONFIG_PREEMPT_RT
+	/*
+	 * timer should not be migrated to noise kernel to avoid delayed
+	 * response.
+	 */
+	if (isolate_timer_migration_disabled && !housekeeping_cpu(cpu, HK_TYPE_KERNEL_NOISE))
+		return cpu;
+#endif
 
 	if (housekeeping_cpu(cpu, HK_TYPE_KERNEL_NOISE)) {
 		if (!idle_cpu(cpu))
@@ -1218,6 +1230,29 @@ int get_nohz_timer_target(void)
 
 	return default_cpu;
 }
+#ifdef CONFIG_PREEMPT_RT
+static int __init setup_isolate_timer_migration(char *s)
+{
+	if (!s || !*s) {
+		pr_warn("unknown option. usage: isol_tmr_migrate=enable|disable\n");
+		return 1;
+	}
+
+	if (strcmp(s, "enable") == 0)
+		isolate_timer_migration_disabled = 0;
+	else if (strcmp(s, "disable") == 0)
+		isolate_timer_migration_disabled = 1;
+	else {
+		pr_warn("unknown option %s. usage: isol_tmr_migrate=enable|disable\n", s);
+		return 1;
+	}
+
+	pr_info("timer migration in isolated cpus is %s\n",
+		isolate_timer_migration_disabled ? "disabled" : "enabled");
+	return 1;
+}
+__setup("isol_tmr_migrate=", setup_isolate_timer_migration);
+#endif /* CONFIG_PREEMPT_RT */
 
 /*
  * When add_timer_on() enqueues a timer into the timer wheel of an

@@ -348,6 +348,9 @@ int intel_memory_regions_hw_probe(struct drm_i915_private *i915)
 
 		type = intel_region_map[i].class;
 		instance = intel_region_map[i].instance;
+		if ((type == INTEL_MEMORY_STOLEN_LOCAL || type == INTEL_MEMORY_STOLEN_SYSTEM)
+				&& !i915->params.enable_stolen)
+			continue;
 		switch (type) {
 		case INTEL_MEMORY_SYSTEM:
 			if (IS_DGFX(i915))

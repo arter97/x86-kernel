@@ -20,6 +20,7 @@
 #include "xe_gt.h"
 #include "xe_gt_printk.h"
 #include "xe_mmio.h"
+#include "xe_module.h"
 #include "xe_res_cursor.h"
 #include "xe_sriov.h"
 #include "xe_ttm_stolen_mgr.h"
@@ -215,6 +216,11 @@ int xe_ttm_stolen_mgr_init(struct xe_device *xe)
 	struct xe_ttm_stolen_mgr *mgr;
 	u64 stolen_size, io_size;
 	int err;
+
+	if (!xe_modparam.enable_stolen) {
+		drm_info(&xe->drm, "stolen memory is disabled, skip detection\n");
+		return 0;
+	}
 
 	mgr = drmm_kzalloc(&xe->drm, sizeof(*mgr), GFP_KERNEL);
 	if (!mgr)

@@ -651,6 +651,9 @@ static int i915_pmu_event_init(struct perf_event *event)
 		event->destroy = i915_pmu_event_destroy;
 	}
 
+	/* This event could be read from any active CPU */
+	event->event_caps |= PERF_EV_CAP_READ_ACTIVE_PKG;
+
 	return 0;
 }
 

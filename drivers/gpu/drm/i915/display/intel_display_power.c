@@ -1664,6 +1664,10 @@ static void icl_display_core_init(struct intel_display *display,
 
 	gen9_set_dc_state(display, DC_STATE_DISABLE);
 
+	/* Wa_14011503030:xelpd */
+	if (DISPLAY_VER(display) == 13 || DISPLAY_VER(display) >= 30)
+		intel_de_write(display, XELPD_DISPLAY_ERR_FATAL_MASK, ~0);
+
 	/* Wa_14011294188:ehl,jsl,tgl,rkl,adl-s */
 	if (INTEL_PCH_TYPE(display) >= PCH_TGP &&
 	    INTEL_PCH_TYPE(display) < PCH_DG1)
@@ -1724,10 +1728,6 @@ static void icl_display_core_init(struct intel_display *display,
 		intel_de_rmw(display, GEN11_CHICKEN_DCPR_2, 0,
 			     DCPR_CLEAR_MEMSTAT_DIS | DCPR_SEND_RESP_IMM |
 			     DCPR_MASK_LPMODE | DCPR_MASK_MAXLATENCY_MEMUP_CLR);
-
-	/* Wa_14011503030:xelpd */
-	if (DISPLAY_VER(display) == 13)
-		intel_de_write(display, XELPD_DISPLAY_ERR_FATAL_MASK, ~0);
 
 	/* Wa_15013987218 */
 	if (DISPLAY_VER(display) == 20) {

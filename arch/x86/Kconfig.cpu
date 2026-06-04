@@ -305,8 +305,8 @@ choice
 	config OPTIMIZE_FOR_9600K
 		bool "Intel Core i5-9600K (Coffeelake)"
 
-	config OPTIMIZE_FOR_7980X
-		bool "AMD Threadripper 7980X (Storm Peak)"
+	config OPTIMIZE_FOR_9700X
+		bool "AMD Ryzen 7 9700X (Granite Ridge)"
 
 endchoice
 

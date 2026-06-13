@@ -103,6 +103,8 @@ static const struct ipu_sensor_config ipu_supported_sensors[] = {
 	IPU_SENSOR_CONFIG("TBE20A0", 1, 200000000),
 	/* Toshiba T4KA3 */
 	IPU_SENSOR_CONFIG("XMCC0003", 1, 321468000),
+	/* Samsung/SmartSens SC200PC */
+	IPU_SENSOR_CONFIG("SSLC2000", 0),
 };
 
 /*

@@ -276,8 +276,8 @@ choice
 	  Specify CPU for CONFIG_OPTIMIZE_SPECIFICALLY.
 	  Invalid, unsupported CPU will break the build.
 
-	config OPTIMIZE_FOR_125H
-		bool "Intel Core Ultra 5 125H (Meteorlake)"
+	config OPTIMIZE_FOR_358H
+		bool "Intel Core Ultra X7 358 (Pantherlake)"
 
 	config OPTIMIZE_FOR_9600K
 		bool "Intel Core i5-9600K (Coffeelake)"

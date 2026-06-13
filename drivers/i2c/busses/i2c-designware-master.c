@@ -393,6 +393,21 @@ i2c_dw_xfer_msg(struct dw_i2c_dev *dev)
 			buf_len = msgs[dev->msg_write_idx].len;
 
 			/*
+			 * For a block read only the length byte is fetched
+			 * first; the rest of the transfer is queued once the
+			 * length is known (see i2c_dw_recv_len()).  i2c-core
+			 * sets msg->len to 1 for SMBus block reads, but raw
+			 * I2C_M_RECV_LEN callers (e.g. i2c-hid) pass a
+			 * full-sized buffer, so clamp the initial read here.
+			 * Otherwise the controller would queue reads for the
+			 * whole buffer that can no longer be taken back once
+			 * the real, shorter length arrives, leaving the RX
+			 * FIFO undrained and the transfer to time out.
+			 */
+			if (flags & I2C_M_RECV_LEN)
+				buf_len = 1;
+
+			/*
 			 * If both IC_EMPTYFIFO_HOLD_MASTER_EN and
 			 * IC_RESTART_EN are set, we must manually
 			 * set restart bit between messages.
@@ -485,8 +500,8 @@ i2c_dw_xfer_msg(struct dw_i2c_dev *dev)
 	__i2c_dw_write_intr_mask(dev, intr_mask);
 }
 
-static u8
-i2c_dw_recv_len(struct dw_i2c_dev *dev, u8 len)
+static u32
+i2c_dw_recv_len(struct dw_i2c_dev *dev, u32 len, bool total)
 {
 	struct i2c_msg *msgs = dev->msgs;
 	u32 flags = msgs[dev->msg_read_idx].flags;
@@ -495,9 +510,25 @@ i2c_dw_recv_len(struct dw_i2c_dev *dev, u8 len)
 	/*
 	 * Adjust the buffer length and mask the flag
 	 * after receiving the first byte.
+	 *
+	 * In the SMBus block-read convention the length byte counts only
+	 * the data bytes that follow it, so account for the length byte
+	 * (and the optional trailing PEC byte) here.  Callers that report
+	 * the whole transfer length up front (e.g. i2c-hid) pass @total,
+	 * in which case the length byte already covers the entire buffer.
+	 *
+	 * Only the length byte has been fetched so far (the initial read is
+	 * limited to one byte in i2c_dw_xfer_msg()), so a single read is
+	 * outstanding; subtract it but keep tx_buf_len nonzero so a final
+	 * read carrying the STOP bit is still issued, otherwise the
+	 * controller would never see the STOP condition and time out.
 	 */
-	len += (flags & I2C_CLIENT_PEC) ? 2 : 1;
-	dev->tx_buf_len = len - min(len, dev->rx_outstanding);
+	if (total) {
+		dev->tx_buf_len = len - min_t(u32, len - 1, dev->rx_outstanding);
+	} else {
+		len += (flags & I2C_CLIENT_PEC) ? 2 : 1;
+		dev->tx_buf_len = len - min_t(u32, len, dev->rx_outstanding);
+	}
 	msgs[dev->msg_read_idx].len = len;
 	msgs[dev->msg_read_idx].flags &= ~I2C_M_RECV_LEN;
 
@@ -543,18 +574,45 @@ i2c_dw_read(struct dw_i2c_dev *dev)
 			/* Ensure length byte is a valid value */
 			if (flags & I2C_M_RECV_LEN) {
 				/*
-				 * if IC_EMPTYFIFO_HOLD_MASTER_EN is set, which cannot be
-				 * detected from the registers, the controller can be
-				 * disabled if the STOP bit is set. But it is only set
-				 * after receiving block data response length in
-				 * I2C_FUNC_SMBUS_BLOCK_DATA case. That needs to read
-				 * another byte with STOP bit set when the block data
-				 * response length is invalid to complete the transaction.
+				 * The SMBus block-read emulation passes a length
+				 * placeholder of 1 (2 when a trailing PEC byte is
+				 * requested) together with a buffer guaranteed to hold
+				 * up to I2C_SMBUS_BLOCK_MAX data bytes, and the length
+				 * byte counts only the data bytes that follow.  Other
+				 * callers (e.g. i2c-hid) pass the real buffer size in
+				 * msg->len and use the length byte as the total
+				 * transfer length.  Tell the two apart so a SMBus
+				 * buffer is never overrun and a raw transfer is sized
+				 * exactly to the reported length.
 				 */
-				if (!tmp || tmp > I2C_SMBUS_BLOCK_MAX)
-					tmp = 1;
-
-				len = i2c_dw_recv_len(dev, tmp);
+				if (len > ((flags & I2C_CLIENT_PEC) ? 2 : 1)) {
+					/*
+					 * Raw, caller-sized buffer: the length byte is the
+					 * whole transfer.  Read exactly that many bytes when
+					 * it is nonzero and fits the buffer; otherwise (e.g.
+					 * a zero-length i2c-hid reset acknowledgement, or a
+					 * bogus oversized length) fall back to the buffer
+					 * length so the report is still delivered and the
+					 * buffer is never overrun.  Leave tmp untouched so
+					 * the real first byte is stored below.
+					 */
+					len = i2c_dw_recv_len(dev,
+						(tmp && tmp <= len) ? tmp : len, true);
+				} else {
+					/*
+					 * SMBus block read.  If IC_EMPTYFIFO_HOLD_MASTER_EN
+					 * is set, which cannot be detected from the
+					 * registers, the controller can only be disabled
+					 * once the STOP bit is set, and that is only emitted
+					 * after the length byte is received.  Clamp an
+					 * invalid length to read one more byte with STOP set
+					 * so the transaction completes, and never exceed
+					 * I2C_SMBUS_BLOCK_MAX so the buffer cannot overrun.
+					 */
+					if (!tmp || tmp > I2C_SMBUS_BLOCK_MAX)
+						tmp = 1;
+					len = i2c_dw_recv_len(dev, tmp, false);
+				}
 			}
 			*buf++ = tmp;
 			dev->rx_outstanding--;

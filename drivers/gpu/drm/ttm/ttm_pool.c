@@ -183,6 +183,11 @@ static struct page *ttm_pool_alloc_page(struct ttm_pool *pool, gfp_t gfp_flags,
 	if (order && beneficial_order && order != beneficial_order)
 		gfp_flags &= ~__GFP_RECLAIM;
 
+	if (beneficial_order && order == beneficial_order) {
+		gfp_flags &= ~__GFP_NORETRY;
+		gfp_flags |= __GFP_RETRY_MAYFAIL;
+	}
+
 	if (!ttm_pool_uses_dma_alloc(pool)) {
 		p = alloc_pages_node(pool->nid, gfp_flags, order);
 		if (p) {

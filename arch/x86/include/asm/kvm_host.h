@@ -43,6 +43,8 @@
 #include <asm/reboot.h>
 #include <hyperv/hvhdk.h>
 
+struct kvm_cxl_info;
+
 #define __KVM_HAVE_ARCH_VCPU_DEBUGFS
 
 /*
@@ -1630,6 +1632,8 @@ struct kvm_arch {
 	 * current VM.
 	 */
 	int cpu_dirty_log_size;
+
+	struct kvm_cxl_info *cxl;
 };
 
 struct kvm_vm_stat {

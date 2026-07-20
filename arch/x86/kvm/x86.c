@@ -33,6 +33,7 @@
 #include "lapic.h"
 #include "xen.h"
 #include "smm.h"
+#include "cxl.h"
 
 #include <linux/clocksource.h>
 #include <linux/interrupt.h>
@@ -8405,6 +8406,12 @@ static int emulator_read_write(struct x86_emulate_ctxt *ctxt,
 	if (!vcpu->mmio_nr_fragments)
 		return X86EMUL_CONTINUE;
 
+	/* CXL fast path: handle in-kernel without userspace exit */
+	if (kvm_cxl_handle_mmio(vcpu, ops->write)) {
+		vcpu->mmio_nr_fragments = 0;
+		return X86EMUL_CONTINUE;
+	}
+
 	gpa = vcpu->mmio_fragments[0].gpa;
 
 	vcpu->mmio_needed = 1;
@@ -13478,6 +13485,8 @@ void kvm_arch_pre_destroy_vm(struct kvm *kvm)
 
 void kvm_arch_destroy_vm(struct kvm *kvm)
 {
+	kvm_cxl_vm_destroy(kvm);
+
 	if (current->mm == kvm->mm) {
 		/*
 		 * Free memory regions allocated on behalf of userspace,

@@ -44,14 +44,31 @@ struct kvm_cxl_cache {
 /* ---- Cache-miss log (ring buffer + background flush) ---- */
 
 #define CXL_LOG_BUF_SIZE	(64 * 1024 * 1024)	/* 64 MB ring */
-#define CXL_LOG_SCRATCH_SIZE	(64 * 1024)		/* drain batch */
+
+/*
+ * On-disk log format (all fields native-endian, i.e. little-endian on x86).
+ *
+ * The file starts with one cxl_log_file_header, followed by a flat array of
+ * cxl_log_entry records.  The ring buffer stores entries in exactly this
+ * layout, so the consumer writes ring memory straight to the file without
+ * any per-entry formatting, and a parser can mmap the file and cast.
+ */
+#define CXL_LOG_MAGIC		"CXLLOG01"	/* 8 bytes, not NUL-terminated */
+
+struct cxl_log_file_header {
+	u8  magic[8];		/* CXL_LOG_MAGIC */
+	u16 header_size;	/* sizeof(struct cxl_log_file_header) */
+	u16 entry_size;		/* sizeof(struct cxl_log_entry) */
+	u32 reserved;
+};
 
 struct cxl_log_entry {
-	u32 vmid;
-	u32 vcpu_id;
-	u8  is_write;
 	u64 gpa;
-} __packed;
+	u32 vmid;		/* QEMU PID; distinguishes VMs on a shared log */
+	u16 vcpu_id;		/* KVM_MAX_VCPU_IDS is 16384; fits u16 */
+	u8  is_write;		/* 0 = read, 1 = write */
+	u8  reserved;
+};
 
 /*
  * A single cxl_access emits up to 2 events (victim writeback + fill).

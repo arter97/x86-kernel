@@ -7,7 +7,7 @@
  */
 
 #include <linux/string.h>
-#include <linux/sprintf.h>
+#include <linux/minmax.h>
 #include <linux/vmalloc.h>
 #include <linux/fs.h>
 #include <linux/workqueue.h>
@@ -19,6 +19,8 @@
 #include <linux/list.h>
 #include <linux/kref.h>
 
+#include <asm/kvm_host.h>
+
 #include "cxl.h"
 
 /* ---- Shared cache-miss log ----
@@ -27,8 +29,9 @@
  * VM that registers the same path.  All producers serialize on a single
  * spinlock when pushing into the ring, so events appear in the file in
  * strict push (≈ real-time) order across VMs.  A single workqueue consumer
- * drains the ring and emits formatted lines (each prefixed with the
- * producing VM's PID) to the file.
+ * drains the ring to the file.  The ring stores entries in the on-disk
+ * binary format (see cxl_log_entry), so draining is a straight
+ * ring-memory-to-file write with no per-entry formatting.
  *
  * The shared structure is refcounted and registered in a global list keyed
  * by path.  The first VM to claim a path opens (and truncates) the file;
@@ -57,10 +60,15 @@ struct cxl_log_shared {
 	bool closing;			/* teardown in progress */
 
 	/* Drain. */
-	char *scratch;
-	size_t scratch_size;
 	struct work_struct work;
 };
+
+/* Ring entries double as the on-disk records; keep them from wrapping
+ * mid-record so each drain chunk is a whole number of entries. */
+static_assert(sizeof(struct cxl_log_entry) == 16);
+static_assert(sizeof(struct cxl_log_file_header) == 16);
+static_assert(CXL_LOG_BUF_SIZE % sizeof(struct cxl_log_entry) == 0);
+static_assert(KVM_MAX_VCPU_IDS - 1 <= U16_MAX);	/* vcpu_id fits u16 */
 
 static LIST_HEAD(cxl_log_shareds);
 static DEFINE_MUTEX(cxl_log_shareds_lock);
@@ -77,19 +85,6 @@ static inline void cxl_ring_write(struct cxl_log_shared *s, unsigned long pos,
 	} else {
 		memcpy(s->buf + pos, src, remain);
 		memcpy(s->buf, (const char *)src + remain, len - remain);
-	}
-}
-
-static inline void cxl_ring_read(struct cxl_log_shared *s, unsigned long pos,
-				 void *dst, size_t len)
-{
-	unsigned long remain = s->buf_size - pos;
-
-	if (remain >= len) {
-		memcpy(dst, s->buf + pos, len);
-	} else {
-		memcpy(dst, s->buf + pos, remain);
-		memcpy((char *)dst + remain, s->buf, len - remain);
 	}
 }
 
@@ -114,6 +109,10 @@ static void cxl_log_write_all(struct cxl_log_shared *s, const char *buf,
 	}
 }
 
+/* Bound each write so producers blocked on ring space are released in
+ * chunk granules instead of only after a full-backlog drain. */
+#define CXL_LOG_FLUSH_CHUNK	(1024 * 1024)
+
 static void cxl_log_flush_work(struct work_struct *work)
 {
 	struct cxl_log_shared *s = container_of(work, struct cxl_log_shared,
@@ -121,36 +120,21 @@ static void cxl_log_flush_work(struct work_struct *work)
 	unsigned long tail = s->tail;
 	unsigned long head = smp_load_acquire(&s->head);
 
-	while (tail < head) {
-		size_t used = 0;
+	while (tail != head) {
+		unsigned long pos = tail % s->buf_size;
+		unsigned long len = min3(head - tail, s->buf_size - pos,
+					 (unsigned long)CXL_LOG_FLUSH_CHUNK);
 
-		/* Max line: vcpu_id (up to 10) + ' ' + decimal gpa (up to
-		 * 20) + ' ' + "R" + '\n' = 33 bytes; keep 64 bytes of
-		 * headroom per entry. */
-		while (tail < head && used + 64 <= s->scratch_size) {
-			struct cxl_log_entry entry;
-			char *p;
+		/* Bytes in [tail, head) are stable - producers only write
+		 * into the free region starting at head - and the ring
+		 * layout is the on-disk format, so write straight from the
+		 * ring. */
+		cxl_log_write_all(s, s->buf + pos, len);
 
-			cxl_ring_read(s, tail % s->buf_size, &entry,
-				      sizeof(entry));
-
-			p = s->scratch + used;
-			p += num_to_str(p, 11, entry.vcpu_id, 0);
-			*p++ = ' ';
-			p += num_to_str(p, 21, entry.gpa, 0);
-			*p++ = ' ';
-			*p++ = entry.is_write ? 'W' : 'R';
-			*p++ = '\n';
-			used = p - s->scratch;
-
-			tail += sizeof(entry);
-		}
-
-		cxl_log_write_all(s, s->scratch, used);
+		tail += len;
+		smp_store_release(&s->tail, tail);
+		wake_up(&s->space_wq);
 	}
-
-	smp_store_release(&s->tail, tail);
-	wake_up(&s->space_wq);
 }
 
 /* ---- Producer ---- */
@@ -195,10 +179,10 @@ again:
 	head = s->head;
 	for (i = 0; i < n; i++) {
 		struct cxl_log_entry entry = {
-			.vmid = (u32)log->vmid,
-			.vcpu_id = vcpu_id,
-			.is_write = evs[i].is_write,
 			.gpa = evs[i].gpa,
+			.vmid = (u32)log->vmid,
+			.vcpu_id = (u16)vcpu_id,
+			.is_write = evs[i].is_write,
 		};
 		cxl_ring_write(s,
 			       (head + i * sizeof(entry)) % s->buf_size,
@@ -241,25 +225,36 @@ static struct cxl_log_shared *cxl_log_shared_get(const char *path)
 		ret = -ENOMEM;
 		goto err_free_s;
 	}
-	s->scratch = vmalloc(CXL_LOG_SCRATCH_SIZE);
-	if (!s->scratch) {
-		ret = -ENOMEM;
-		goto err_free_buf;
-	}
 	s->file = filp_open(path,
 			    O_WRONLY | O_CREAT | O_TRUNC | O_LARGEFILE,
 			    0644);
 	if (IS_ERR(s->file)) {
 		ret = PTR_ERR(s->file);
-		goto err_free_scratch;
+		goto err_free_buf;
 	}
 
 	s->buf_size = CXL_LOG_BUF_SIZE;
-	s->scratch_size = CXL_LOG_SCRATCH_SIZE;
 	s->head = 0;
 	s->tail = 0;
 	s->file_offset = 0;
 	s->closing = false;
+
+	{
+		struct cxl_log_file_header hdr = {
+			.header_size = sizeof(hdr),
+			.entry_size = sizeof(struct cxl_log_entry),
+		};
+		ssize_t written;
+
+		BUILD_BUG_ON(sizeof(CXL_LOG_MAGIC) - 1 != sizeof(hdr.magic));
+		memcpy(hdr.magic, CXL_LOG_MAGIC, sizeof(hdr.magic));
+		written = kernel_write(s->file, &hdr, sizeof(hdr),
+				       &s->file_offset);
+		if (written != sizeof(hdr)) {
+			ret = written < 0 ? written : -EIO;
+			goto err_close_file;
+		}
+	}
 	spin_lock_init(&s->prod_lock);
 	init_waitqueue_head(&s->space_wq);
 	INIT_WORK(&s->work, cxl_log_flush_work);
@@ -269,8 +264,8 @@ static struct cxl_log_shared *cxl_log_shared_get(const char *path)
 	mutex_unlock(&cxl_log_shareds_lock);
 	return s;
 
-err_free_scratch:
-	vfree(s->scratch);
+err_close_file:
+	filp_close(s->file, NULL);
 err_free_buf:
 	vfree(s->buf);
 err_free_s:
@@ -303,7 +298,6 @@ static void cxl_log_shared_teardown(struct cxl_log_shared *s)
 	cxl_log_flush_work(&s->work);	/* final drain */
 
 	filp_close(s->file, NULL);
-	vfree(s->scratch);
 	vfree(s->buf);
 	kfree(s);
 }

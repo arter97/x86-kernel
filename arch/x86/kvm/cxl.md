@@ -109,11 +109,42 @@ When a LOGBIN path is provided, every backing-file access is logged.  In
 **cache mode** that means cache-miss fills and dirty-eviction writebacks
 (GPAs are 64-byte block aligned).  In **bypass mode** every guest MMIO
 fragment produces exactly one entry at the raw access GPA (not block
-aligned).  The output format is one line per event: vCPU ID, decimal GPA,
-and `R`/`W`, separated by single spaces:
+aligned).
 
-    0 19596050432 R
-    2 19595788352 W
+The output is **binary**: a 16-byte file header followed by a flat array of
+fixed-size 16-byte records, all fields native-endian (little-endian on x86).
+Struct definitions live in `cxl_cache.h` (`struct cxl_log_file_header`,
+`struct cxl_log_entry`).
+
+File header:
+
+| Offset | Size | Field         | Value                    |
+|--------|------|---------------|--------------------------|
+| 0      | 8    | `magic`       | `"CXLLOG01"` (no NUL)    |
+| 8      | 2    | `header_size` | 16                       |
+| 10     | 2    | `entry_size`  | 16                       |
+| 12     | 4    | `reserved`    | 0                        |
+
+Record:
+
+| Offset | Size | Field      | Value                                 |
+|--------|------|------------|---------------------------------------|
+| 0      | 8    | `gpa`      | guest-physical address                |
+| 8      | 4    | `vmid`     | QEMU PID (distinguishes VMs on a shared log) |
+| 12     | 2    | `vcpu_id`  | producing vCPU                        |
+| 14     | 1    | `is_write` | 0 = read, 1 = write                   |
+| 15     | 1    | `reserved` | 0                                     |
+
+Records are naturally aligned, so a parser can mmap the file and cast, or
+bulk-load it, e.g. with numpy:
+
+```python
+import numpy as np
+
+dt = np.dtype([("gpa", "<u8"), ("vmid", "<u4"), ("vcpu", "<u2"),
+               ("is_write", "u1"), ("_rsvd", "u1")])
+recs = np.fromfile("cxl.log", dtype=dt, offset=16)
+```
 
 Multiple VMs may register the **same** LOGBIN path. The kernel shares a
 single ring buffer and output file across all such VMs, keyed by path: the
@@ -130,16 +161,17 @@ bypass mode.
 The implementation uses a producer-consumer ring buffer to keep the hot path
 fast:
 
-- **Producer** (spinlock context): writes a 9-byte binary entry (`u8 is_write`
-  \+ `u64 gpa`) into a 64 MB vmalloc'd ring buffer, then calls
-  `schedule_work()`.
-- **Consumer** (workqueue, can sleep): drains the ring buffer, formats each
-  entry as text, and writes to the file with `kernel_write()`.
+- **Producer** (spinlock context): writes a 16-byte record into a 64 MB
+  vmalloc'd ring buffer, then calls `schedule_work()`.
+- **Consumer** (workqueue, can sleep): drains the ring buffer to the file
+  with `kernel_write()`.  The ring stores records in the on-disk format, so
+  the drain is a direct ring-memory-to-file write in chunks of up to 1 MB,
+  with no per-entry formatting.
 
-The ring buffer holds ~7 million entries of backlog. If it fills before the
-workqueue drains it (sustained burst faster than disk I/O), entries are silently
-dropped. On VM teardown the remaining buffer is flushed before the file is
-closed.
+The ring buffer holds 4 million records of backlog. If it fills before the
+workqueue drains it (sustained burst faster than disk I/O), producing vCPUs
+block until the consumer frees space. On VM teardown the remaining buffer is
+flushed before the file is closed.
 
 ### Cleanup
 

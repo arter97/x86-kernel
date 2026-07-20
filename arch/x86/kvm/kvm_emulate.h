@@ -372,6 +372,7 @@ struct x86_emulate_ctxt {
 	u8 rex_bits;
 	u8 lock_prefix;
 	u8 rep_prefix;
+	u8 vex_reg;
 	/* bitmaps of registers in _regs[] that can be read */
 	u16 regs_valid;
 	/* bitmaps of registers in _regs[] that have been written */

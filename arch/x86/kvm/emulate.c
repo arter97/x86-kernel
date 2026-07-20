@@ -67,6 +67,7 @@
 #define OpXLat            28ull  /* memory at BX/EBX/RBX + zero-extended AL */
 #define OpAccLo           29ull  /* Low part of extended acc (AX/AX/EAX/RAX) */
 #define OpAccHi           30ull  /* High part of extended acc (-/DX/EDX/RDX) */
+#define OpVexReg          31ull  /* VEX.vvvv register */
 
 #define OpBits             5  /* Width of operand field */
 #define OpMask             ((1ull << OpBits) - 1)
@@ -89,6 +90,7 @@
 #define DstAcc      (OpAcc << DstShift)
 #define DstDI       (OpDI << DstShift)
 #define DstMem64    (OpMem64 << DstShift)
+#define DstMem32    (OpMem32 << DstShift)
 #define DstMem16    (OpMem16 << DstShift)
 #define DstImmUByte (OpImmUByte << DstShift)
 #define DstDX       (OpDX << DstShift)
@@ -114,6 +116,7 @@
 #define SrcImm64    (OpImm64 << SrcShift)
 #define SrcDX       (OpDX << SrcShift)
 #define SrcMem8     (OpMem8 << SrcShift)
+#define SrcMem64    (OpMem64 << SrcShift)
 #define SrcAccHi    (OpAccHi << SrcShift)
 #define SrcMask     (OpMask << SrcShift)
 #define BitOp       (1<<11)
@@ -155,6 +158,7 @@
 #define Src2DS      (OpDS << Src2Shift)
 #define Src2FS      (OpFS << Src2Shift)
 #define Src2GS      (OpGS << Src2Shift)
+#define Src2VexReg  (OpVexReg << Src2Shift)
 #define Src2Mask    (OpMask << Src2Shift)
 /* free: 37-39 */
 #define Mmx         ((u64)1 << 40)  /* MMX Vector instruction */
@@ -1034,6 +1038,312 @@ static void fetch_register_operand(struct operand *op)
 	}
 	op->orig_val = op->val;
 }
+
+static int flush_pending_x87_faults(struct x86_emulate_ctxt *ctxt);
+
+static int prepare_x87_waiting_instruction(struct x86_emulate_ctxt *ctxt)
+{
+	if (ctxt->ops->get_cr(ctxt, 0) & (X86_CR0_TS | X86_CR0_EM))
+		return emulate_nm(ctxt);
+
+	return flush_pending_x87_faults(ctxt);
+}
+
+static int complete_x87_waiting_instruction(struct x86_emulate_ctxt *ctxt,
+					    int rc)
+{
+	if (rc != X86EMUL_CONTINUE)
+		return emulate_exception(ctxt, MF_VECTOR, 0, false);
+
+	ctxt->dst.type = OP_NONE;
+	return X86EMUL_CONTINUE;
+}
+
+/*
+ * FLD m32fp: load 32-bit single-precision float onto x87 FPU stack.
+ * Used for D9 /0 with memory operand.
+ */
+static int em_fld(struct x86_emulate_ctxt *ctxt)
+{
+	u32 float_val;
+	int rc;
+
+	rc = prepare_x87_waiting_instruction(ctxt);
+	if (rc != X86EMUL_CONTINUE)
+		return rc;
+
+	memcpy(&float_val, ctxt->src.valptr, sizeof(float_val));
+
+	kvm_fpu_get();
+	rc = asm_safe("flds %[src]", : [src] "m" (float_val));
+	kvm_fpu_put();
+	return complete_x87_waiting_instruction(ctxt, rc);
+}
+
+#define X87_M32FP_OP(_name, _insn)					\
+static int _name(struct x86_emulate_ctxt *ctxt)				\
+{									\
+	u32 float_val;							\
+	int rc;								\
+									\
+	rc = prepare_x87_waiting_instruction(ctxt);			\
+	if (rc != X86EMUL_CONTINUE)					\
+		return rc;						\
+									\
+	memcpy(&float_val, ctxt->src.valptr, sizeof(float_val));	\
+									\
+	kvm_fpu_get();							\
+	rc = asm_safe(_insn " %[src]", : [src] "m" (float_val));	\
+	kvm_fpu_put();							\
+									\
+	return complete_x87_waiting_instruction(ctxt, rc);		\
+}
+
+/*
+ * FST m32fp: store ST(0) to memory as 32-bit float (no pop).
+ * Used for D9 /2 with memory operand.
+ */
+static int em_fst_m32fp(struct x86_emulate_ctxt *ctxt)
+{
+	u32 float_val;
+	int rc;
+
+	rc = prepare_x87_waiting_instruction(ctxt);
+	if (rc != X86EMUL_CONTINUE)
+		return rc;
+
+	kvm_fpu_get();
+	rc = asm_safe("fsts %[dst]", , [dst] "=m" (float_val));
+	kvm_fpu_put();
+	if (rc != X86EMUL_CONTINUE)
+		return complete_x87_waiting_instruction(ctxt, rc);
+
+	ctxt->dst.val = float_val;
+	return X86EMUL_CONTINUE;
+}
+
+/*
+ * FSTP m32fp: store ST(0) to memory as 32-bit float and pop.
+ * Used for D9 /3 with memory operand.
+ */
+static int em_fstp_m32fp(struct x86_emulate_ctxt *ctxt)
+{
+	u32 float_val;
+	int rc;
+
+	rc = prepare_x87_waiting_instruction(ctxt);
+	if (rc != X86EMUL_CONTINUE)
+		return rc;
+
+	kvm_fpu_get();
+	rc = asm_safe("fstps %[dst]", , [dst] "=m" (float_val));
+	kvm_fpu_put();
+	if (rc != X86EMUL_CONTINUE)
+		return complete_x87_waiting_instruction(ctxt, rc);
+
+	ctxt->dst.val = float_val;
+	return X86EMUL_CONTINUE;
+}
+
+/*
+ * FLD m64fp: load 64-bit double from memory onto x87 stack.
+ * Used for DD /0 with memory operand.
+ */
+static int em_fld_m64fp(struct x86_emulate_ctxt *ctxt)
+{
+	u64 float_val;
+	int rc;
+
+	rc = prepare_x87_waiting_instruction(ctxt);
+	if (rc != X86EMUL_CONTINUE)
+		return rc;
+
+	memcpy(&float_val, ctxt->src.valptr, sizeof(float_val));
+
+	kvm_fpu_get();
+	rc = asm_safe("fldl %[src]", : [src] "m" (float_val));
+	kvm_fpu_put();
+	return complete_x87_waiting_instruction(ctxt, rc);
+}
+
+/*
+ * FST m64fp: store ST(0) to memory as 64-bit double (no pop).
+ * Used for DD /2 with memory operand.
+ */
+static int em_fst_m64fp(struct x86_emulate_ctxt *ctxt)
+{
+	u64 float_val;
+	int rc;
+
+	rc = prepare_x87_waiting_instruction(ctxt);
+	if (rc != X86EMUL_CONTINUE)
+		return rc;
+
+	kvm_fpu_get();
+	rc = asm_safe("fstl %[dst]", , [dst] "=m" (float_val));
+	kvm_fpu_put();
+	if (rc != X86EMUL_CONTINUE)
+		return complete_x87_waiting_instruction(ctxt, rc);
+
+	memcpy(ctxt->dst.valptr, &float_val, sizeof(float_val));
+	ctxt->dst.bytes = sizeof(float_val);
+	return X86EMUL_CONTINUE;
+}
+
+/*
+ * FSTP m64fp: store ST(0) to memory as 64-bit double and pop.
+ * Used for DD /3 with memory operand.
+ */
+static int em_fstp_m64fp(struct x86_emulate_ctxt *ctxt)
+{
+	u64 float_val;
+	int rc;
+
+	rc = prepare_x87_waiting_instruction(ctxt);
+	if (rc != X86EMUL_CONTINUE)
+		return rc;
+
+	kvm_fpu_get();
+	rc = asm_safe("fstpl %[dst]", , [dst] "=m" (float_val));
+	kvm_fpu_put();
+	if (rc != X86EMUL_CONTINUE)
+		return complete_x87_waiting_instruction(ctxt, rc);
+
+	memcpy(ctxt->dst.valptr, &float_val, sizeof(float_val));
+	ctxt->dst.bytes = sizeof(float_val);
+	return X86EMUL_CONTINUE;
+}
+
+/*
+ * FSTP m80fp: store ST(0) to memory as 80-bit extended-precision float and pop.
+ * Used for DB /7 with memory operand. There is no OpMem80, so the table entry
+ * uses generic DstMem and the writeback length is overridden to 10 bytes here.
+ */
+static int em_fstp_m80fp(struct x86_emulate_ctxt *ctxt)
+{
+	u8 float_val[10];
+	int rc;
+
+	rc = prepare_x87_waiting_instruction(ctxt);
+	if (rc != X86EMUL_CONTINUE)
+		return rc;
+
+	kvm_fpu_get();
+	rc = asm_safe("fstpt %[dst]", , [dst] "=m" (float_val));
+	kvm_fpu_put();
+	if (rc != X86EMUL_CONTINUE)
+		return complete_x87_waiting_instruction(ctxt, rc);
+
+	memcpy(ctxt->dst.valptr, float_val, sizeof(float_val));
+	ctxt->dst.bytes = sizeof(float_val);
+	return X86EMUL_CONTINUE;
+}
+
+X87_M32FP_OP(em_fadd_m32fp, "fadds")
+X87_M32FP_OP(em_fmul_m32fp, "fmuls")
+X87_M32FP_OP(em_fcom_m32fp, "fcoms")
+X87_M32FP_OP(em_fcomp_m32fp, "fcomps")
+X87_M32FP_OP(em_fsub_m32fp, "fsubs")
+X87_M32FP_OP(em_fsubr_m32fp, "fsubrs")
+X87_M32FP_OP(em_fdiv_m32fp, "fdivs")
+X87_M32FP_OP(em_fdivr_m32fp, "fdivrs")
+
+#define X87_D8_REG_CASE(_modrm, _modrm_text)			\
+	case _modrm:						\
+		rc = asm_safe(".byte 0xd8, " _modrm_text);	\
+		break
+
+static int em_x87_d8_reg(struct x86_emulate_ctxt *ctxt)
+{
+	int rc;
+
+	rc = prepare_x87_waiting_instruction(ctxt);
+	if (rc != X86EMUL_CONTINUE)
+		return rc;
+
+	kvm_fpu_get();
+
+	/* Emit the exact D8 xx opcode so ST(i) ordering matches hardware. */
+	switch (ctxt->modrm) {
+	X87_D8_REG_CASE(0xc0, "0xc0");
+	X87_D8_REG_CASE(0xc1, "0xc1");
+	X87_D8_REG_CASE(0xc2, "0xc2");
+	X87_D8_REG_CASE(0xc3, "0xc3");
+	X87_D8_REG_CASE(0xc4, "0xc4");
+	X87_D8_REG_CASE(0xc5, "0xc5");
+	X87_D8_REG_CASE(0xc6, "0xc6");
+	X87_D8_REG_CASE(0xc7, "0xc7");
+	X87_D8_REG_CASE(0xc8, "0xc8");
+	X87_D8_REG_CASE(0xc9, "0xc9");
+	X87_D8_REG_CASE(0xca, "0xca");
+	X87_D8_REG_CASE(0xcb, "0xcb");
+	X87_D8_REG_CASE(0xcc, "0xcc");
+	X87_D8_REG_CASE(0xcd, "0xcd");
+	X87_D8_REG_CASE(0xce, "0xce");
+	X87_D8_REG_CASE(0xcf, "0xcf");
+	X87_D8_REG_CASE(0xd0, "0xd0");
+	X87_D8_REG_CASE(0xd1, "0xd1");
+	X87_D8_REG_CASE(0xd2, "0xd2");
+	X87_D8_REG_CASE(0xd3, "0xd3");
+	X87_D8_REG_CASE(0xd4, "0xd4");
+	X87_D8_REG_CASE(0xd5, "0xd5");
+	X87_D8_REG_CASE(0xd6, "0xd6");
+	X87_D8_REG_CASE(0xd7, "0xd7");
+	X87_D8_REG_CASE(0xd8, "0xd8");
+	X87_D8_REG_CASE(0xd9, "0xd9");
+	X87_D8_REG_CASE(0xda, "0xda");
+	X87_D8_REG_CASE(0xdb, "0xdb");
+	X87_D8_REG_CASE(0xdc, "0xdc");
+	X87_D8_REG_CASE(0xdd, "0xdd");
+	X87_D8_REG_CASE(0xde, "0xde");
+	X87_D8_REG_CASE(0xdf, "0xdf");
+	X87_D8_REG_CASE(0xe0, "0xe0");
+	X87_D8_REG_CASE(0xe1, "0xe1");
+	X87_D8_REG_CASE(0xe2, "0xe2");
+	X87_D8_REG_CASE(0xe3, "0xe3");
+	X87_D8_REG_CASE(0xe4, "0xe4");
+	X87_D8_REG_CASE(0xe5, "0xe5");
+	X87_D8_REG_CASE(0xe6, "0xe6");
+	X87_D8_REG_CASE(0xe7, "0xe7");
+	X87_D8_REG_CASE(0xe8, "0xe8");
+	X87_D8_REG_CASE(0xe9, "0xe9");
+	X87_D8_REG_CASE(0xea, "0xea");
+	X87_D8_REG_CASE(0xeb, "0xeb");
+	X87_D8_REG_CASE(0xec, "0xec");
+	X87_D8_REG_CASE(0xed, "0xed");
+	X87_D8_REG_CASE(0xee, "0xee");
+	X87_D8_REG_CASE(0xef, "0xef");
+	X87_D8_REG_CASE(0xf0, "0xf0");
+	X87_D8_REG_CASE(0xf1, "0xf1");
+	X87_D8_REG_CASE(0xf2, "0xf2");
+	X87_D8_REG_CASE(0xf3, "0xf3");
+	X87_D8_REG_CASE(0xf4, "0xf4");
+	X87_D8_REG_CASE(0xf5, "0xf5");
+	X87_D8_REG_CASE(0xf6, "0xf6");
+	X87_D8_REG_CASE(0xf7, "0xf7");
+	X87_D8_REG_CASE(0xf8, "0xf8");
+	X87_D8_REG_CASE(0xf9, "0xf9");
+	X87_D8_REG_CASE(0xfa, "0xfa");
+	X87_D8_REG_CASE(0xfb, "0xfb");
+	X87_D8_REG_CASE(0xfc, "0xfc");
+	X87_D8_REG_CASE(0xfd, "0xfd");
+	X87_D8_REG_CASE(0xfe, "0xfe");
+	X87_D8_REG_CASE(0xff, "0xff");
+	default:
+		rc = EMULATION_FAILED;
+		break;
+	}
+
+	kvm_fpu_put();
+
+	if (rc == EMULATION_FAILED)
+		return rc;
+
+	return complete_x87_waiting_instruction(ctxt, rc);
+}
+
+#undef X87_D8_REG_CASE
+#undef X87_M32FP_OP
 
 static int em_fninit(struct x86_emulate_ctxt *ctxt)
 {
@@ -3218,6 +3528,4243 @@ static int em_mov(struct x86_emulate_ctxt *ctxt)
 	return X86EMUL_CONTINUE;
 }
 
+static void write_xmm_reg(struct x86_emulate_ctxt *ctxt, unsigned int reg,
+			  const sse128_t *vec)
+{
+	if (ctxt->d & Avx) {
+		avx256_t ymm = {};
+
+		memcpy(&ymm, vec, sizeof(*vec));
+		kvm_write_avx_reg(reg, &ymm);
+		return;
+	}
+
+	kvm_write_sse_reg(reg, vec);
+}
+
+static unsigned int scalar_gpr_bytes(struct x86_emulate_ctxt *ctxt)
+{
+	return (ctxt->rex_bits & REX_W) ? 8 : 4;
+}
+
+static int read_modrm_mem(struct x86_emulate_ctxt *ctxt, void *buf,
+			  unsigned int bytes)
+{
+	return segmented_read(ctxt, ctxt->memop.addr.mem, buf, bytes);
+}
+
+static int write_modrm_mem(struct x86_emulate_ctxt *ctxt, const void *buf,
+			   unsigned int bytes)
+{
+	return segmented_write(ctxt, ctxt->memop.addr.mem, buf, bytes);
+}
+
+static int read_modrm_int_operand(struct x86_emulate_ctxt *ctxt, u64 *val,
+				  unsigned int bytes)
+{
+	if (ctxt->modrm_mod == 3) {
+		*val = reg_read(ctxt, ctxt->modrm_rm);
+		if (bytes == 4)
+			*val &= GENMASK_ULL(31, 0);
+		return X86EMUL_CONTINUE;
+	}
+
+	*val = 0;
+	return read_modrm_mem(ctxt, val, bytes);
+}
+
+/*
+ * MOVSS/VMOVSS xmm, xmm/m32
+ * Legacy reg-reg preserves destination upper bits, legacy memory loads zero
+ * them, and VEX copies bits[127:32] from VEX.vvvv and clears upper YMM state.
+ */
+static int em_movss_load(struct x86_emulate_ctxt *ctxt)
+{
+	__sse128_u dst = {};
+	sse128_t reg;
+	u32 val;
+	int rc;
+
+	if (ctxt->d & Avx)
+		kvm_read_sse_reg(ctxt->vex_reg, &dst.vec);
+	else if (ctxt->modrm_mod == 3)
+		kvm_read_sse_reg(ctxt->modrm_reg, &dst.vec);
+
+	if (ctxt->modrm_mod == 3) {
+		kvm_read_sse_reg(ctxt->modrm_rm, &reg);
+		val = sse128_l0(reg);
+	} else {
+		rc = read_modrm_mem(ctxt, &val, sizeof(val));
+		if (rc != X86EMUL_CONTINUE)
+			return rc;
+	}
+
+	dst.as_u32[0] = val;
+	write_xmm_reg(ctxt, ctxt->modrm_reg, &dst.vec);
+	ctxt->dst.type = OP_NONE;
+	return X86EMUL_CONTINUE;
+}
+
+/*
+ * MOVSD/VMOVSD xmm, xmm/m64
+ * Legacy reg-reg preserves destination upper qword, legacy memory loads zero
+ * it, and VEX copies bits[127:64] from VEX.vvvv and clears upper YMM state.
+ */
+static int em_movsd_load(struct x86_emulate_ctxt *ctxt)
+{
+	__sse128_u dst = {};
+	sse128_t reg;
+	u64 val;
+	int rc;
+
+	if (ctxt->d & Avx)
+		kvm_read_sse_reg(ctxt->vex_reg, &dst.vec);
+	else if (ctxt->modrm_mod == 3)
+		kvm_read_sse_reg(ctxt->modrm_reg, &dst.vec);
+
+	if (ctxt->modrm_mod == 3) {
+		kvm_read_sse_reg(ctxt->modrm_rm, &reg);
+		val = sse128_lo(reg);
+	} else {
+		rc = read_modrm_mem(ctxt, &val, sizeof(val));
+		if (rc != X86EMUL_CONTINUE)
+			return rc;
+	}
+
+	dst.as_u64[0] = val;
+	write_xmm_reg(ctxt, ctxt->modrm_reg, &dst.vec);
+	ctxt->dst.type = OP_NONE;
+	return X86EMUL_CONTINUE;
+}
+
+/*
+ * MOVSS/VMOVSS m32/xmm, xmm
+ * Legacy stores to memory or preserves the upper bits of the register
+ * destination; VEX register form merges with VEX.vvvv and memory form
+ * requires reserved VEX.vvvv=1111b.
+ */
+static int em_movss_store(struct x86_emulate_ctxt *ctxt)
+{
+	__sse128_u dst;
+	sse128_t src;
+
+	kvm_read_sse_reg(ctxt->modrm_reg, &src);
+
+	if (ctxt->modrm_mod != 3) {
+		if ((ctxt->d & Avx) && ctxt->vex_reg)
+			return emulate_ud(ctxt);
+		*(u32 *)ctxt->dst.valptr = sse128_l0(src);
+		return write_modrm_mem(ctxt, ctxt->dst.valptr, sizeof(u32));
+	}
+
+	if (ctxt->d & Avx)
+		kvm_read_sse_reg(ctxt->vex_reg, &dst.vec);
+	else
+		kvm_read_sse_reg(ctxt->modrm_rm, &dst.vec);
+
+	dst.as_u32[0] = sse128_l0(src);
+	write_xmm_reg(ctxt, ctxt->modrm_rm, &dst.vec);
+	ctxt->dst.type = OP_NONE;
+	return X86EMUL_CONTINUE;
+}
+
+/*
+ * MOVSD/VMOVSD m64/xmm, xmm
+ * Legacy stores to memory or preserves the upper qword of the register
+ * destination; VEX register form merges with VEX.vvvv and memory form
+ * requires reserved VEX.vvvv=1111b.
+ */
+static int em_movsd_store(struct x86_emulate_ctxt *ctxt)
+{
+	__sse128_u dst;
+	sse128_t src;
+
+	kvm_read_sse_reg(ctxt->modrm_reg, &src);
+
+	if (ctxt->modrm_mod != 3) {
+		if ((ctxt->d & Avx) && ctxt->vex_reg)
+			return emulate_ud(ctxt);
+		*(u64 *)ctxt->dst.valptr = sse128_lo(src);
+		return write_modrm_mem(ctxt, ctxt->dst.valptr, sizeof(u64));
+	}
+
+	if (ctxt->d & Avx)
+		kvm_read_sse_reg(ctxt->vex_reg, &dst.vec);
+	else
+		kvm_read_sse_reg(ctxt->modrm_rm, &dst.vec);
+
+	dst.as_u64[0] = sse128_lo(src);
+	write_xmm_reg(ctxt, ctxt->modrm_rm, &dst.vec);
+	ctxt->dst.type = OP_NONE;
+	return X86EMUL_CONTINUE;
+}
+
+/*
+ * MOVLPS/MOVLPD/VMOVLPS/VMOVLPD and MOVHLPS/VMOVHLPS
+ */
+static int em_movlps(struct x86_emulate_ctxt *ctxt)
+{
+	__sse128_u dst;
+	sse128_t src2;
+	u64 val;
+	int rc;
+
+	if (ctxt->modrm_mod == 3) {
+		if (ctxt->op_prefix)
+			return emulate_ud(ctxt);
+
+		if (ctxt->d & Avx)
+			kvm_read_sse_reg(ctxt->vex_reg, &dst.vec);
+		else
+			kvm_read_sse_reg(ctxt->modrm_reg, &dst.vec);
+
+		kvm_read_sse_reg(ctxt->modrm_rm, &src2);
+		dst.as_u64[0] = sse128_hi(src2);
+	} else {
+		rc = read_modrm_mem(ctxt, &val, sizeof(val));
+		if (rc != X86EMUL_CONTINUE)
+			return rc;
+
+		if (ctxt->d & Avx)
+			kvm_read_sse_reg(ctxt->vex_reg, &dst.vec);
+		else
+			kvm_read_sse_reg(ctxt->modrm_reg, &dst.vec);
+
+		dst.as_u64[0] = val;
+	}
+
+	write_xmm_reg(ctxt, ctxt->modrm_reg, &dst.vec);
+	ctxt->dst.type = OP_NONE;
+	return X86EMUL_CONTINUE;
+}
+
+/*
+ * MOVLPS/MOVLPD/VMOVLPS/VMOVLPD store to memory.
+ */
+static int em_movlps_store(struct x86_emulate_ctxt *ctxt)
+{
+	sse128_t src;
+
+	if (ctxt->modrm_mod == 3)
+		return emulate_ud(ctxt);
+	if ((ctxt->d & Avx) && ctxt->vex_reg)
+		return emulate_ud(ctxt);
+
+	kvm_read_sse_reg(ctxt->modrm_reg, &src);
+	/* Store in persistent ctxt buffer for cross-page MMIO fragment safety */
+	*(u64 *)ctxt->dst.valptr = sse128_lo(src);
+	return write_modrm_mem(ctxt, ctxt->dst.valptr, sizeof(u64));
+}
+
+/*
+ * MOVHPS/MOVHPD/VMOVHPS/VMOVHPD and MOVLHPS/VMOVLHPS
+ */
+static int em_movhps_load(struct x86_emulate_ctxt *ctxt)
+{
+	__sse128_u dst;
+	sse128_t src2;
+	u64 val;
+	int rc;
+
+	if (ctxt->modrm_mod == 3) {
+		if (ctxt->op_prefix)
+			return emulate_ud(ctxt);
+
+		if (ctxt->d & Avx)
+			kvm_read_sse_reg(ctxt->vex_reg, &dst.vec);
+		else
+			kvm_read_sse_reg(ctxt->modrm_reg, &dst.vec);
+
+		kvm_read_sse_reg(ctxt->modrm_rm, &src2);
+		dst.as_u64[1] = sse128_lo(src2);
+	} else {
+		rc = read_modrm_mem(ctxt, &val, sizeof(val));
+		if (rc != X86EMUL_CONTINUE)
+			return rc;
+
+		if (ctxt->d & Avx)
+			kvm_read_sse_reg(ctxt->vex_reg, &dst.vec);
+		else
+			kvm_read_sse_reg(ctxt->modrm_reg, &dst.vec);
+
+		dst.as_u64[1] = val;
+	}
+
+	write_xmm_reg(ctxt, ctxt->modrm_reg, &dst.vec);
+	ctxt->dst.type = OP_NONE;
+	return X86EMUL_CONTINUE;
+}
+
+/*
+ * MOVHPS/MOVHPD/VMOVHPS/VMOVHPD store to memory.
+ */
+static int em_movhps_store(struct x86_emulate_ctxt *ctxt)
+{
+	sse128_t src;
+
+	if (ctxt->modrm_mod == 3)
+		return emulate_ud(ctxt);
+	if ((ctxt->d & Avx) && ctxt->vex_reg)
+		return emulate_ud(ctxt);
+
+	kvm_read_sse_reg(ctxt->modrm_reg, &src);
+	/* Store in persistent ctxt buffer for cross-page MMIO fragment safety */
+	*(u64 *)ctxt->dst.valptr = sse128_hi(src);
+	return write_modrm_mem(ctxt, ctxt->dst.valptr, sizeof(u64));
+}
+
+/*
+ * VMOVD/Q xmm, r/m32|64 and MOVD/Q xmm, r/m32|64
+ */
+static int em_movd_xmm_load(struct x86_emulate_ctxt *ctxt)
+{
+	__sse128_u dst = {};
+	u64 val;
+	int rc;
+
+	rc = read_modrm_int_operand(ctxt, &val, scalar_gpr_bytes(ctxt));
+	if (rc != X86EMUL_CONTINUE)
+		return rc;
+
+	memcpy(&dst, &val, scalar_gpr_bytes(ctxt));
+	write_xmm_reg(ctxt, ctxt->modrm_reg, &dst.vec);
+	ctxt->dst.type = OP_NONE;
+	return X86EMUL_CONTINUE;
+}
+
+/*
+ * VMOVD/Q r/m32|64, xmm and MOVD/Q r/m32|64, xmm
+ */
+static int em_movd_xmm_store(struct x86_emulate_ctxt *ctxt)
+{
+	sse128_t src;
+	unsigned int bytes = scalar_gpr_bytes(ctxt);
+
+	kvm_read_sse_reg(ctxt->modrm_reg, &src);
+
+	if (ctxt->modrm_mod == 3) {
+		assign_register(reg_rmw(ctxt, ctxt->modrm_rm), sse128_lo(src), bytes);
+		return X86EMUL_CONTINUE;
+	}
+
+	*(u64 *)ctxt->dst.valptr = sse128_lo(src);
+	return write_modrm_mem(ctxt, ctxt->dst.valptr, bytes);
+}
+
+/*
+ * MOVQ/VMOVQ xmm, xmm/m64
+ */
+static int em_movq_load(struct x86_emulate_ctxt *ctxt)
+{
+	__sse128_u dst = {};
+	sse128_t src;
+	u64 val;
+	int rc;
+
+	if (ctxt->modrm_mod == 3) {
+		kvm_read_sse_reg(ctxt->modrm_rm, &src);
+		val = sse128_lo(src);
+	} else {
+		rc = read_modrm_mem(ctxt, &val, sizeof(val));
+		if (rc != X86EMUL_CONTINUE)
+			return rc;
+	}
+
+	dst.as_u64[0] = val;
+	write_xmm_reg(ctxt, ctxt->modrm_reg, &dst.vec);
+	ctxt->dst.type = OP_NONE;
+	return X86EMUL_CONTINUE;
+}
+
+/*
+ * MOVQ/VMOVQ xmm/m64, xmm
+ */
+static int em_movq_store(struct x86_emulate_ctxt *ctxt)
+{
+	__sse128_u dst = {};
+	sse128_t src;
+
+	kvm_read_sse_reg(ctxt->modrm_reg, &src);
+
+	if (ctxt->modrm_mod == 3) {
+		dst.as_u64[0] = sse128_lo(src);
+		write_xmm_reg(ctxt, ctxt->modrm_rm, &dst.vec);
+		ctxt->dst.type = OP_NONE;
+		return X86EMUL_CONTINUE;
+	}
+
+	*(u64 *)ctxt->dst.valptr = sse128_lo(src);
+	return write_modrm_mem(ctxt, ctxt->dst.valptr, sizeof(u64));
+}
+
+/*
+ * SSE prerequisite checking helper for instructions that cannot use the
+ * Sse flag (e.g., MOVD/MOVQ which need mixed GPR/XMM operand types).
+ */
+static int em_check_sse_prereqs(struct x86_emulate_ctxt *ctxt)
+{
+	if (ctxt->ops->get_cr(ctxt, 0) & X86_CR0_EM)
+		return emulate_ud(ctxt);
+	if (!(ctxt->ops->get_cr(ctxt, 4) & X86_CR4_OSFXSR))
+		return emulate_ud(ctxt);
+	if (ctxt->ops->get_cr(ctxt, 0) & X86_CR0_TS)
+		return emulate_nm(ctxt);
+	return X86EMUL_CONTINUE;
+}
+
+static int emulate_simd_fp_exception(struct x86_emulate_ctxt *ctxt)
+{
+	if (!(ctxt->ops->get_cr(ctxt, 4) & X86_CR4_OSXMMEXCPT))
+		return emulate_ud(ctxt);
+
+	return emulate_exception(ctxt, XM_VECTOR, 0, false);
+}
+
+/*
+ * MOVSLDUP: duplicate even-indexed single-precision floats.
+ * {a, b, c, d} -> {a, a, c, c}.  For 256-bit: also handles upper lane.
+ * Used for F3 0F 12 /r.
+ */
+static int em_movsldup(struct x86_emulate_ctxt *ctxt)
+{
+	u32 *src = (u32 *)ctxt->src.valptr;
+	u32 *dst = (u32 *)ctxt->dst.valptr;
+
+	dst[0] = src[0]; dst[1] = src[0];
+	dst[2] = src[2]; dst[3] = src[2];
+
+	if (ctxt->op_bytes == 32) {
+		dst[4] = src[4]; dst[5] = src[4];
+		dst[6] = src[6]; dst[7] = src[6];
+	}
+	return X86EMUL_CONTINUE;
+}
+
+/*
+ * MOVSHDUP: duplicate odd-indexed single-precision floats.
+ * {a, b, c, d} -> {b, b, d, d}.  For 256-bit: also handles upper lane.
+ * Used for F3 0F 16 /r.
+ */
+static int em_movshdup(struct x86_emulate_ctxt *ctxt)
+{
+	u32 *src = (u32 *)ctxt->src.valptr;
+	u32 *dst = (u32 *)ctxt->dst.valptr;
+
+	dst[0] = src[1]; dst[1] = src[1];
+	dst[2] = src[3]; dst[3] = src[3];
+
+	if (ctxt->op_bytes == 32) {
+		dst[4] = src[5]; dst[5] = src[5];
+		dst[6] = src[7]; dst[7] = src[7];
+	}
+	return X86EMUL_CONTINUE;
+}
+
+/*
+ * MOVDDUP: duplicate low qword to both halves of XMM.
+ * {lo, hi} -> {lo, lo}.  Used for F2 0F 12 /r.
+ */
+static int em_movddup(struct x86_emulate_ctxt *ctxt)
+{
+	u64 *src = (u64 *)ctxt->src.valptr;
+	u64 *dst = (u64 *)ctxt->dst.valptr;
+
+	memset(ctxt->dst.valptr, 0, sizeof(ctxt->dst.valptr));
+	dst[0] = src[0]; dst[1] = src[0];
+	return X86EMUL_CONTINUE;
+}
+
+/*
+ * PCMPEQB: packed compare for equal bytes.
+ * For AVX, the first source comes from VEX.vvvv instead of the destination.
+ */
+static int em_pcmpeqb(struct x86_emulate_ctxt *ctxt)
+{
+	u8 *dst = (u8 *)ctxt->dst.valptr;
+	u8 *src = (u8 *)ctxt->src.valptr;
+	u8 *src1 = ctxt->src2.type == OP_NONE ? dst : (u8 *)ctxt->src2.valptr;
+	int i;
+
+	for (i = 0; i < ctxt->dst.bytes; i++)
+		dst[i] = (src1[i] == src[i]) ? 0xff : 0x00;
+	return X86EMUL_CONTINUE;
+}
+
+/*
+ * PMINUB: packed minimum of unsigned bytes.
+ * For AVX, the first source comes from VEX.vvvv instead of the destination.
+ */
+static int em_pminub(struct x86_emulate_ctxt *ctxt)
+{
+	u8 *dst = (u8 *)ctxt->dst.valptr;
+	u8 *src = (u8 *)ctxt->src.valptr;
+	u8 *src1 = ctxt->src2.type == OP_NONE ? dst : (u8 *)ctxt->src2.valptr;
+	int i;
+
+	for (i = 0; i < ctxt->dst.bytes; i++)
+		dst[i] = min(src1[i], src[i]);
+	return X86EMUL_CONTINUE;
+}
+
+/*
+ * PAVGB: packed average of unsigned bytes.
+ * For AVX, the first source comes from VEX.vvvv instead of the destination.
+ */
+static int em_pavgb(struct x86_emulate_ctxt *ctxt)
+{
+	u8 *dst = (u8 *)ctxt->dst.valptr;
+	u8 *src = (u8 *)ctxt->src.valptr;
+	u8 *src1 = ctxt->src2.type == OP_NONE ? dst : (u8 *)ctxt->src2.valptr;
+	int i;
+
+	for (i = 0; i < ctxt->dst.bytes; i++)
+		dst[i] = ((u16)src1[i] + (u16)src[i] + 1) >> 1;
+	return X86EMUL_CONTINUE;
+}
+
+/*
+ * POR: bitwise OR of packed integers.
+ * For AVX, the first source comes from VEX.vvvv instead of the destination.
+ */
+static int em_por(struct x86_emulate_ctxt *ctxt)
+{
+	u64 *dst = (u64 *)ctxt->dst.valptr;
+	u64 *src = (u64 *)ctxt->src.valptr;
+	u64 *src1 = ctxt->src2.type == OP_NONE ? dst : (u64 *)ctxt->src2.valptr;
+	int i;
+
+	for (i = 0; i < ctxt->dst.bytes / sizeof(*dst); i++)
+		dst[i] = src1[i] | src[i];
+	return X86EMUL_CONTINUE;
+}
+
+/*
+ * PAND: bitwise AND of packed integers.
+ * For AVX, the first source comes from VEX.vvvv instead of the destination.
+ */
+static int em_pand(struct x86_emulate_ctxt *ctxt)
+{
+	u64 *dst = (u64 *)ctxt->dst.valptr;
+	u64 *src = (u64 *)ctxt->src.valptr;
+	u64 *src1 = ctxt->src2.type == OP_NONE ? dst : (u64 *)ctxt->src2.valptr;
+	int i;
+
+	for (i = 0; i < ctxt->dst.bytes / sizeof(*dst); i++)
+		dst[i] = src1[i] & src[i];
+	return X86EMUL_CONTINUE;
+}
+
+/*
+ * PANDN: bitwise AND NOT of packed integers.  dst = ~src1 & src.
+ * For AVX, the first source comes from VEX.vvvv instead of the destination.
+ */
+static int em_pandn(struct x86_emulate_ctxt *ctxt)
+{
+	u64 *dst = (u64 *)ctxt->dst.valptr;
+	u64 *src = (u64 *)ctxt->src.valptr;
+	u64 *src1 = ctxt->src2.type == OP_NONE ? dst : (u64 *)ctxt->src2.valptr;
+	int i;
+
+	for (i = 0; i < ctxt->dst.bytes / sizeof(*dst); i++)
+		dst[i] = ~src1[i] & src[i];
+	return X86EMUL_CONTINUE;
+}
+
+/*
+ * PXOR: bitwise XOR of packed integers.
+ * For AVX, the first source comes from VEX.vvvv instead of the destination.
+ */
+static int em_pxor(struct x86_emulate_ctxt *ctxt)
+{
+	u64 *dst = (u64 *)ctxt->dst.valptr;
+	u64 *src = (u64 *)ctxt->src.valptr;
+	u64 *src1 = ctxt->src2.type == OP_NONE ? dst : (u64 *)ctxt->src2.valptr;
+	int i;
+
+	for (i = 0; i < ctxt->dst.bytes / sizeof(*dst); i++)
+		dst[i] = src1[i] ^ src[i];
+	return X86EMUL_CONTINUE;
+}
+
+/*
+ * PADDB: packed add bytes.
+ * For AVX, the first source comes from VEX.vvvv instead of the destination.
+ */
+static int em_paddb(struct x86_emulate_ctxt *ctxt)
+{
+	u8 *dst = (u8 *)ctxt->dst.valptr;
+	u8 *src = (u8 *)ctxt->src.valptr;
+	u8 *src1 = ctxt->src2.type == OP_NONE ? dst : (u8 *)ctxt->src2.valptr;
+	int i;
+
+	for (i = 0; i < ctxt->dst.bytes; i++)
+		dst[i] = src1[i] + src[i];
+	return X86EMUL_CONTINUE;
+}
+
+/*
+ * PSUBB: packed subtract bytes.
+ * For AVX, the first source comes from VEX.vvvv instead of the destination.
+ */
+static int em_psubb(struct x86_emulate_ctxt *ctxt)
+{
+	u8 *dst = (u8 *)ctxt->dst.valptr;
+	u8 *src = (u8 *)ctxt->src.valptr;
+	u8 *src1 = ctxt->src2.type == OP_NONE ? dst : (u8 *)ctxt->src2.valptr;
+	int i;
+
+	for (i = 0; i < ctxt->dst.bytes; i++)
+		dst[i] = src1[i] - src[i];
+	return X86EMUL_CONTINUE;
+}
+
+/*
+ * PCMPEQD: packed compare for equal dwords.
+ * For AVX, the first source comes from VEX.vvvv instead of the destination.
+ */
+static int em_pcmpeqd(struct x86_emulate_ctxt *ctxt)
+{
+	u32 *dst = (u32 *)ctxt->dst.valptr;
+	u32 *src = (u32 *)ctxt->src.valptr;
+	u32 *src1 = ctxt->src2.type == OP_NONE ? dst : (u32 *)ctxt->src2.valptr;
+	int i;
+
+	for (i = 0; i < ctxt->dst.bytes / sizeof(*dst); i++)
+		dst[i] = (src1[i] == src[i]) ? 0xffffffff : 0x00000000;
+	return X86EMUL_CONTINUE;
+}
+
+/*
+ * PCMPGTB: packed compare for greater than bytes (signed).
+ * For AVX, the first source comes from VEX.vvvv instead of the destination.
+ */
+static int em_pcmpgtb(struct x86_emulate_ctxt *ctxt)
+{
+	s8 *dst = (s8 *)ctxt->dst.valptr;
+	s8 *src = (s8 *)ctxt->src.valptr;
+	s8 *src1 = ctxt->src2.type == OP_NONE ? dst : (s8 *)ctxt->src2.valptr;
+	int i;
+
+	for (i = 0; i < ctxt->dst.bytes; i++)
+		dst[i] = (src1[i] > src[i]) ? (s8)0xff : (s8)0x00;
+	return X86EMUL_CONTINUE;
+}
+
+/*
+ * PADDW: packed add words.
+ * For AVX, the first source comes from VEX.vvvv instead of the destination.
+ */
+static int em_paddw(struct x86_emulate_ctxt *ctxt)
+{
+	u16 *dst = (u16 *)ctxt->dst.valptr;
+	u16 *src = (u16 *)ctxt->src.valptr;
+	u16 *src1 = ctxt->src2.type == OP_NONE ? dst : (u16 *)ctxt->src2.valptr;
+	int i;
+
+	for (i = 0; i < ctxt->dst.bytes / sizeof(*dst); i++)
+		dst[i] = src1[i] + src[i];
+	return X86EMUL_CONTINUE;
+}
+
+/*
+ * PADDD: packed add dwords.
+ * For AVX, the first source comes from VEX.vvvv instead of the destination.
+ */
+static int em_paddd(struct x86_emulate_ctxt *ctxt)
+{
+	u32 *dst = (u32 *)ctxt->dst.valptr;
+	u32 *src = (u32 *)ctxt->src.valptr;
+	u32 *src1 = ctxt->src2.type == OP_NONE ? dst : (u32 *)ctxt->src2.valptr;
+	int i;
+
+	for (i = 0; i < ctxt->dst.bytes / sizeof(*dst); i++)
+		dst[i] = src1[i] + src[i];
+	return X86EMUL_CONTINUE;
+}
+
+/*
+ * PADDQ: packed add quadwords.
+ * For AVX, the first source comes from VEX.vvvv instead of the destination.
+ */
+static int em_paddq(struct x86_emulate_ctxt *ctxt)
+{
+	u64 *dst = (u64 *)ctxt->dst.valptr;
+	u64 *src = (u64 *)ctxt->src.valptr;
+	u64 *src1 = ctxt->src2.type == OP_NONE ? dst : (u64 *)ctxt->src2.valptr;
+	int i;
+
+	for (i = 0; i < ctxt->dst.bytes / sizeof(*dst); i++)
+		dst[i] = src1[i] + src[i];
+	return X86EMUL_CONTINUE;
+}
+
+/*
+ * PSUBW: packed subtract words.
+ * For AVX, the first source comes from VEX.vvvv instead of the destination.
+ */
+static int em_psubw(struct x86_emulate_ctxt *ctxt)
+{
+	u16 *dst = (u16 *)ctxt->dst.valptr;
+	u16 *src = (u16 *)ctxt->src.valptr;
+	u16 *src1 = ctxt->src2.type == OP_NONE ? dst : (u16 *)ctxt->src2.valptr;
+	int i;
+
+	for (i = 0; i < ctxt->dst.bytes / sizeof(*dst); i++)
+		dst[i] = src1[i] - src[i];
+	return X86EMUL_CONTINUE;
+}
+
+/*
+ * PSUBD: packed subtract dwords.
+ * For AVX, the first source comes from VEX.vvvv instead of the destination.
+ */
+static int em_psubd(struct x86_emulate_ctxt *ctxt)
+{
+	u32 *dst = (u32 *)ctxt->dst.valptr;
+	u32 *src = (u32 *)ctxt->src.valptr;
+	u32 *src1 = ctxt->src2.type == OP_NONE ? dst : (u32 *)ctxt->src2.valptr;
+	int i;
+
+	for (i = 0; i < ctxt->dst.bytes / sizeof(*dst); i++)
+		dst[i] = src1[i] - src[i];
+	return X86EMUL_CONTINUE;
+}
+
+/*
+ * PSUBQ: packed subtract quadwords.
+ * For AVX, the first source comes from VEX.vvvv instead of the destination.
+ */
+static int em_psubq(struct x86_emulate_ctxt *ctxt)
+{
+	u64 *dst = (u64 *)ctxt->dst.valptr;
+	u64 *src = (u64 *)ctxt->src.valptr;
+	u64 *src1 = ctxt->src2.type == OP_NONE ? dst : (u64 *)ctxt->src2.valptr;
+	int i;
+
+	for (i = 0; i < ctxt->dst.bytes / sizeof(*dst); i++)
+		dst[i] = src1[i] - src[i];
+	return X86EMUL_CONTINUE;
+}
+
+/*
+ * PCMPEQW: packed compare for equal words.
+ * For AVX, the first source comes from VEX.vvvv instead of the destination.
+ */
+static int em_pcmpeqw(struct x86_emulate_ctxt *ctxt)
+{
+	u16 *dst = (u16 *)ctxt->dst.valptr;
+	u16 *src = (u16 *)ctxt->src.valptr;
+	u16 *src1 = ctxt->src2.type == OP_NONE ? dst : (u16 *)ctxt->src2.valptr;
+	int i;
+
+	for (i = 0; i < ctxt->dst.bytes / sizeof(*dst); i++)
+		dst[i] = (src1[i] == src[i]) ? 0xffff : 0x0000;
+	return X86EMUL_CONTINUE;
+}
+
+/*
+ * PCMPGTW: packed compare for greater than words (signed).
+ * For AVX, the first source comes from VEX.vvvv instead of the destination.
+ */
+static int em_pcmpgtw(struct x86_emulate_ctxt *ctxt)
+{
+	s16 *dst = (s16 *)ctxt->dst.valptr;
+	s16 *src = (s16 *)ctxt->src.valptr;
+	s16 *src1 = ctxt->src2.type == OP_NONE ? dst : (s16 *)ctxt->src2.valptr;
+	int i;
+
+	for (i = 0; i < ctxt->dst.bytes / sizeof(*dst); i++)
+		dst[i] = (src1[i] > src[i]) ? (s16)0xffff : (s16)0x0000;
+	return X86EMUL_CONTINUE;
+}
+
+/*
+ * PCMPGTD: packed compare for greater than dwords (signed).
+ * For AVX, the first source comes from VEX.vvvv instead of the destination.
+ */
+static int em_pcmpgtd(struct x86_emulate_ctxt *ctxt)
+{
+	s32 *dst = (s32 *)ctxt->dst.valptr;
+	s32 *src = (s32 *)ctxt->src.valptr;
+	s32 *src1 = ctxt->src2.type == OP_NONE ? dst : (s32 *)ctxt->src2.valptr;
+	int i;
+
+	for (i = 0; i < ctxt->dst.bytes / sizeof(*dst); i++)
+		dst[i] = (src1[i] > src[i]) ? (s32)0xffffffff : (s32)0x00000000;
+	return X86EMUL_CONTINUE;
+}
+
+/*
+ * PMULLW: packed multiply low words.
+ * For AVX, the first source comes from VEX.vvvv instead of the destination.
+ */
+static int em_pmullw(struct x86_emulate_ctxt *ctxt)
+{
+	u16 *dst = (u16 *)ctxt->dst.valptr;
+	u16 *src = (u16 *)ctxt->src.valptr;
+	u16 *src1 = ctxt->src2.type == OP_NONE ? dst : (u16 *)ctxt->src2.valptr;
+	int i;
+
+	for (i = 0; i < ctxt->dst.bytes / sizeof(*dst); i++)
+		dst[i] = src1[i] * src[i];
+	return X86EMUL_CONTINUE;
+}
+
+/*
+ * PMINUD: packed minimum of unsigned dwords.
+ * For AVX, the first source comes from VEX.vvvv instead of the destination.
+ */
+static int em_pminud(struct x86_emulate_ctxt *ctxt)
+{
+	u32 *dst = (u32 *)ctxt->dst.valptr;
+	u32 *src = (u32 *)ctxt->src.valptr;
+	u32 *src1 = ctxt->src2.type == OP_NONE ? dst : (u32 *)ctxt->src2.valptr;
+	int i;
+
+	for (i = 0; i < ctxt->dst.bytes / sizeof(*dst); i++)
+		dst[i] = min(src1[i], src[i]);
+	return X86EMUL_CONTINUE;
+}
+
+/*
+ * PMAXUD: packed maximum of unsigned dwords.
+ * For AVX, the first source comes from VEX.vvvv instead of the destination.
+ */
+static int em_pmaxud(struct x86_emulate_ctxt *ctxt)
+{
+	u32 *dst = (u32 *)ctxt->dst.valptr;
+	u32 *src = (u32 *)ctxt->src.valptr;
+	u32 *src1 = ctxt->src2.type == OP_NONE ? dst : (u32 *)ctxt->src2.valptr;
+	int i;
+
+	for (i = 0; i < ctxt->dst.bytes / sizeof(*dst); i++)
+		dst[i] = max(src1[i], src[i]);
+	return X86EMUL_CONTINUE;
+}
+
+/*
+ * PCMPEQQ: compare packed qwords for equality.
+ * For AVX, the first source comes from VEX.vvvv instead of the destination.
+ */
+static int em_pcmpeqq(struct x86_emulate_ctxt *ctxt)
+{
+	u64 *dst = (u64 *)ctxt->dst.valptr;
+	u64 *src = (u64 *)ctxt->src.valptr;
+	u64 *src1 = ctxt->src2.type == OP_NONE ? dst : (u64 *)ctxt->src2.valptr;
+	int i;
+
+	for (i = 0; i < ctxt->dst.bytes / sizeof(*dst); i++)
+		dst[i] = (src1[i] == src[i]) ? ~(u64)0 : 0;
+	return X86EMUL_CONTINUE;
+}
+
+/*
+ * PCMPGTQ: compare packed signed qwords for greater-than.
+ * For AVX, the first source comes from VEX.vvvv instead of the destination.
+ */
+static int em_pcmpgtq(struct x86_emulate_ctxt *ctxt)
+{
+	u64 *dst = (u64 *)ctxt->dst.valptr;
+	u64 *src = (u64 *)ctxt->src.valptr;
+	u64 *src1 = ctxt->src2.type == OP_NONE ? dst : (u64 *)ctxt->src2.valptr;
+	int i;
+
+	for (i = 0; i < ctxt->dst.bytes / sizeof(*dst); i++)
+		dst[i] = ((s64)src1[i] > (s64)src[i]) ? ~(u64)0 : 0;
+	return X86EMUL_CONTINUE;
+}
+
+/*
+ * PMULLD: multiply packed signed dwords, store low 32 bits.
+ * For AVX, the first source comes from VEX.vvvv instead of the destination.
+ */
+static int em_pmulld(struct x86_emulate_ctxt *ctxt)
+{
+	u32 *dst = (u32 *)ctxt->dst.valptr;
+	u32 *src = (u32 *)ctxt->src.valptr;
+	u32 *src1 = ctxt->src2.type == OP_NONE ? dst : (u32 *)ctxt->src2.valptr;
+	int i;
+
+	for (i = 0; i < ctxt->dst.bytes / sizeof(*dst); i++)
+		dst[i] = src1[i] * src[i];
+	return X86EMUL_CONTINUE;
+}
+
+/*
+ * PACKUSDW: pack dwords to unsigned words with saturation.
+ * For AVX, the first source comes from VEX.vvvv instead of the destination.
+ */
+static int em_packusdw(struct x86_emulate_ctxt *ctxt)
+{
+	s32 *src = (s32 *)ctxt->src.valptr;
+	s32 *src1 = ctxt->src2.type == OP_NONE ? (s32 *)ctxt->dst.valptr : (s32 *)ctxt->src2.valptr;
+	u16 *dst = (u16 *)ctxt->dst.valptr;
+	u16 tmp[16];
+	int i;
+
+	/* For 128-bit: src1[0..3] -> tmp[0..3], src[0..3] -> tmp[4..7] */
+	for (i = 0; i < 4; i++)
+		tmp[i] = (src1[i] < 0) ? 0 : (src1[i] > 0xFFFF) ? 0xFFFF : src1[i];
+	for (i = 0; i < 4; i++)
+		tmp[4 + i] = (src[i] < 0) ? 0 : (src[i] > 0xFFFF) ? 0xFFFF : src[i];
+	memcpy(dst, tmp, 16);
+	/* For 256-bit: process each 128-bit lane independently */
+	if (ctxt->dst.bytes == 32) {
+		for (i = 0; i < 4; i++)
+			tmp[8 + i] = (src1[4+i] < 0) ? 0 : (src1[4+i] > 0xFFFF) ? 0xFFFF : src1[4+i];
+		for (i = 0; i < 4; i++)
+			tmp[12 + i] = (src[4+i] < 0) ? 0 : (src[4+i] > 0xFFFF) ? 0xFFFF : src[4+i];
+		memcpy(dst + 8, tmp + 8, 16);
+	}
+	return X86EMUL_CONTINUE;
+}
+
+/*
+ * PMADDUBSW: multiply unsigned bytes by signed bytes, add adjacent
+ * pairs to signed words with saturation.
+ * For AVX, the first source comes from VEX.vvvv instead of the destination.
+ */
+static int em_pmaddubsw(struct x86_emulate_ctxt *ctxt)
+{
+	u8 *src1_u = (u8 *)(ctxt->src2.type == OP_NONE ? ctxt->dst.valptr : ctxt->src2.valptr);
+	s8 *src_s = (s8 *)ctxt->src.valptr;
+	s16 *dst = (s16 *)ctxt->dst.valptr;
+	s16 tmp[16];
+	int i;
+
+	for (i = 0; i < ctxt->dst.bytes / 2; i++) {
+		s32 t = (s32)(u32)src1_u[2*i] * (s32)src_s[2*i] +
+			(s32)(u32)src1_u[2*i+1] * (s32)src_s[2*i+1];
+		tmp[i] = (t > 32767) ? 32767 : (t < -32768) ? -32768 : t;
+	}
+	memcpy(dst, tmp, ctxt->dst.bytes);
+	return X86EMUL_CONTINUE;
+}
+
+/*
+ * UCOMISS: unordered compare scalar single-precision floats, set EFLAGS.
+ * Used for NP 0F 2E /r — UCOMISS xmm1, xmm2/m32.
+ * Sets ZF, PF, CF; clears OF, SF, AF.
+ */
+static int em_ucomiss(struct x86_emulate_ctxt *ctxt)
+{
+	sse128_t reg;
+	sse128_t saved_xmm0;
+	u32 src1, src2;
+	unsigned long flags;
+	int rc;
+
+	rc = em_check_sse_prereqs(ctxt);
+	if (rc != X86EMUL_CONTINUE)
+		return rc;
+
+	kvm_read_sse_reg(ctxt->modrm_reg, &reg);
+	src1 = sse128_l0(reg);
+	if (ctxt->modrm_mod == 3) {
+		kvm_read_sse_reg(ctxt->modrm_rm, &reg);
+		src2 = sse128_l0(reg);
+	} else {
+		memcpy(&src2, ctxt->src.valptr, sizeof(src2));
+	}
+
+	kvm_fpu_get();
+	_kvm_read_sse_reg(0, &saved_xmm0);
+	rc = asm_safe("movss %[src1], %%xmm0; ucomiss %[src2], %%xmm0; pushf; pop %[flags]",
+		      , [flags] "=r" (flags)
+		      : [src1] "m" (src1), [src2] "m" (src2)
+		      : "cc");
+	_kvm_write_sse_reg(0, &saved_xmm0);
+	kvm_fpu_put();
+	if (rc != X86EMUL_CONTINUE)
+		return emulate_simd_fp_exception(ctxt);
+
+	ctxt->eflags = (ctxt->eflags & ~(X86_EFLAGS_ZF | X86_EFLAGS_PF |
+			X86_EFLAGS_CF | X86_EFLAGS_OF | X86_EFLAGS_SF |
+			X86_EFLAGS_AF)) |
+		       (flags & (X86_EFLAGS_ZF | X86_EFLAGS_PF | X86_EFLAGS_CF));
+
+	ctxt->dst.type = OP_NONE;
+	return X86EMUL_CONTINUE;
+}
+
+/*
+ * UCOMISD: unordered compare scalar double-precision floats and set EFLAGS.
+ * Used for 66 0F 2E /r — UCOMISD xmm1, xmm2/m64.
+ * Sets ZF, PF, CF; clears OF, SF, AF.
+ */
+static int em_ucomisd(struct x86_emulate_ctxt *ctxt)
+{
+	sse128_t reg;
+	sse128_t saved_xmm0;
+	u64 src1, src2;
+	unsigned long flags;
+	int rc;
+
+	rc = em_check_sse_prereqs(ctxt);
+	if (rc != X86EMUL_CONTINUE)
+		return rc;
+
+	kvm_read_sse_reg(ctxt->modrm_reg, &reg);
+	src1 = sse128_lo(reg);
+	if (ctxt->modrm_mod == 3) {
+		kvm_read_sse_reg(ctxt->modrm_rm, &reg);
+		src2 = sse128_lo(reg);
+	} else {
+		memcpy(&src2, ctxt->src.valptr, sizeof(src2));
+	}
+
+	kvm_fpu_get();
+	_kvm_read_sse_reg(0, &saved_xmm0);
+	rc = asm_safe("movsd %[src1], %%xmm0; ucomisd %[src2], %%xmm0; pushf; pop %[flags]",
+		      , [flags] "=r" (flags)
+		      : [src1] "m" (src1), [src2] "m" (src2)
+		      : "cc");
+	_kvm_write_sse_reg(0, &saved_xmm0);
+	kvm_fpu_put();
+	if (rc != X86EMUL_CONTINUE)
+		return emulate_simd_fp_exception(ctxt);
+
+	ctxt->eflags = (ctxt->eflags & ~(X86_EFLAGS_ZF | X86_EFLAGS_PF |
+			X86_EFLAGS_CF | X86_EFLAGS_OF | X86_EFLAGS_SF |
+			X86_EFLAGS_AF)) |
+		       (flags & (X86_EFLAGS_ZF | X86_EFLAGS_PF | X86_EFLAGS_CF));
+
+	ctxt->dst.type = OP_NONE;
+	return X86EMUL_CONTINUE;
+}
+
+/*
+ * COMISD: ordered compare scalar double-precision floats and set EFLAGS.
+ * Used for 66 0F 2F /r — COMISD xmm1, xmm2/m64.
+ * Sets ZF, PF, CF; clears OF, SF, AF.
+ */
+static int em_comisd(struct x86_emulate_ctxt *ctxt)
+{
+	sse128_t reg;
+	sse128_t saved_xmm0;
+	u64 src1, src2;
+	unsigned long flags;
+	int rc;
+
+	rc = em_check_sse_prereqs(ctxt);
+	if (rc != X86EMUL_CONTINUE)
+		return rc;
+
+	kvm_read_sse_reg(ctxt->modrm_reg, &reg);
+	src1 = sse128_lo(reg);
+	if (ctxt->modrm_mod == 3) {
+		kvm_read_sse_reg(ctxt->modrm_rm, &reg);
+		src2 = sse128_lo(reg);
+	} else {
+		memcpy(&src2, ctxt->src.valptr, sizeof(src2));
+	}
+
+	kvm_fpu_get();
+	_kvm_read_sse_reg(0, &saved_xmm0);
+	rc = asm_safe("movsd %[src1], %%xmm0; comisd %[src2], %%xmm0; pushf; pop %[flags]",
+		      , [flags] "=r" (flags)
+		      : [src1] "m" (src1), [src2] "m" (src2)
+		      : "cc");
+	_kvm_write_sse_reg(0, &saved_xmm0);
+	kvm_fpu_put();
+	if (rc != X86EMUL_CONTINUE)
+		return emulate_simd_fp_exception(ctxt);
+
+	ctxt->eflags = (ctxt->eflags & ~(X86_EFLAGS_ZF | X86_EFLAGS_PF |
+			X86_EFLAGS_CF | X86_EFLAGS_OF | X86_EFLAGS_SF |
+			X86_EFLAGS_AF)) |
+		       (flags & (X86_EFLAGS_ZF | X86_EFLAGS_PF | X86_EFLAGS_CF));
+
+	ctxt->dst.type = OP_NONE;
+	return X86EMUL_CONTINUE;
+}
+
+/*
+ * COMISS: ordered compare scalar single-precision floats and set EFLAGS.
+ * Used for NP 0F 2F /r — COMISS xmm1, xmm2/m32.
+ * Sets ZF, PF, CF; clears OF, SF, AF.
+ */
+static int em_comiss(struct x86_emulate_ctxt *ctxt)
+{
+	sse128_t reg;
+	sse128_t saved_xmm0;
+	u32 src1, src2;
+	unsigned long flags;
+	int rc;
+
+	rc = em_check_sse_prereqs(ctxt);
+	if (rc != X86EMUL_CONTINUE)
+		return rc;
+
+	kvm_read_sse_reg(ctxt->modrm_reg, &reg);
+	src1 = sse128_l0(reg);
+	if (ctxt->modrm_mod == 3) {
+		kvm_read_sse_reg(ctxt->modrm_rm, &reg);
+		src2 = sse128_l0(reg);
+	} else {
+		memcpy(&src2, ctxt->src.valptr, sizeof(src2));
+	}
+
+	kvm_fpu_get();
+	_kvm_read_sse_reg(0, &saved_xmm0);
+	rc = asm_safe("movss %[src1], %%xmm0; comiss %[src2], %%xmm0; pushf; pop %[flags]",
+		      , [flags] "=r" (flags)
+		      : [src1] "m" (src1), [src2] "m" (src2)
+		      : "cc");
+	_kvm_write_sse_reg(0, &saved_xmm0);
+	kvm_fpu_put();
+	if (rc != X86EMUL_CONTINUE)
+		return emulate_simd_fp_exception(ctxt);
+
+	ctxt->eflags = (ctxt->eflags & ~(X86_EFLAGS_ZF | X86_EFLAGS_PF |
+			X86_EFLAGS_CF | X86_EFLAGS_OF | X86_EFLAGS_SF |
+			X86_EFLAGS_AF)) |
+		       (flags & (X86_EFLAGS_ZF | X86_EFLAGS_PF | X86_EFLAGS_CF));
+
+	ctxt->dst.type = OP_NONE;
+	return X86EMUL_CONTINUE;
+}
+
+/*
+ * CVTSS2SI: convert scalar single-precision float to signed integer.
+ * Used for F3 0F 2D /r — CVTSS2SI r32/r64, xmm1/m32.
+ * Rounding is controlled by guest MXCSR (already loaded via kvm_fpu_get).
+ */
+static int em_cvtss2si(struct x86_emulate_ctxt *ctxt)
+{
+	sse128_t reg;
+	u32 float_val;
+	unsigned int bytes = scalar_gpr_bytes(ctxt);
+	int rc;
+
+	rc = em_check_sse_prereqs(ctxt);
+	if (rc != X86EMUL_CONTINUE)
+		return rc;
+
+	if (ctxt->modrm_mod == 3) {
+		kvm_read_sse_reg(ctxt->modrm_rm, &reg);
+		float_val = sse128_l0(reg);
+	} else {
+		rc = read_modrm_mem(ctxt, &float_val, sizeof(float_val));
+		if (rc != X86EMUL_CONTINUE)
+			return rc;
+	}
+
+	kvm_fpu_get();
+	if (bytes == 8) {
+		u64 result;
+
+		rc = asm_safe("cvtss2siq %[src], %[dst]",
+			      , [dst] "=r" (result)
+			      : [src] "m" (float_val));
+		if (rc != X86EMUL_CONTINUE) {
+			kvm_fpu_put();
+			return emulate_simd_fp_exception(ctxt);
+		}
+		assign_register(reg_rmw(ctxt, ctxt->modrm_reg), result, bytes);
+	} else {
+		u32 result;
+
+		rc = asm_safe("cvtss2sil %[src], %[dst]",
+			      , [dst] "=r" (result)
+			      : [src] "m" (float_val));
+		if (rc != X86EMUL_CONTINUE) {
+			kvm_fpu_put();
+			return emulate_simd_fp_exception(ctxt);
+		}
+		assign_register(reg_rmw(ctxt, ctxt->modrm_reg), result, bytes);
+	}
+	kvm_fpu_put();
+
+	ctxt->dst.type = OP_NONE;
+	return X86EMUL_CONTINUE;
+}
+
+/*
+ * CVTTSS2SI: convert with truncation scalar single-precision float to
+ * signed integer.
+ * Used for F3 0F 2C /r — CVTTSS2SI r32/r64, xmm1/m32.
+ */
+static int em_cvttss2si(struct x86_emulate_ctxt *ctxt)
+{
+	sse128_t reg;
+	u32 float_val;
+	unsigned int bytes = scalar_gpr_bytes(ctxt);
+	int rc;
+
+	rc = em_check_sse_prereqs(ctxt);
+	if (rc != X86EMUL_CONTINUE)
+		return rc;
+
+	if (ctxt->modrm_mod == 3) {
+		kvm_read_sse_reg(ctxt->modrm_rm, &reg);
+		float_val = sse128_l0(reg);
+	} else {
+		rc = read_modrm_mem(ctxt, &float_val, sizeof(float_val));
+		if (rc != X86EMUL_CONTINUE)
+			return rc;
+	}
+
+	kvm_fpu_get();
+	if (bytes == 8) {
+		u64 result;
+
+		rc = asm_safe("cvttss2siq %[src], %[dst]",
+			      , [dst] "=r" (result)
+			      : [src] "m" (float_val));
+		if (rc != X86EMUL_CONTINUE) {
+			kvm_fpu_put();
+			return emulate_simd_fp_exception(ctxt);
+		}
+		assign_register(reg_rmw(ctxt, ctxt->modrm_reg), result, bytes);
+	} else {
+		u32 result;
+
+		rc = asm_safe("cvttss2sil %[src], %[dst]",
+			      , [dst] "=r" (result)
+			      : [src] "m" (float_val));
+		if (rc != X86EMUL_CONTINUE) {
+			kvm_fpu_put();
+			return emulate_simd_fp_exception(ctxt);
+		}
+		assign_register(reg_rmw(ctxt, ctxt->modrm_reg), result, bytes);
+	}
+	kvm_fpu_put();
+
+	ctxt->dst.type = OP_NONE;
+	return X86EMUL_CONTINUE;
+}
+
+/*
+ * CVTSI2SD and VCVTSI2SD.
+ * Legacy preserves the high qword of the destination, VEX copies it from
+ * VEX.vvvv and clears upper YMM state.
+ */
+static int em_cvtsi2sd(struct x86_emulate_ctxt *ctxt)
+{
+	__sse128_u xmm;
+	sse128_t saved_xmm0;
+	u64 result;
+	u64 src = 0;
+	unsigned int bytes = scalar_gpr_bytes(ctxt);
+	int rc;
+
+	rc = em_check_sse_prereqs(ctxt);
+	if (rc != X86EMUL_CONTINUE)
+		return rc;
+
+	rc = read_modrm_int_operand(ctxt, &src, bytes);
+	if (rc != X86EMUL_CONTINUE)
+		return rc;
+
+	kvm_fpu_get();
+	_kvm_read_sse_reg(0, &saved_xmm0);
+	if (bytes == 8) {
+		rc = asm_safe("cvtsi2sdq %[src], %%xmm0; movsd %%xmm0, %[result]",
+			      , [result] "=m" (result)
+			      : [src] "m" (src));
+	} else {
+		u32 src32 = src;
+
+		rc = asm_safe("cvtsi2sdl %[src], %%xmm0; movsd %%xmm0, %[result]",
+			      , [result] "=m" (result)
+			      : [src] "m" (src32));
+	}
+	_kvm_write_sse_reg(0, &saved_xmm0);
+	kvm_fpu_put();
+	if (rc != X86EMUL_CONTINUE)
+		return emulate_simd_fp_exception(ctxt);
+
+	kvm_read_sse_reg((ctxt->d & Avx) ? ctxt->vex_reg : ctxt->modrm_reg,
+			 &xmm.vec);
+	xmm.as_u64[0] = result;
+	write_xmm_reg(ctxt, ctxt->modrm_reg, &xmm.vec);
+	ctxt->dst.type = OP_NONE;
+
+	return X86EMUL_CONTINUE;
+}
+
+/*
+ * CVTSI2SS and VCVTSI2SS: convert signed integer to scalar single-precision.
+ * Legacy preserves bits[127:32] of dest, VEX copies from VEX.vvvv.
+ */
+static int em_cvtsi2ss(struct x86_emulate_ctxt *ctxt)
+{
+	__sse128_u xmm;
+	sse128_t saved_xmm0;
+	u32 result;
+	u64 src = 0;
+	unsigned int bytes = scalar_gpr_bytes(ctxt);
+	int rc;
+
+	rc = em_check_sse_prereqs(ctxt);
+	if (rc != X86EMUL_CONTINUE)
+		return rc;
+
+	rc = read_modrm_int_operand(ctxt, &src, bytes);
+	if (rc != X86EMUL_CONTINUE)
+		return rc;
+
+	kvm_fpu_get();
+	_kvm_read_sse_reg(0, &saved_xmm0);
+	if (bytes == 8) {
+		rc = asm_safe("cvtsi2ssq %[src], %%xmm0; movss %%xmm0, %[result]",
+			      , [result] "=m" (result)
+			      : [src] "m" (src));
+	} else {
+		u32 src32 = src;
+
+		rc = asm_safe("cvtsi2ssl %[src], %%xmm0; movss %%xmm0, %[result]",
+			      , [result] "=m" (result)
+			      : [src] "m" (src32));
+	}
+	_kvm_write_sse_reg(0, &saved_xmm0);
+	kvm_fpu_put();
+	if (rc != X86EMUL_CONTINUE)
+		return emulate_simd_fp_exception(ctxt);
+
+	kvm_read_sse_reg((ctxt->d & Avx) ? ctxt->vex_reg : ctxt->modrm_reg,
+			 &xmm.vec);
+	xmm.as_u32[0] = result;
+	write_xmm_reg(ctxt, ctxt->modrm_reg, &xmm.vec);
+	ctxt->dst.type = OP_NONE;
+
+	return X86EMUL_CONTINUE;
+}
+
+/*
+ * CVTSD2SI: convert scalar double-precision float to signed integer.
+ * Used for F2 0F 2D /r.
+ */
+static int em_cvtsd2si(struct x86_emulate_ctxt *ctxt)
+{
+	sse128_t reg;
+	u64 double_val;
+	unsigned int bytes = scalar_gpr_bytes(ctxt);
+	int rc;
+
+	rc = em_check_sse_prereqs(ctxt);
+	if (rc != X86EMUL_CONTINUE)
+		return rc;
+
+	if (ctxt->modrm_mod == 3) {
+		kvm_read_sse_reg(ctxt->modrm_rm, &reg);
+		double_val = sse128_lo(reg);
+	} else {
+		rc = read_modrm_mem(ctxt, &double_val, sizeof(double_val));
+		if (rc != X86EMUL_CONTINUE)
+			return rc;
+	}
+
+	kvm_fpu_get();
+	if (bytes == 8) {
+		u64 result;
+
+		rc = asm_safe("cvtsd2siq %[src], %[dst]",
+			      , [dst] "=r" (result)
+			      : [src] "m" (double_val));
+		if (rc != X86EMUL_CONTINUE) {
+			kvm_fpu_put();
+			return emulate_simd_fp_exception(ctxt);
+		}
+		assign_register(reg_rmw(ctxt, ctxt->modrm_reg), result, bytes);
+	} else {
+		u32 result;
+
+		rc = asm_safe("cvtsd2sil %[src], %[dst]",
+			      , [dst] "=r" (result)
+			      : [src] "m" (double_val));
+		if (rc != X86EMUL_CONTINUE) {
+			kvm_fpu_put();
+			return emulate_simd_fp_exception(ctxt);
+		}
+		assign_register(reg_rmw(ctxt, ctxt->modrm_reg), result, bytes);
+	}
+	kvm_fpu_put();
+
+	ctxt->dst.type = OP_NONE;
+	return X86EMUL_CONTINUE;
+}
+
+/*
+ * CVTTSD2SI: convert with truncation scalar double-precision float to
+ * signed integer.
+ * Used for F2 0F 2C /r.
+ */
+static int em_cvttsd2si(struct x86_emulate_ctxt *ctxt)
+{
+	sse128_t reg;
+	u64 double_val;
+	unsigned int bytes = scalar_gpr_bytes(ctxt);
+	int rc;
+
+	rc = em_check_sse_prereqs(ctxt);
+	if (rc != X86EMUL_CONTINUE)
+		return rc;
+
+	if (ctxt->modrm_mod == 3) {
+		kvm_read_sse_reg(ctxt->modrm_rm, &reg);
+		double_val = sse128_lo(reg);
+	} else {
+		rc = read_modrm_mem(ctxt, &double_val, sizeof(double_val));
+		if (rc != X86EMUL_CONTINUE)
+			return rc;
+	}
+
+	kvm_fpu_get();
+	if (bytes == 8) {
+		u64 result;
+
+		rc = asm_safe("cvttsd2siq %[src], %[dst]",
+			      , [dst] "=r" (result)
+			      : [src] "m" (double_val));
+		if (rc != X86EMUL_CONTINUE) {
+			kvm_fpu_put();
+			return emulate_simd_fp_exception(ctxt);
+		}
+		assign_register(reg_rmw(ctxt, ctxt->modrm_reg), result, bytes);
+	} else {
+		u32 result;
+
+		rc = asm_safe("cvttsd2sil %[src], %[dst]",
+			      , [dst] "=r" (result)
+			      : [src] "m" (double_val));
+		if (rc != X86EMUL_CONTINUE) {
+			kvm_fpu_put();
+			return emulate_simd_fp_exception(ctxt);
+		}
+		assign_register(reg_rmw(ctxt, ctxt->modrm_reg), result, bytes);
+	}
+	kvm_fpu_put();
+
+	ctxt->dst.type = OP_NONE;
+	return X86EMUL_CONTINUE;
+}
+
+/*
+ * CVTSS2SD and VCVTSS2SD: convert scalar single-precision to double-precision.
+ * Legacy preserves the high qword, VEX copies it from VEX.vvvv.
+ */
+static int em_cvtss2sd(struct x86_emulate_ctxt *ctxt)
+{
+	__sse128_u xmm;
+	sse128_t saved_xmm0;
+	u64 result;
+	u32 float_val;
+	sse128_t reg;
+	int rc;
+
+	rc = em_check_sse_prereqs(ctxt);
+	if (rc != X86EMUL_CONTINUE)
+		return rc;
+
+	if (ctxt->modrm_mod == 3) {
+		kvm_read_sse_reg(ctxt->modrm_rm, &reg);
+		float_val = sse128_l0(reg);
+	} else {
+		rc = read_modrm_mem(ctxt, &float_val, sizeof(float_val));
+		if (rc != X86EMUL_CONTINUE)
+			return rc;
+	}
+
+	kvm_fpu_get();
+	_kvm_read_sse_reg(0, &saved_xmm0);
+	rc = asm_safe("cvtss2sd %[src], %%xmm0; movsd %%xmm0, %[result]",
+		      , [result] "=m" (result)
+		      : [src] "m" (float_val));
+	_kvm_write_sse_reg(0, &saved_xmm0);
+	kvm_fpu_put();
+	if (rc != X86EMUL_CONTINUE)
+		return emulate_simd_fp_exception(ctxt);
+
+	kvm_read_sse_reg((ctxt->d & Avx) ? ctxt->vex_reg : ctxt->modrm_reg,
+			 &xmm.vec);
+	xmm.as_u64[0] = result;
+	write_xmm_reg(ctxt, ctxt->modrm_reg, &xmm.vec);
+	ctxt->dst.type = OP_NONE;
+	return X86EMUL_CONTINUE;
+}
+
+/*
+ * CVTSD2SS and VCVTSD2SS: convert scalar double-precision to single-precision.
+ * Legacy preserves the upper 96 bits, VEX copies bits[127:32] from VEX.vvvv.
+ */
+static int em_cvtsd2ss(struct x86_emulate_ctxt *ctxt)
+{
+	__sse128_u xmm;
+	sse128_t saved_xmm0;
+	u32 result;
+	u64 double_val;
+	sse128_t reg;
+	int rc;
+
+	rc = em_check_sse_prereqs(ctxt);
+	if (rc != X86EMUL_CONTINUE)
+		return rc;
+
+	if (ctxt->modrm_mod == 3) {
+		kvm_read_sse_reg(ctxt->modrm_rm, &reg);
+		double_val = sse128_lo(reg);
+	} else {
+		rc = read_modrm_mem(ctxt, &double_val, sizeof(double_val));
+		if (rc != X86EMUL_CONTINUE)
+			return rc;
+	}
+
+	kvm_fpu_get();
+	_kvm_read_sse_reg(0, &saved_xmm0);
+	rc = asm_safe("cvtsd2ss %[src], %%xmm0; movss %%xmm0, %[result]",
+		      , [result] "=m" (result)
+		      : [src] "m" (double_val));
+	_kvm_write_sse_reg(0, &saved_xmm0);
+	kvm_fpu_put();
+	if (rc != X86EMUL_CONTINUE)
+		return emulate_simd_fp_exception(ctxt);
+
+	kvm_read_sse_reg((ctxt->d & Avx) ? ctxt->vex_reg : ctxt->modrm_reg,
+			 &xmm.vec);
+	xmm.as_u32[0] = result;
+	write_xmm_reg(ctxt, ctxt->modrm_reg, &xmm.vec);
+	ctxt->dst.type = OP_NONE;
+	return X86EMUL_CONTINUE;
+}
+
+/*
+ * Scalar single-precision arithmetic: ADDSS, SUBSS, MULSS, DIVSS, MINSS, MAXSS.
+ * Legacy preserves bits[127:32] of dest, VEX copies from VEX.vvvv.
+ */
+#define SSE_SCALAR_SS_OP(_name, _insn)						\
+static int _name(struct x86_emulate_ctxt *ctxt)					\
+{										\
+	__sse128_u xmm;								\
+	sse128_t saved_xmm0, saved_xmm1;					\
+	u32 src_val, result;							\
+	sse128_t reg;								\
+	int rc;									\
+										\
+	rc = em_check_sse_prereqs(ctxt);					\
+	if (rc != X86EMUL_CONTINUE)						\
+		return rc;							\
+										\
+	if (ctxt->modrm_mod == 3) {						\
+		kvm_read_sse_reg(ctxt->modrm_rm, &reg);			\
+		src_val = sse128_l0(reg);					\
+	} else {								\
+		rc = read_modrm_mem(ctxt, &src_val, sizeof(src_val));		\
+		if (rc != X86EMUL_CONTINUE)					\
+			return rc;						\
+	}									\
+										\
+	kvm_read_sse_reg((ctxt->d & Avx) ? ctxt->vex_reg : ctxt->modrm_reg,	\
+			 &xmm.vec);						\
+										\
+	kvm_fpu_get();								\
+	_kvm_read_sse_reg(0, &saved_xmm0);					\
+	_kvm_read_sse_reg(1, &saved_xmm1);					\
+	rc = asm_safe("movss %[dst_val], %%xmm0; " _insn " %[src], %%xmm0; "	\
+		      "movss %%xmm0, %[result]",				\
+		      , [result] "=m" (result)					\
+		      : [dst_val] "m" (xmm.as_u32[0]), [src] "m" (src_val)	\
+		      );							\
+	_kvm_write_sse_reg(0, &saved_xmm0);					\
+	_kvm_write_sse_reg(1, &saved_xmm1);					\
+	kvm_fpu_put();								\
+	if (rc != X86EMUL_CONTINUE)						\
+		return emulate_simd_fp_exception(ctxt);				\
+										\
+	xmm.as_u32[0] = result;						\
+	write_xmm_reg(ctxt, ctxt->modrm_reg, &xmm.vec);			\
+	ctxt->dst.type = OP_NONE;						\
+	return X86EMUL_CONTINUE;						\
+}
+
+SSE_SCALAR_SS_OP(em_addss, "addss")
+SSE_SCALAR_SS_OP(em_subss, "subss")
+SSE_SCALAR_SS_OP(em_mulss, "mulss")
+SSE_SCALAR_SS_OP(em_divss, "divss")
+SSE_SCALAR_SS_OP(em_minss, "minss")
+SSE_SCALAR_SS_OP(em_maxss, "maxss")
+SSE_SCALAR_SS_OP(em_sqrtss, "sqrtss")
+
+/*
+ * Scalar double-precision arithmetic: ADDSD, SUBSD, MULSD, DIVSD, MINSD, MAXSD.
+ * Legacy preserves bits[127:64] of dest, VEX copies from VEX.vvvv.
+ */
+#define SSE_SCALAR_SD_OP(_name, _insn)						\
+static int _name(struct x86_emulate_ctxt *ctxt)					\
+{										\
+	__sse128_u xmm;								\
+	sse128_t saved_xmm0, saved_xmm1;					\
+	u64 src_val, result;							\
+	sse128_t reg;								\
+	int rc;									\
+										\
+	rc = em_check_sse_prereqs(ctxt);					\
+	if (rc != X86EMUL_CONTINUE)						\
+		return rc;							\
+										\
+	if (ctxt->modrm_mod == 3) {						\
+		kvm_read_sse_reg(ctxt->modrm_rm, &reg);			\
+		src_val = sse128_lo(reg);					\
+	} else {								\
+		rc = read_modrm_mem(ctxt, &src_val, sizeof(src_val));		\
+		if (rc != X86EMUL_CONTINUE)					\
+			return rc;						\
+	}									\
+										\
+	kvm_read_sse_reg((ctxt->d & Avx) ? ctxt->vex_reg : ctxt->modrm_reg,	\
+			 &xmm.vec);						\
+										\
+	kvm_fpu_get();								\
+	_kvm_read_sse_reg(0, &saved_xmm0);					\
+	_kvm_read_sse_reg(1, &saved_xmm1);					\
+	rc = asm_safe("movsd %[dst_val], %%xmm0; " _insn " %[src], %%xmm0; "	\
+		      "movsd %%xmm0, %[result]",				\
+		      , [result] "=m" (result)					\
+		      : [dst_val] "m" (xmm.as_u64[0]), [src] "m" (src_val)	\
+		      );							\
+	_kvm_write_sse_reg(0, &saved_xmm0);					\
+	_kvm_write_sse_reg(1, &saved_xmm1);					\
+	kvm_fpu_put();								\
+	if (rc != X86EMUL_CONTINUE)						\
+		return emulate_simd_fp_exception(ctxt);				\
+										\
+	xmm.as_u64[0] = result;						\
+	write_xmm_reg(ctxt, ctxt->modrm_reg, &xmm.vec);			\
+	ctxt->dst.type = OP_NONE;						\
+	return X86EMUL_CONTINUE;						\
+}
+
+SSE_SCALAR_SD_OP(em_addsd, "addsd")
+SSE_SCALAR_SD_OP(em_subsd, "subsd")
+SSE_SCALAR_SD_OP(em_mulsd, "mulsd")
+SSE_SCALAR_SD_OP(em_divsd, "divsd")
+SSE_SCALAR_SD_OP(em_minsd, "minsd")
+SSE_SCALAR_SD_OP(em_maxsd, "maxsd")
+SSE_SCALAR_SD_OP(em_sqrtsd, "sqrtsd")
+
+#undef SSE_SCALAR_SS_OP
+#undef SSE_SCALAR_SD_OP
+
+/*
+ * Packed FP arithmetic macros.
+ * SSE_PACKED_OP: binary ops (two sources).
+ * SSE_PACKED_UNARY_OP: unary ops (one source).
+ */
+#define SSE_PACKED_OP(_name, _insn)						\
+static int _name(struct x86_emulate_ctxt *ctxt)					\
+{										\
+	u8 *dst = (u8 *)ctxt->dst.valptr;					\
+	u8 *src = (u8 *)ctxt->src.valptr;					\
+	u8 *src1 = ctxt->src2.type == OP_NONE ? dst : (u8 *)ctxt->src2.valptr;	\
+	unsigned int bytes = ctxt->dst.bytes;					\
+	sse128_t saved_xmm0, saved_xmm1;					\
+	u8 tmp_dst[32] __aligned(32);						\
+	int i;									\
+										\
+	kvm_fpu_get();								\
+	_kvm_read_sse_reg(0, &saved_xmm0);					\
+	_kvm_read_sse_reg(1, &saved_xmm1);					\
+	for (i = 0; i < bytes; i += 16) {					\
+		asm volatile("movdqu %0, %%xmm0" : : "m"(*(sse128_t *)&src1[i])); \
+		asm volatile(_insn " %0, %%xmm0" : : "m"(*(sse128_t *)&src[i])); \
+		asm volatile("movdqu %%xmm0, %0" : "=m"(*(sse128_t *)&tmp_dst[i])); \
+	}									\
+	_kvm_write_sse_reg(0, &saved_xmm0);					\
+	_kvm_write_sse_reg(1, &saved_xmm1);					\
+	kvm_fpu_put();								\
+	memcpy(dst, tmp_dst, bytes);						\
+	return X86EMUL_CONTINUE;						\
+}
+
+#define SSE_PACKED_UNARY_OP(_name, _insn)					\
+static int _name(struct x86_emulate_ctxt *ctxt)					\
+{										\
+	u8 *dst = (u8 *)ctxt->dst.valptr;					\
+	u8 *src = (u8 *)ctxt->src.valptr;					\
+	unsigned int bytes = ctxt->dst.bytes;					\
+	sse128_t saved_xmm0;							\
+	u8 tmp_dst[32] __aligned(32);						\
+	int i;									\
+										\
+	kvm_fpu_get();								\
+	_kvm_read_sse_reg(0, &saved_xmm0);					\
+	for (i = 0; i < bytes; i += 16) {					\
+		asm volatile(_insn " %1, %%xmm0; movdqu %%xmm0, %0"		\
+			     : "=m"(*(sse128_t *)&tmp_dst[i])			\
+			     : "m"(*(sse128_t *)&src[i]));			\
+	}									\
+	_kvm_write_sse_reg(0, &saved_xmm0);					\
+	kvm_fpu_put();								\
+	memcpy(dst, tmp_dst, bytes);						\
+	return X86EMUL_CONTINUE;						\
+}
+
+/* Group 1: Packed FP arithmetic */
+SSE_PACKED_OP(em_addps, "addps")
+SSE_PACKED_OP(em_addpd, "addpd")
+SSE_PACKED_OP(em_subps, "subps")
+SSE_PACKED_OP(em_subpd, "subpd")
+SSE_PACKED_OP(em_mulps, "mulps")
+SSE_PACKED_OP(em_mulpd, "mulpd")
+SSE_PACKED_OP(em_divps, "divps")
+SSE_PACKED_OP(em_divpd, "divpd")
+SSE_PACKED_OP(em_minps, "minps")
+SSE_PACKED_OP(em_minpd, "minpd")
+SSE_PACKED_OP(em_maxps, "maxps")
+SSE_PACKED_OP(em_maxpd, "maxpd")
+
+SSE_PACKED_UNARY_OP(em_sqrtps, "sqrtps")
+SSE_PACKED_UNARY_OP(em_sqrtpd, "sqrtpd")
+SSE_PACKED_UNARY_OP(em_rcpps, "rcpps")
+SSE_PACKED_UNARY_OP(em_rsqrtps, "rsqrtps")
+
+/* Conversion instructions */
+SSE_PACKED_UNARY_OP(em_cvtdq2ps, "cvtdq2ps")
+SSE_PACKED_UNARY_OP(em_cvtps2dq, "cvtps2dq")
+SSE_PACKED_UNARY_OP(em_cvttps2dq, "cvttps2dq")
+SSE_PACKED_UNARY_OP(em_cvtpd2dq, "cvtpd2dq")
+SSE_PACKED_UNARY_OP(em_cvttpd2dq, "cvttpd2dq")
+SSE_PACKED_UNARY_OP(em_cvtpd2ps, "cvtpd2ps")
+
+/*
+ * CVTPS2PD / VCVTPS2PD (NP 0F 5A) and CVTDQ2PD / VCVTDQ2PD (F3 0F E6).
+ * These widen the source: the memory operand is half the destination width.
+ *   128-bit form: xmm, xmm/m64   — 8B src -> 16B dst
+ *   256-bit form: ymm, xmm/m128 — 16B src -> 32B dst
+ * The default SrcMem decode path fetches op_bytes (16/32) from memory, which
+ * over-reads by 2x.  On MMIO the extra bytes can straddle an unmapped page
+ * and raise a spurious #PF; the guest then reports SIGSEGV on an instruction
+ * that was a valid narrow load in reality.  We fetch exactly src_bytes.
+ */
+#define SSE_WIDEN_PACKED_UNARY_OP(_name, _insn)				\
+static int _name(struct x86_emulate_ctxt *ctxt)				\
+{									\
+	u8 src_buf[16] __aligned(16) = { 0 };				\
+	u8 dst_buf[32] __aligned(32) = { 0 };				\
+	sse128_t saved_xmm0;						\
+	unsigned int dst_bytes = ctxt->op_bytes;			\
+	unsigned int src_bytes = dst_bytes / 2;				\
+	int rc, i;							\
+									\
+	rc = em_check_sse_prereqs(ctxt);				\
+	if (rc != X86EMUL_CONTINUE)					\
+		return rc;						\
+									\
+	if (ctxt->modrm_mod == 3) {					\
+		sse128_t reg;						\
+		kvm_read_sse_reg(ctxt->modrm_rm, &reg);			\
+		memcpy(src_buf, &reg, src_bytes);			\
+	} else {							\
+		rc = read_modrm_mem(ctxt, src_buf, src_bytes);		\
+		if (rc != X86EMUL_CONTINUE)				\
+			return rc;					\
+	}								\
+									\
+	kvm_fpu_get();							\
+	_kvm_read_sse_reg(0, &saved_xmm0);				\
+	for (i = 0; i < dst_bytes; i += 16) {				\
+		asm volatile(_insn " %1, %%xmm0; movdqu %%xmm0, %0"	\
+			     : "=m"(*(sse128_t *)&dst_buf[i])		\
+			     : "m"(*(u64 *)&src_buf[i / 2]));		\
+	}								\
+	_kvm_write_sse_reg(0, &saved_xmm0);				\
+	kvm_fpu_put();							\
+									\
+	if (dst_bytes == 32) {						\
+		avx256_t ymm;						\
+		memcpy(&ymm, dst_buf, 32);				\
+		kvm_write_avx_reg(ctxt->modrm_reg, &ymm);		\
+	} else {							\
+		sse128_t xmm;						\
+		memcpy(&xmm, dst_buf, 16);				\
+		write_xmm_reg(ctxt, ctxt->modrm_reg, &xmm);		\
+	}								\
+	ctxt->dst.type = OP_NONE;					\
+	return X86EMUL_CONTINUE;					\
+}
+
+SSE_WIDEN_PACKED_UNARY_OP(em_cvtps2pd, "cvtps2pd")
+SSE_WIDEN_PACKED_UNARY_OP(em_cvtdq2pd, "cvtdq2pd")
+
+/* AES-NI instructions */
+SSE_PACKED_OP(em_aesenc, "aesenc")
+SSE_PACKED_OP(em_aesdec, "aesdec")
+SSE_PACKED_OP(em_aesenclast, "aesenclast")
+SSE_PACKED_OP(em_aesdeclast, "aesdeclast")
+SSE_PACKED_UNARY_OP(em_aesimc, "aesimc")
+
+/* CMP packed/scalar with imm8 predicate */
+
+/* Horizontal add/sub */
+SSE_PACKED_OP(em_haddps, "haddps")
+SSE_PACKED_OP(em_haddpd, "haddpd")
+SSE_PACKED_OP(em_hsubps, "hsubps")
+SSE_PACKED_OP(em_hsubpd, "hsubpd")
+
+/* Unpack/interleave FP */
+SSE_PACKED_OP(em_unpcklps, "unpcklps")
+SSE_PACKED_OP(em_unpckhps, "unpckhps")
+SSE_PACKED_OP(em_unpcklpd, "unpcklpd")
+SSE_PACKED_OP(em_unpckhpd, "unpckhpd")
+
+/* PACK/PUNPCK integer operations using host CPU */
+SSE_PACKED_OP(em_punpcklbw, "punpcklbw")
+SSE_PACKED_OP(em_punpcklwd, "punpcklwd")
+SSE_PACKED_OP(em_punpckldq, "punpckldq")
+SSE_PACKED_OP(em_packsswb, "packsswb")
+SSE_PACKED_OP(em_packuswb, "packuswb")
+SSE_PACKED_OP(em_punpckhbw, "punpckhbw")
+SSE_PACKED_OP(em_punpckhwd, "punpckhwd")
+SSE_PACKED_OP(em_punpckhdq, "punpckhdq")
+SSE_PACKED_OP(em_packssdw, "packssdw")
+SSE_PACKED_OP(em_punpcklqdq, "punpcklqdq")
+SSE_PACKED_OP(em_punpckhqdq, "punpckhqdq")
+
+/* Saturating add/sub */
+SSE_PACKED_OP(em_paddsb, "paddsb")
+SSE_PACKED_OP(em_paddsw, "paddsw")
+SSE_PACKED_OP(em_paddusb, "paddusb")
+SSE_PACKED_OP(em_paddusw, "paddusw")
+SSE_PACKED_OP(em_psubsb, "psubsb")
+SSE_PACKED_OP(em_psubsw, "psubsw")
+SSE_PACKED_OP(em_psubusb, "psubusb")
+SSE_PACKED_OP(em_psubusw, "psubusw")
+
+/* More min/max */
+SSE_PACKED_OP(em_pmaxub, "pmaxub")
+SSE_PACKED_OP(em_pmaxsw, "pmaxsw")
+SSE_PACKED_OP(em_pminsw, "pminsw")
+
+/* Multiply variants */
+SSE_PACKED_OP(em_pmulhw, "pmulhw")
+SSE_PACKED_OP(em_pmulhuw, "pmulhuw")
+SSE_PACKED_OP(em_pmuludq, "pmuludq")
+
+/* PMADDWD, PSADBW */
+SSE_PACKED_OP(em_pmaddwd, "pmaddwd")
+SSE_PACKED_OP(em_psadbw, "psadbw")
+
+/* PAVGW */
+SSE_PACKED_OP(em_pavgw, "pavgw")
+
+/* SSE3: Alternating add/subtract */
+SSE_PACKED_OP(em_addsubps, "addsubps")
+SSE_PACKED_OP(em_addsubpd, "addsubpd")
+
+#undef SSE_PACKED_OP
+#undef SSE_PACKED_UNARY_OP
+
+/*
+ * PSHUFB (66 0F 38 00): Shuffle bytes using control mask.
+ * For each byte i: if src[i] & 0x80, dst[i] = 0; else dst[i] = src1[src[i] & 0xF]
+ * 256-bit: each 128-bit lane is independent.
+ */
+static int em_pshufb(struct x86_emulate_ctxt *ctxt)
+{
+	u8 *dst = (u8 *)ctxt->dst.valptr;
+	u8 *src = (u8 *)ctxt->src.valptr;
+	u8 *src1 = ctxt->src2.type == OP_NONE ? dst : (u8 *)ctxt->src2.valptr;
+	u8 tmp[32];
+	int i;
+
+	for (i = 0; i < ctxt->dst.bytes; i++) {
+		int lane_base = (i / 16) * 16;
+		if (src[i] & 0x80)
+			tmp[i] = 0;
+		else
+			tmp[i] = src1[lane_base + (src[i] & 0x0F)];
+	}
+	memcpy(dst, tmp, ctxt->dst.bytes);
+	return X86EMUL_CONTINUE;
+}
+
+/*
+ * PSHUFD (66 0F 70): Shuffle packed dwords with imm8.
+ * dst[0] = src[imm & 3], dst[1] = src[(imm>>2) & 3], etc.
+ * 256-bit: each 128-bit lane is independent.
+ */
+static int em_pshufd(struct x86_emulate_ctxt *ctxt)
+{
+	u32 *dst = (u32 *)ctxt->dst.valptr;
+	u32 *src = (u32 *)ctxt->src.valptr;
+	u32 tmp[8];
+	u8 imm;
+	int rc, i;
+
+	rc = do_insn_fetch_bytes(ctxt, 1);
+	if (rc != X86EMUL_CONTINUE)
+		return rc;
+	imm = *ctxt->fetch.ptr++;
+
+	for (i = 0; i < ctxt->dst.bytes / 4; i++) {
+		int lane_base = (i / 4) * 4;
+		int sel = (imm >> ((i % 4) * 2)) & 3;
+		tmp[i] = src[lane_base + sel];
+	}
+	memcpy(dst, tmp, ctxt->dst.bytes);
+	return X86EMUL_CONTINUE;
+}
+
+/*
+ * PSHUFHW (F3 0F 70): Shuffle high words with imm8.
+ * Low qword copied, high qword shuffled.
+ */
+static int em_pshufhw(struct x86_emulate_ctxt *ctxt)
+{
+	u16 *dst = (u16 *)ctxt->dst.valptr;
+	u16 *src = (u16 *)ctxt->src.valptr;
+	u16 tmp[16];
+	u8 imm;
+	int rc, i, lane;
+
+	rc = do_insn_fetch_bytes(ctxt, 1);
+	if (rc != X86EMUL_CONTINUE)
+		return rc;
+	imm = *ctxt->fetch.ptr++;
+
+	for (lane = 0; lane < ctxt->dst.bytes / 16; lane++) {
+		int base = lane * 8;
+		/* Copy low 4 words */
+		for (i = 0; i < 4; i++)
+			tmp[base + i] = src[base + i];
+		/* Shuffle high 4 words */
+		for (i = 0; i < 4; i++)
+			tmp[base + 4 + i] = src[base + 4 + ((imm >> (i * 2)) & 3)];
+	}
+	memcpy(dst, tmp, ctxt->dst.bytes);
+	return X86EMUL_CONTINUE;
+}
+
+/*
+ * PSHUFLW (F2 0F 70): Shuffle low words with imm8.
+ * High qword copied, low qword shuffled.
+ */
+static int em_pshuflw(struct x86_emulate_ctxt *ctxt)
+{
+	u16 *dst = (u16 *)ctxt->dst.valptr;
+	u16 *src = (u16 *)ctxt->src.valptr;
+	u16 tmp[16];
+	u8 imm;
+	int rc, i, lane;
+
+	rc = do_insn_fetch_bytes(ctxt, 1);
+	if (rc != X86EMUL_CONTINUE)
+		return rc;
+	imm = *ctxt->fetch.ptr++;
+
+	for (lane = 0; lane < ctxt->dst.bytes / 16; lane++) {
+		int base = lane * 8;
+		/* Shuffle low 4 words */
+		for (i = 0; i < 4; i++)
+			tmp[base + i] = src[base + ((imm >> (i * 2)) & 3)];
+		/* Copy high 4 words */
+		for (i = 4; i < 8; i++)
+			tmp[base + i] = src[base + i];
+	}
+	memcpy(dst, tmp, ctxt->dst.bytes);
+	return X86EMUL_CONTINUE;
+}
+
+/*
+ * SHUFPS (NP 0F C6): Shuffle packed single-precision with imm8.
+ * For 128-bit: dst[0]=src1[imm&3], dst[1]=src1[(imm>>2)&3],
+ *              dst[2]=src[(imm>>4)&3], dst[3]=src[(imm>>6)&3]
+ */
+static int em_shufps(struct x86_emulate_ctxt *ctxt)
+{
+	u32 *dst = (u32 *)ctxt->dst.valptr;
+	u32 *src = (u32 *)ctxt->src.valptr;
+	u32 *src1 = ctxt->src2.type == OP_NONE ? dst : (u32 *)ctxt->src2.valptr;
+	u32 tmp[8];
+	u8 imm;
+	int rc, lane;
+
+	rc = do_insn_fetch_bytes(ctxt, 1);
+	if (rc != X86EMUL_CONTINUE)
+		return rc;
+	imm = *ctxt->fetch.ptr++;
+
+	for (lane = 0; lane < ctxt->dst.bytes / 16; lane++) {
+		int base = lane * 4;
+		tmp[base + 0] = src1[base + (imm & 3)];
+		tmp[base + 1] = src1[base + ((imm >> 2) & 3)];
+		tmp[base + 2] = src[base + ((imm >> 4) & 3)];
+		tmp[base + 3] = src[base + ((imm >> 6) & 3)];
+	}
+	memcpy(dst, tmp, ctxt->dst.bytes);
+	return X86EMUL_CONTINUE;
+}
+
+/*
+ * SHUFPD (66 0F C6): Shuffle packed double-precision with imm8.
+ * For 128-bit: dst[0]=src1[imm&1], dst[1]=src[(imm>>1)&1]
+ */
+static int em_shufpd(struct x86_emulate_ctxt *ctxt)
+{
+	u64 *dst = (u64 *)ctxt->dst.valptr;
+	u64 *src = (u64 *)ctxt->src.valptr;
+	u64 *src1 = ctxt->src2.type == OP_NONE ? dst : (u64 *)ctxt->src2.valptr;
+	u64 tmp[4];
+	u8 imm;
+	int rc, lane;
+
+	rc = do_insn_fetch_bytes(ctxt, 1);
+	if (rc != X86EMUL_CONTINUE)
+		return rc;
+	imm = *ctxt->fetch.ptr++;
+
+	for (lane = 0; lane < ctxt->dst.bytes / 16; lane++) {
+		int base = lane * 2;
+		int shift = lane * 2;
+		tmp[base + 0] = src1[base + ((imm >> shift) & 1)];
+		tmp[base + 1] = src[base + ((imm >> (shift + 1)) & 1)];
+	}
+	memcpy(dst, tmp, ctxt->dst.bytes);
+	return X86EMUL_CONTINUE;
+}
+
+/*
+ * CMPPS with imm8 (NP 0F C2): Compare packed singles.
+ * CMPPD with imm8 (66 0F C2): Compare packed doubles.
+ * CMPSS with imm8 (F3 0F C2): Compare scalar single.
+ * CMPSD with imm8 (F2 0F C2): Compare scalar double.
+ * These need the actual FPU. The imm8 selects the comparison predicate.
+ */
+static int em_cmpps_imm(struct x86_emulate_ctxt *ctxt)
+{
+	u8 *dst = (u8 *)ctxt->dst.valptr;
+	u8 *src = (u8 *)ctxt->src.valptr;
+	u8 *src1 = ctxt->src2.type == OP_NONE ? dst : (u8 *)ctxt->src2.valptr;
+	unsigned int bytes = ctxt->dst.bytes;
+	sse128_t saved_xmm0, saved_xmm1;
+	u8 tmp_dst[32] __aligned(32);
+	u8 imm;
+	int rc, i;
+
+	rc = do_insn_fetch_bytes(ctxt, 1);
+	if (rc != X86EMUL_CONTINUE)
+		return rc;
+	imm = *ctxt->fetch.ptr++;
+
+	kvm_fpu_get();
+	_kvm_read_sse_reg(0, &saved_xmm0);
+	_kvm_read_sse_reg(1, &saved_xmm1);
+	for (i = 0; i < bytes; i += 16) {
+		asm volatile("movdqu %0, %%xmm0" : : "m"(*(sse128_t *)&src1[i]));
+		asm volatile("movdqu %0, %%xmm1" : : "m"(*(sse128_t *)&src[i]));
+		switch (imm & 7) {
+		case 0: asm volatile("cmpeqps %%xmm1, %%xmm0" :::); break;
+		case 1: asm volatile("cmpltps %%xmm1, %%xmm0" :::); break;
+		case 2: asm volatile("cmpleps %%xmm1, %%xmm0" :::); break;
+		case 3: asm volatile("cmpunordps %%xmm1, %%xmm0" :::); break;
+		case 4: asm volatile("cmpneqps %%xmm1, %%xmm0" :::); break;
+		case 5: asm volatile("cmpnltps %%xmm1, %%xmm0" :::); break;
+		case 6: asm volatile("cmpnleps %%xmm1, %%xmm0" :::); break;
+		case 7: asm volatile("cmpordps %%xmm1, %%xmm0" :::); break;
+		}
+		asm volatile("movdqu %%xmm0, %0" : "=m"(*(sse128_t *)&tmp_dst[i]));
+	}
+	_kvm_write_sse_reg(0, &saved_xmm0);
+	_kvm_write_sse_reg(1, &saved_xmm1);
+	kvm_fpu_put();
+	memcpy(dst, tmp_dst, bytes);
+	return X86EMUL_CONTINUE;
+}
+
+static int em_cmppd_imm(struct x86_emulate_ctxt *ctxt)
+{
+	u8 *dst = (u8 *)ctxt->dst.valptr;
+	u8 *src = (u8 *)ctxt->src.valptr;
+	u8 *src1 = ctxt->src2.type == OP_NONE ? dst : (u8 *)ctxt->src2.valptr;
+	unsigned int bytes = ctxt->dst.bytes;
+	sse128_t saved_xmm0, saved_xmm1;
+	u8 tmp_dst[32] __aligned(32);
+	u8 imm;
+	int rc, i;
+
+	rc = do_insn_fetch_bytes(ctxt, 1);
+	if (rc != X86EMUL_CONTINUE)
+		return rc;
+	imm = *ctxt->fetch.ptr++;
+
+	kvm_fpu_get();
+	_kvm_read_sse_reg(0, &saved_xmm0);
+	_kvm_read_sse_reg(1, &saved_xmm1);
+	for (i = 0; i < bytes; i += 16) {
+		asm volatile("movdqu %0, %%xmm0" : : "m"(*(sse128_t *)&src1[i]));
+		asm volatile("movdqu %0, %%xmm1" : : "m"(*(sse128_t *)&src[i]));
+		switch (imm & 7) {
+		case 0: asm volatile("cmpeqpd %%xmm1, %%xmm0" :::); break;
+		case 1: asm volatile("cmpltpd %%xmm1, %%xmm0" :::); break;
+		case 2: asm volatile("cmplepd %%xmm1, %%xmm0" :::); break;
+		case 3: asm volatile("cmpunordpd %%xmm1, %%xmm0" :::); break;
+		case 4: asm volatile("cmpneqpd %%xmm1, %%xmm0" :::); break;
+		case 5: asm volatile("cmpnltpd %%xmm1, %%xmm0" :::); break;
+		case 6: asm volatile("cmpnlepd %%xmm1, %%xmm0" :::); break;
+		case 7: asm volatile("cmpordpd %%xmm1, %%xmm0" :::); break;
+		}
+		asm volatile("movdqu %%xmm0, %0" : "=m"(*(sse128_t *)&tmp_dst[i]));
+	}
+	_kvm_write_sse_reg(0, &saved_xmm0);
+	_kvm_write_sse_reg(1, &saved_xmm1);
+	kvm_fpu_put();
+	memcpy(dst, tmp_dst, bytes);
+	return X86EMUL_CONTINUE;
+}
+
+/*
+ * CMPSS (F3 0F C2): Compare scalar single with imm8.
+ */
+static int em_cmpss_imm(struct x86_emulate_ctxt *ctxt)
+{
+	__sse128_u xmm;
+	sse128_t saved_xmm0, saved_xmm1;
+	u32 src_val, result;
+	sse128_t reg;
+	u8 imm;
+	int rc;
+
+	rc = em_check_sse_prereqs(ctxt);
+	if (rc != X86EMUL_CONTINUE)
+		return rc;
+
+	if (ctxt->modrm_mod == 3) {
+		kvm_read_sse_reg(ctxt->modrm_rm, &reg);
+		src_val = sse128_l0(reg);
+	} else {
+		rc = read_modrm_mem(ctxt, &src_val, sizeof(src_val));
+		if (rc != X86EMUL_CONTINUE)
+			return rc;
+	}
+
+	rc = do_insn_fetch_bytes(ctxt, 1);
+	if (rc != X86EMUL_CONTINUE)
+		return rc;
+	imm = *ctxt->fetch.ptr++;
+
+	kvm_read_sse_reg((ctxt->d & Avx) ? ctxt->vex_reg : ctxt->modrm_reg,
+			 &xmm.vec);
+
+	kvm_fpu_get();
+	_kvm_read_sse_reg(0, &saved_xmm0);
+	_kvm_read_sse_reg(1, &saved_xmm1);
+	asm volatile("movss %0, %%xmm0" : : "m"(xmm.as_u32[0]));
+	asm volatile("movss %0, %%xmm1" : : "m"(src_val));
+	switch (imm & 7) {
+	case 0: asm volatile("cmpeqss %%xmm1, %%xmm0" :::); break;
+	case 1: asm volatile("cmpltss %%xmm1, %%xmm0" :::); break;
+	case 2: asm volatile("cmpless %%xmm1, %%xmm0" :::); break;
+	case 3: asm volatile("cmpunordss %%xmm1, %%xmm0" :::); break;
+	case 4: asm volatile("cmpneqss %%xmm1, %%xmm0" :::); break;
+	case 5: asm volatile("cmpnltss %%xmm1, %%xmm0" :::); break;
+	case 6: asm volatile("cmpnless %%xmm1, %%xmm0" :::); break;
+	case 7: asm volatile("cmpordss %%xmm1, %%xmm0" :::); break;
+	}
+	asm volatile("movss %%xmm0, %0" : "=m"(result));
+	_kvm_write_sse_reg(0, &saved_xmm0);
+	_kvm_write_sse_reg(1, &saved_xmm1);
+	kvm_fpu_put();
+
+	xmm.as_u32[0] = result;
+	write_xmm_reg(ctxt, ctxt->modrm_reg, &xmm.vec);
+	ctxt->dst.type = OP_NONE;
+	return X86EMUL_CONTINUE;
+}
+
+/*
+ * CMPSD (F2 0F C2): Compare scalar double with imm8.
+ */
+static int em_cmpsd_imm(struct x86_emulate_ctxt *ctxt)
+{
+	__sse128_u xmm;
+	sse128_t saved_xmm0, saved_xmm1;
+	u64 src_val, result;
+	sse128_t reg;
+	u8 imm;
+	int rc;
+
+	rc = em_check_sse_prereqs(ctxt);
+	if (rc != X86EMUL_CONTINUE)
+		return rc;
+
+	if (ctxt->modrm_mod == 3) {
+		kvm_read_sse_reg(ctxt->modrm_rm, &reg);
+		src_val = sse128_lo(reg);
+	} else {
+		rc = read_modrm_mem(ctxt, &src_val, sizeof(src_val));
+		if (rc != X86EMUL_CONTINUE)
+			return rc;
+	}
+
+	rc = do_insn_fetch_bytes(ctxt, 1);
+	if (rc != X86EMUL_CONTINUE)
+		return rc;
+	imm = *ctxt->fetch.ptr++;
+
+	kvm_read_sse_reg((ctxt->d & Avx) ? ctxt->vex_reg : ctxt->modrm_reg,
+			 &xmm.vec);
+
+	kvm_fpu_get();
+	_kvm_read_sse_reg(0, &saved_xmm0);
+	_kvm_read_sse_reg(1, &saved_xmm1);
+	asm volatile("movsd %0, %%xmm0" : : "m"(xmm.as_u64[0]));
+	asm volatile("movsd %0, %%xmm1" : : "m"(src_val));
+	switch (imm & 7) {
+	case 0: asm volatile("cmpeqsd %%xmm1, %%xmm0" :::); break;
+	case 1: asm volatile("cmpltsd %%xmm1, %%xmm0" :::); break;
+	case 2: asm volatile("cmplesd %%xmm1, %%xmm0" :::); break;
+	case 3: asm volatile("cmpunordsd %%xmm1, %%xmm0" :::); break;
+	case 4: asm volatile("cmpneqsd %%xmm1, %%xmm0" :::); break;
+	case 5: asm volatile("cmpnltsd %%xmm1, %%xmm0" :::); break;
+	case 6: asm volatile("cmpnlesd %%xmm1, %%xmm0" :::); break;
+	case 7: asm volatile("cmpordsd %%xmm1, %%xmm0" :::); break;
+	}
+	asm volatile("movsd %%xmm0, %0" : "=m"(result));
+	_kvm_write_sse_reg(0, &saved_xmm0);
+	_kvm_write_sse_reg(1, &saved_xmm1);
+	kvm_fpu_put();
+
+	xmm.as_u64[0] = result;
+	write_xmm_reg(ctxt, ctxt->modrm_reg, &xmm.vec);
+	ctxt->dst.type = OP_NONE;
+	return X86EMUL_CONTINUE;
+}
+
+/*
+ * PABSB/PABSW/PABSD (66 0F 38 1C/1D/1E): Absolute value.
+ */
+static int em_pabsb(struct x86_emulate_ctxt *ctxt)
+{
+	s8 *src = (s8 *)ctxt->src.valptr;
+	u8 *dst = (u8 *)ctxt->dst.valptr;
+	int i;
+
+	for (i = 0; i < ctxt->dst.bytes; i++)
+		dst[i] = (src[i] < 0) ? -src[i] : src[i];
+	return X86EMUL_CONTINUE;
+}
+
+static int em_pabsw(struct x86_emulate_ctxt *ctxt)
+{
+	s16 *src = (s16 *)ctxt->src.valptr;
+	u16 *dst = (u16 *)ctxt->dst.valptr;
+	int i;
+
+	for (i = 0; i < ctxt->dst.bytes / 2; i++)
+		dst[i] = (src[i] < 0) ? -src[i] : src[i];
+	return X86EMUL_CONTINUE;
+}
+
+static int em_pabsd(struct x86_emulate_ctxt *ctxt)
+{
+	s32 *src = (s32 *)ctxt->src.valptr;
+	u32 *dst = (u32 *)ctxt->dst.valptr;
+	int i;
+
+	for (i = 0; i < ctxt->dst.bytes / 4; i++)
+		dst[i] = (src[i] < 0) ? -src[i] : src[i];
+	return X86EMUL_CONTINUE;
+}
+
+/*
+ * PMULDQ (66 0F 38 28): Multiply packed signed dword integers, producing
+ * packed signed qword results.
+ */
+static int em_pmuldq(struct x86_emulate_ctxt *ctxt)
+{
+	u8 *dst_b = (u8 *)ctxt->dst.valptr;
+	u8 *src_b = (u8 *)ctxt->src.valptr;
+	u8 *src1_b = ctxt->src2.type == OP_NONE ? dst_b : (u8 *)ctxt->src2.valptr;
+	int i;
+
+	for (i = 0; i < ctxt->dst.bytes / 8; i++) {
+		s32 a, b;
+		s64 result;
+		memcpy(&a, &src1_b[i * 8], 4);
+		memcpy(&b, &src_b[i * 8], 4);
+		result = (s64)a * (s64)b;
+		memcpy(&dst_b[i * 8], &result, 8);
+	}
+	return X86EMUL_CONTINUE;
+}
+
+/*
+ * PMAXSB (66 0F 38 3C): Packed maximum of signed bytes.
+ */
+static int em_pmaxsb(struct x86_emulate_ctxt *ctxt)
+{
+	s8 *dst = (s8 *)ctxt->dst.valptr;
+	s8 *src = (s8 *)ctxt->src.valptr;
+	s8 *src1 = ctxt->src2.type == OP_NONE ? dst : (s8 *)ctxt->src2.valptr;
+	int i;
+
+	for (i = 0; i < ctxt->dst.bytes; i++)
+		dst[i] = (src1[i] > src[i]) ? src1[i] : src[i];
+	return X86EMUL_CONTINUE;
+}
+
+/*
+ * PMAXSD (66 0F 38 3D): Packed maximum of signed dwords.
+ */
+static int em_pmaxsd(struct x86_emulate_ctxt *ctxt)
+{
+	s32 *dst = (s32 *)ctxt->dst.valptr;
+	s32 *src = (s32 *)ctxt->src.valptr;
+	s32 *src1 = ctxt->src2.type == OP_NONE ? dst : (s32 *)ctxt->src2.valptr;
+	int i;
+
+	for (i = 0; i < ctxt->dst.bytes / 4; i++)
+		dst[i] = (src1[i] > src[i]) ? src1[i] : src[i];
+	return X86EMUL_CONTINUE;
+}
+
+/*
+ * PMAXUW (66 0F 38 3E): Packed maximum of unsigned words.
+ */
+static int em_pmaxuw(struct x86_emulate_ctxt *ctxt)
+{
+	u16 *dst = (u16 *)ctxt->dst.valptr;
+	u16 *src = (u16 *)ctxt->src.valptr;
+	u16 *src1 = ctxt->src2.type == OP_NONE ? dst : (u16 *)ctxt->src2.valptr;
+	int i;
+
+	for (i = 0; i < ctxt->dst.bytes / 2; i++)
+		dst[i] = (src1[i] > src[i]) ? src1[i] : src[i];
+	return X86EMUL_CONTINUE;
+}
+
+/*
+ * PMINSB (66 0F 38 38): Packed minimum of signed bytes.
+ */
+static int em_pminsb(struct x86_emulate_ctxt *ctxt)
+{
+	s8 *dst = (s8 *)ctxt->dst.valptr;
+	s8 *src = (s8 *)ctxt->src.valptr;
+	s8 *src1 = ctxt->src2.type == OP_NONE ? dst : (s8 *)ctxt->src2.valptr;
+	int i;
+
+	for (i = 0; i < ctxt->dst.bytes; i++)
+		dst[i] = (src1[i] < src[i]) ? src1[i] : src[i];
+	return X86EMUL_CONTINUE;
+}
+
+/*
+ * PMINSD (66 0F 38 39): Packed minimum of signed dwords.
+ */
+static int em_pminsd(struct x86_emulate_ctxt *ctxt)
+{
+	s32 *dst = (s32 *)ctxt->dst.valptr;
+	s32 *src = (s32 *)ctxt->src.valptr;
+	s32 *src1 = ctxt->src2.type == OP_NONE ? dst : (s32 *)ctxt->src2.valptr;
+	int i;
+
+	for (i = 0; i < ctxt->dst.bytes / 4; i++)
+		dst[i] = (src1[i] < src[i]) ? src1[i] : src[i];
+	return X86EMUL_CONTINUE;
+}
+
+/*
+ * PMINUW (66 0F 38 3A): Packed minimum of unsigned words.
+ */
+static int em_pminuw(struct x86_emulate_ctxt *ctxt)
+{
+	u16 *dst = (u16 *)ctxt->dst.valptr;
+	u16 *src = (u16 *)ctxt->src.valptr;
+	u16 *src1 = ctxt->src2.type == OP_NONE ? dst : (u16 *)ctxt->src2.valptr;
+	int i;
+
+	for (i = 0; i < ctxt->dst.bytes / 2; i++)
+		dst[i] = (src1[i] < src[i]) ? src1[i] : src[i];
+	return X86EMUL_CONTINUE;
+}
+
+/*
+ * PMOVSXxx / PMOVZXxx (66 0F 38 20-25, 30-35) and VEX 256-bit forms.
+ * Same shape as CVTPS2PD/CVTDQ2PD: memory source is narrower than the
+ * destination (src_bytes = dst_bytes >> _shift).  The generic SrcMem
+ * auto-fetch would read op_bytes (16 SSE / 32 AVX), over-reading up to
+ * 30 bytes (PMOVZXBQ ymm: need 4, fetch 32) and tripping SIGSEGV on
+ * MMIO when the extra bytes cross an unmapped page.  We fetch exactly
+ * src_bytes and then run the real hardware widen per 128-bit lane.
+ *   _shift=1: 2x widen (BW/WD/DQ, src=dst/2)
+ *   _shift=2: 4x widen (BD/WQ,    src=dst/4)
+ *   _shift=3: 8x widen (BQ,       src=dst/8)
+ */
+#define SSE_WIDEN_PACKED_SX_OP(_name, _insn, _shift)			\
+static int _name(struct x86_emulate_ctxt *ctxt)				\
+{									\
+	u8 src_buf[32] __aligned(32) = { 0 };				\
+	u8 dst_buf[32] __aligned(32) = { 0 };				\
+	sse128_t saved_xmm0;						\
+	unsigned int dst_bytes = ctxt->op_bytes;			\
+	unsigned int src_bytes = dst_bytes >> (_shift);			\
+	unsigned int per_lane_src = 16u >> (_shift);			\
+	int rc, i;							\
+									\
+	rc = em_check_sse_prereqs(ctxt);				\
+	if (rc != X86EMUL_CONTINUE)					\
+		return rc;						\
+									\
+	if (ctxt->modrm_mod == 3) {					\
+		sse128_t reg;						\
+		kvm_read_sse_reg(ctxt->modrm_rm, &reg);			\
+		memcpy(src_buf, &reg, src_bytes);			\
+	} else {							\
+		rc = read_modrm_mem(ctxt, src_buf, src_bytes);		\
+		if (rc != X86EMUL_CONTINUE)				\
+			return rc;					\
+	}								\
+									\
+	kvm_fpu_get();							\
+	_kvm_read_sse_reg(0, &saved_xmm0);				\
+	for (i = 0; i < dst_bytes; i += 16) {				\
+		asm volatile(_insn " %1, %%xmm0; movdqu %%xmm0, %0"	\
+			     : "=m"(*(sse128_t *)&dst_buf[i])		\
+			     : "m"(src_buf[(i / 16) * per_lane_src]));	\
+	}								\
+	_kvm_write_sse_reg(0, &saved_xmm0);				\
+	kvm_fpu_put();							\
+									\
+	if (dst_bytes == 32) {						\
+		avx256_t ymm;						\
+		memcpy(&ymm, dst_buf, 32);				\
+		kvm_write_avx_reg(ctxt->modrm_reg, &ymm);		\
+	} else {							\
+		sse128_t xmm;						\
+		memcpy(&xmm, dst_buf, 16);				\
+		write_xmm_reg(ctxt, ctxt->modrm_reg, &xmm);		\
+	}								\
+	ctxt->dst.type = OP_NONE;					\
+	return X86EMUL_CONTINUE;					\
+}
+
+SSE_WIDEN_PACKED_SX_OP(em_pmovsxbw, "pmovsxbw", 1)
+SSE_WIDEN_PACKED_SX_OP(em_pmovsxbd, "pmovsxbd", 2)
+SSE_WIDEN_PACKED_SX_OP(em_pmovsxbq, "pmovsxbq", 3)
+SSE_WIDEN_PACKED_SX_OP(em_pmovsxwd, "pmovsxwd", 1)
+SSE_WIDEN_PACKED_SX_OP(em_pmovsxwq, "pmovsxwq", 2)
+SSE_WIDEN_PACKED_SX_OP(em_pmovsxdq, "pmovsxdq", 1)
+SSE_WIDEN_PACKED_SX_OP(em_pmovzxbw, "pmovzxbw", 1)
+SSE_WIDEN_PACKED_SX_OP(em_pmovzxbd, "pmovzxbd", 2)
+SSE_WIDEN_PACKED_SX_OP(em_pmovzxbq, "pmovzxbq", 3)
+SSE_WIDEN_PACKED_SX_OP(em_pmovzxwd, "pmovzxwd", 1)
+SSE_WIDEN_PACKED_SX_OP(em_pmovzxwq, "pmovzxwq", 2)
+SSE_WIDEN_PACKED_SX_OP(em_pmovzxdq, "pmovzxdq", 1)
+
+/*
+ * PTEST (66 0F 38 17): Set ZF if (src AND dst) == 0, CF if (src ANDNOT dst) == 0.
+ */
+static int em_ptest(struct x86_emulate_ctxt *ctxt)
+{
+	u64 *dst = (u64 *)ctxt->dst.valptr;
+	u64 *src = (u64 *)ctxt->src.valptr;
+	int i;
+	u64 and_result = 0, andn_result = 0;
+
+	for (i = 0; i < ctxt->dst.bytes / 8; i++) {
+		and_result |= (dst[i] & src[i]);
+		andn_result |= (~dst[i] & src[i]);
+	}
+
+	ctxt->eflags &= ~(X86_EFLAGS_ZF | X86_EFLAGS_CF | X86_EFLAGS_AF |
+			   X86_EFLAGS_OF | X86_EFLAGS_PF | X86_EFLAGS_SF);
+	if (and_result == 0)
+		ctxt->eflags |= X86_EFLAGS_ZF;
+	if (andn_result == 0)
+		ctxt->eflags |= X86_EFLAGS_CF;
+
+	ctxt->dst.type = OP_NONE;
+	return X86EMUL_CONTINUE;
+}
+
+/*
+ * PSIGNB/PSIGNW/PSIGND (66 0F 38 08/09/0A): Packed sign.
+ * For each element: if src < 0, dst = -src1; if src == 0, dst = 0; if src > 0, dst = src1.
+ */
+static int em_psignb(struct x86_emulate_ctxt *ctxt)
+{
+	s8 *dst = (s8 *)ctxt->dst.valptr;
+	s8 *src = (s8 *)ctxt->src.valptr;
+	s8 *src1 = ctxt->src2.type == OP_NONE ? dst : (s8 *)ctxt->src2.valptr;
+	int i;
+
+	for (i = 0; i < ctxt->dst.bytes; i++) {
+		if (src[i] < 0)
+			dst[i] = -src1[i];
+		else if (src[i] == 0)
+			dst[i] = 0;
+		else
+			dst[i] = src1[i];
+	}
+	return X86EMUL_CONTINUE;
+}
+
+static int em_psignw(struct x86_emulate_ctxt *ctxt)
+{
+	s16 *dst = (s16 *)ctxt->dst.valptr;
+	s16 *src = (s16 *)ctxt->src.valptr;
+	s16 *src1 = ctxt->src2.type == OP_NONE ? dst : (s16 *)ctxt->src2.valptr;
+	int i;
+
+	for (i = 0; i < ctxt->dst.bytes / 2; i++) {
+		if (src[i] < 0)
+			dst[i] = -src1[i];
+		else if (src[i] == 0)
+			dst[i] = 0;
+		else
+			dst[i] = src1[i];
+	}
+	return X86EMUL_CONTINUE;
+}
+
+static int em_psignd(struct x86_emulate_ctxt *ctxt)
+{
+	s32 *dst = (s32 *)ctxt->dst.valptr;
+	s32 *src = (s32 *)ctxt->src.valptr;
+	s32 *src1 = ctxt->src2.type == OP_NONE ? dst : (s32 *)ctxt->src2.valptr;
+	int i;
+
+	for (i = 0; i < ctxt->dst.bytes / 4; i++) {
+		if (src[i] < 0)
+			dst[i] = -src1[i];
+		else if (src[i] == 0)
+			dst[i] = 0;
+		else
+			dst[i] = src1[i];
+	}
+	return X86EMUL_CONTINUE;
+}
+
+/*
+ * PHADDW/PHADDD/PHSUBW/PHSUBD (66 0F 38 01-06): Horizontal add/sub.
+ */
+static int em_phaddw(struct x86_emulate_ctxt *ctxt)
+{
+	s16 *dst = (s16 *)ctxt->dst.valptr;
+	s16 *src = (s16 *)ctxt->src.valptr;
+	s16 *src1 = ctxt->src2.type == OP_NONE ? dst : (s16 *)ctxt->src2.valptr;
+	s16 tmp[16];
+	int lane, i;
+
+	for (lane = 0; lane < ctxt->dst.bytes / 16; lane++) {
+		int base = lane * 8;
+		for (i = 0; i < 4; i++)
+			tmp[base + i] = src1[base + i * 2] + src1[base + i * 2 + 1];
+		for (i = 0; i < 4; i++)
+			tmp[base + 4 + i] = src[base + i * 2] + src[base + i * 2 + 1];
+	}
+	memcpy(dst, tmp, ctxt->dst.bytes);
+	return X86EMUL_CONTINUE;
+}
+
+static int em_phaddd(struct x86_emulate_ctxt *ctxt)
+{
+	s32 *dst = (s32 *)ctxt->dst.valptr;
+	s32 *src = (s32 *)ctxt->src.valptr;
+	s32 *src1 = ctxt->src2.type == OP_NONE ? dst : (s32 *)ctxt->src2.valptr;
+	s32 tmp[8];
+	int lane, i;
+
+	for (lane = 0; lane < ctxt->dst.bytes / 16; lane++) {
+		int base = lane * 4;
+		for (i = 0; i < 2; i++)
+			tmp[base + i] = src1[base + i * 2] + src1[base + i * 2 + 1];
+		for (i = 0; i < 2; i++)
+			tmp[base + 2 + i] = src[base + i * 2] + src[base + i * 2 + 1];
+	}
+	memcpy(dst, tmp, ctxt->dst.bytes);
+	return X86EMUL_CONTINUE;
+}
+
+static int em_phsubw(struct x86_emulate_ctxt *ctxt)
+{
+	s16 *dst = (s16 *)ctxt->dst.valptr;
+	s16 *src = (s16 *)ctxt->src.valptr;
+	s16 *src1 = ctxt->src2.type == OP_NONE ? dst : (s16 *)ctxt->src2.valptr;
+	s16 tmp[16];
+	int lane, i;
+
+	for (lane = 0; lane < ctxt->dst.bytes / 16; lane++) {
+		int base = lane * 8;
+		for (i = 0; i < 4; i++)
+			tmp[base + i] = src1[base + i * 2] - src1[base + i * 2 + 1];
+		for (i = 0; i < 4; i++)
+			tmp[base + 4 + i] = src[base + i * 2] - src[base + i * 2 + 1];
+	}
+	memcpy(dst, tmp, ctxt->dst.bytes);
+	return X86EMUL_CONTINUE;
+}
+
+static int em_phsubd(struct x86_emulate_ctxt *ctxt)
+{
+	s32 *dst = (s32 *)ctxt->dst.valptr;
+	s32 *src = (s32 *)ctxt->src.valptr;
+	s32 *src1 = ctxt->src2.type == OP_NONE ? dst : (s32 *)ctxt->src2.valptr;
+	s32 tmp[8];
+	int lane, i;
+
+	for (lane = 0; lane < ctxt->dst.bytes / 16; lane++) {
+		int base = lane * 4;
+		for (i = 0; i < 2; i++)
+			tmp[base + i] = src1[base + i * 2] - src1[base + i * 2 + 1];
+		for (i = 0; i < 2; i++)
+			tmp[base + 2 + i] = src[base + i * 2] - src[base + i * 2 + 1];
+	}
+	memcpy(dst, tmp, ctxt->dst.bytes);
+	return X86EMUL_CONTINUE;
+}
+
+/*
+ * PHADDSW (66 0F 38 03): Horizontal add with saturation (signed words).
+ */
+static int em_phaddsw(struct x86_emulate_ctxt *ctxt)
+{
+	s16 *dst = (s16 *)ctxt->dst.valptr;
+	s16 *src = (s16 *)ctxt->src.valptr;
+	s16 *src1 = ctxt->src2.type == OP_NONE ? dst : (s16 *)ctxt->src2.valptr;
+	s16 tmp[16];
+	int lane, i;
+
+	for (lane = 0; lane < ctxt->dst.bytes / 16; lane++) {
+		int base = lane * 8;
+		for (i = 0; i < 4; i++) {
+			s32 sum = (s32)src1[base + i * 2] + (s32)src1[base + i * 2 + 1];
+			tmp[base + i] = (sum > 32767) ? 32767 : (sum < -32768) ? -32768 : sum;
+		}
+		for (i = 0; i < 4; i++) {
+			s32 sum = (s32)src[base + i * 2] + (s32)src[base + i * 2 + 1];
+			tmp[base + 4 + i] = (sum > 32767) ? 32767 : (sum < -32768) ? -32768 : sum;
+		}
+	}
+	memcpy(dst, tmp, ctxt->dst.bytes);
+	return X86EMUL_CONTINUE;
+}
+
+/*
+ * PHSUBSW (66 0F 38 07): Horizontal subtract with saturation (signed words).
+ */
+static int em_phsubsw(struct x86_emulate_ctxt *ctxt)
+{
+	s16 *dst = (s16 *)ctxt->dst.valptr;
+	s16 *src = (s16 *)ctxt->src.valptr;
+	s16 *src1 = ctxt->src2.type == OP_NONE ? dst : (s16 *)ctxt->src2.valptr;
+	s16 tmp[16];
+	int lane, i;
+
+	for (lane = 0; lane < ctxt->dst.bytes / 16; lane++) {
+		int base = lane * 8;
+		for (i = 0; i < 4; i++) {
+			s32 diff = (s32)src1[base + i * 2] - (s32)src1[base + i * 2 + 1];
+			tmp[base + i] = (diff > 32767) ? 32767 : (diff < -32768) ? -32768 : diff;
+		}
+		for (i = 0; i < 4; i++) {
+			s32 diff = (s32)src[base + i * 2] - (s32)src[base + i * 2 + 1];
+			tmp[base + 4 + i] = (diff > 32767) ? 32767 : (diff < -32768) ? -32768 : diff;
+		}
+	}
+	memcpy(dst, tmp, ctxt->dst.bytes);
+	return X86EMUL_CONTINUE;
+}
+
+/*
+ * PMULHRSW (66 0F 38 0B): Packed multiply high with round and scale.
+ */
+static int em_pmulhrsw(struct x86_emulate_ctxt *ctxt)
+{
+	s16 *dst = (s16 *)ctxt->dst.valptr;
+	s16 *src = (s16 *)ctxt->src.valptr;
+	s16 *src1 = ctxt->src2.type == OP_NONE ? dst : (s16 *)ctxt->src2.valptr;
+	int i;
+
+	for (i = 0; i < ctxt->dst.bytes / 2; i++) {
+		s32 product = (s32)src1[i] * (s32)src[i];
+		dst[i] = (s16)(((product >> 14) + 1) >> 1);
+	}
+	return X86EMUL_CONTINUE;
+}
+
+/*
+ * Shift instructions: PSLLW/PSLLD/PSLLQ/PSRLW/PSRLD/PSRLQ/PSRAW/PSRAD.
+ * These take the shift count from the low 64 bits of the src (xmm/m128).
+ */
+static int em_psllw(struct x86_emulate_ctxt *ctxt)
+{
+	u16 *dst = (u16 *)ctxt->dst.valptr;
+	u64 *src64 = (u64 *)ctxt->src.valptr;
+	u16 *src1 = ctxt->src2.type == OP_NONE ? dst : (u16 *)ctxt->src2.valptr;
+	u64 count = src64[0];
+	int i;
+
+	for (i = 0; i < ctxt->dst.bytes / 2; i++)
+		dst[i] = (count > 15) ? 0 : (src1[i] << count);
+	return X86EMUL_CONTINUE;
+}
+
+static int em_pslld(struct x86_emulate_ctxt *ctxt)
+{
+	u32 *dst = (u32 *)ctxt->dst.valptr;
+	u64 *src64 = (u64 *)ctxt->src.valptr;
+	u32 *src1 = ctxt->src2.type == OP_NONE ? dst : (u32 *)ctxt->src2.valptr;
+	u64 count = src64[0];
+	int i;
+
+	for (i = 0; i < ctxt->dst.bytes / 4; i++)
+		dst[i] = (count > 31) ? 0 : (src1[i] << count);
+	return X86EMUL_CONTINUE;
+}
+
+static int em_psllq(struct x86_emulate_ctxt *ctxt)
+{
+	u64 *dst = (u64 *)ctxt->dst.valptr;
+	u64 *src64 = (u64 *)ctxt->src.valptr;
+	u64 *src1 = ctxt->src2.type == OP_NONE ? dst : (u64 *)ctxt->src2.valptr;
+	u64 count = src64[0];
+	int i;
+
+	for (i = 0; i < ctxt->dst.bytes / 8; i++)
+		dst[i] = (count > 63) ? 0 : (src1[i] << count);
+	return X86EMUL_CONTINUE;
+}
+
+static int em_psrlw(struct x86_emulate_ctxt *ctxt)
+{
+	u16 *dst = (u16 *)ctxt->dst.valptr;
+	u64 *src64 = (u64 *)ctxt->src.valptr;
+	u16 *src1 = ctxt->src2.type == OP_NONE ? dst : (u16 *)ctxt->src2.valptr;
+	u64 count = src64[0];
+	int i;
+
+	for (i = 0; i < ctxt->dst.bytes / 2; i++)
+		dst[i] = (count > 15) ? 0 : (src1[i] >> count);
+	return X86EMUL_CONTINUE;
+}
+
+static int em_psrld(struct x86_emulate_ctxt *ctxt)
+{
+	u32 *dst = (u32 *)ctxt->dst.valptr;
+	u64 *src64 = (u64 *)ctxt->src.valptr;
+	u32 *src1 = ctxt->src2.type == OP_NONE ? dst : (u32 *)ctxt->src2.valptr;
+	u64 count = src64[0];
+	int i;
+
+	for (i = 0; i < ctxt->dst.bytes / 4; i++)
+		dst[i] = (count > 31) ? 0 : (src1[i] >> count);
+	return X86EMUL_CONTINUE;
+}
+
+static int em_psrlq(struct x86_emulate_ctxt *ctxt)
+{
+	u64 *dst = (u64 *)ctxt->dst.valptr;
+	u64 *src64 = (u64 *)ctxt->src.valptr;
+	u64 *src1 = ctxt->src2.type == OP_NONE ? dst : (u64 *)ctxt->src2.valptr;
+	u64 count = src64[0];
+	int i;
+
+	for (i = 0; i < ctxt->dst.bytes / 8; i++)
+		dst[i] = (count > 63) ? 0 : (src1[i] >> count);
+	return X86EMUL_CONTINUE;
+}
+
+static int em_psraw(struct x86_emulate_ctxt *ctxt)
+{
+	s16 *dst = (s16 *)ctxt->dst.valptr;
+	u64 *src64 = (u64 *)ctxt->src.valptr;
+	s16 *src1 = ctxt->src2.type == OP_NONE ? dst : (s16 *)ctxt->src2.valptr;
+	u64 count = src64[0];
+	int i;
+
+	if (count > 15)
+		count = 15;
+	for (i = 0; i < ctxt->dst.bytes / 2; i++)
+		dst[i] = src1[i] >> count;
+	return X86EMUL_CONTINUE;
+}
+
+static int em_psrad(struct x86_emulate_ctxt *ctxt)
+{
+	s32 *dst = (s32 *)ctxt->dst.valptr;
+	u64 *src64 = (u64 *)ctxt->src.valptr;
+	s32 *src1 = ctxt->src2.type == OP_NONE ? dst : (s32 *)ctxt->src2.valptr;
+	u64 count = src64[0];
+	int i;
+
+	if (count > 31)
+		count = 31;
+	for (i = 0; i < ctxt->dst.bytes / 4; i++)
+		dst[i] = src1[i] >> count;
+	return X86EMUL_CONTINUE;
+}
+
+/*
+ * PSLLDQ (66 0F 73 /7 ib): Shift double quadword left by imm8 bytes.
+ * PSRLDQ (66 0F 73 /3 ib): Shift double quadword right by imm8 bytes.
+ * These use immediate byte, decoded differently (group opcode).
+ * We implement them as standalone functions called from the shift group.
+ */
+
+/*
+ * MOVMSKPS (NP 0F 50): Extract sign bits from packed single-precision.
+ * Source is XMM (modrm_rm), destination is GPR (modrm_reg).
+ */
+static int em_movmskps(struct x86_emulate_ctxt *ctxt)
+{
+	sse128_t reg;
+	__sse128_u u;
+	int i, result = 0;
+	int num_elements = (ctxt->d & Avx && ctxt->op_bytes == 32) ? 8 : 4;
+
+	if (num_elements <= 4) {
+		kvm_read_sse_reg(ctxt->modrm_rm, &reg);
+		memcpy(&u, &reg, sizeof(u));
+		for (i = 0; i < 4; i++)
+			if (u.as_u32[i] & 0x80000000)
+				result |= (1 << i);
+	}
+	/* For AVX 256-bit, would need to read YMM - skip for now */
+
+	*reg_write(ctxt, ctxt->modrm_reg) = result;
+	ctxt->dst.type = OP_NONE;
+	return X86EMUL_CONTINUE;
+}
+
+/*
+ * MOVMSKPD (66 0F 50): Extract sign bits from packed double-precision.
+ */
+static int em_movmskpd(struct x86_emulate_ctxt *ctxt)
+{
+	sse128_t reg;
+	__sse128_u u;
+	int i, result = 0;
+
+	kvm_read_sse_reg(ctxt->modrm_rm, &reg);
+	memcpy(&u, &reg, sizeof(u));
+	for (i = 0; i < 2; i++)
+		if (u.as_u64[i] & 0x8000000000000000ULL)
+			result |= (1 << i);
+
+	*reg_write(ctxt, ctxt->modrm_reg) = result;
+	ctxt->dst.type = OP_NONE;
+	return X86EMUL_CONTINUE;
+}
+
+/*
+ * PMOVMSKB (66 0F D7): Move byte mask.
+ * Extracts the MSB of each byte and stores to a GPR.
+ */
+static int em_pmovmskb(struct x86_emulate_ctxt *ctxt)
+{
+	sse128_t reg;
+	u8 bytes[16];
+	int i, result = 0;
+
+	kvm_read_sse_reg(ctxt->modrm_rm, &reg);
+	memcpy(bytes, &reg, 16);
+	for (i = 0; i < 16; i++)
+		if (bytes[i] & 0x80)
+			result |= (1 << i);
+
+	*reg_write(ctxt, ctxt->modrm_reg) = result;
+	ctxt->dst.type = OP_NONE;
+	return X86EMUL_CONTINUE;
+}
+
+/*
+ * LDDQU (F2 0F F0): Load unaligned integer 128 bits.
+ * Functionally equivalent to MOVDQU for our purposes.
+ */
+static int em_lddqu(struct x86_emulate_ctxt *ctxt)
+{
+	return em_mov(ctxt);
+}
+
+/*
+ * 0F 3A instructions (with imm8):
+ */
+
+/*
+ * PALIGNR (66 0F 3A 0F): Byte-align concatenation with shift.
+ * Concatenates src1 (HIGH) : src (LOW) into 32-byte temp, shifts right by imm8 bytes,
+ * takes low 16 bytes.
+ */
+static int em_palignr(struct x86_emulate_ctxt *ctxt)
+{
+	u8 *dst = (u8 *)ctxt->dst.valptr;
+	u8 *src = (u8 *)ctxt->src.valptr;
+	u8 *src1 = ctxt->src2.type == OP_NONE ? dst : (u8 *)ctxt->src2.valptr;
+	u8 imm;
+	int rc, lane;
+
+	rc = do_insn_fetch_bytes(ctxt, 1);
+	if (rc != X86EMUL_CONTINUE)
+		return rc;
+	imm = *ctxt->fetch.ptr++;
+
+	for (lane = 0; lane < ctxt->dst.bytes / 16; lane++) {
+		u8 concat[32];
+		int base = lane * 16;
+		int i;
+
+		memcpy(concat, src + base, 16);        /* bytes 0-15 = src (LOW) */
+		memcpy(concat + 16, src1 + base, 16);  /* bytes 16-31 = src1 (HIGH) */
+
+		for (i = 0; i < 16; i++) {
+			if (i + imm < 32)
+				dst[base + i] = concat[i + imm];
+			else
+				dst[base + i] = 0;
+		}
+	}
+	return X86EMUL_CONTINUE;
+}
+
+/*
+ * PCMPISTRI (66 0F 3A 63): Packed compare implicit string, returning index.
+ * Very complex - delegate to actual CPU instruction.
+ */
+static int em_pcmpistri(struct x86_emulate_ctxt *ctxt)
+{
+	u8 *dst = (u8 *)ctxt->dst.valptr;
+	u8 *src = (u8 *)ctxt->src.valptr;
+	sse128_t saved_xmm0, saved_xmm1;
+	unsigned long flags;
+	u32 ecx_result;
+	u8 imm;
+	int rc;
+
+	rc = do_insn_fetch_bytes(ctxt, 1);
+	if (rc != X86EMUL_CONTINUE)
+		return rc;
+	imm = *ctxt->fetch.ptr++;
+
+	kvm_fpu_get();
+	_kvm_read_sse_reg(0, &saved_xmm0);
+	_kvm_read_sse_reg(1, &saved_xmm1);
+
+	asm volatile("movdqu %0, %%xmm0" : : "m"(*(sse128_t *)dst));
+	asm volatile("movdqu %0, %%xmm1" : : "m"(*(sse128_t *)src));
+#define PCMPISTRI_CASE(n)						\
+	case n:								\
+		asm volatile("pcmpistri $" #n ", %%xmm1, %%xmm0\n\t"	\
+			     "pushf\n\t"				\
+			     "pop %[flags]\n\t"				\
+			     "mov %%ecx, %[ecx]"			\
+			     : [flags] "=r" (flags), [ecx] "=r" (ecx_result) \
+			     : : "ecx", "cc");				\
+		break
+
+	switch (imm) {
+	PCMPISTRI_CASE(0x00); PCMPISTRI_CASE(0x01); PCMPISTRI_CASE(0x02); PCMPISTRI_CASE(0x03);
+	PCMPISTRI_CASE(0x04); PCMPISTRI_CASE(0x05); PCMPISTRI_CASE(0x06); PCMPISTRI_CASE(0x07);
+	PCMPISTRI_CASE(0x08); PCMPISTRI_CASE(0x09); PCMPISTRI_CASE(0x0a); PCMPISTRI_CASE(0x0b);
+	PCMPISTRI_CASE(0x0c); PCMPISTRI_CASE(0x0d); PCMPISTRI_CASE(0x0e); PCMPISTRI_CASE(0x0f);
+	PCMPISTRI_CASE(0x10); PCMPISTRI_CASE(0x11); PCMPISTRI_CASE(0x12); PCMPISTRI_CASE(0x13);
+	PCMPISTRI_CASE(0x14); PCMPISTRI_CASE(0x15); PCMPISTRI_CASE(0x16); PCMPISTRI_CASE(0x17);
+	PCMPISTRI_CASE(0x18); PCMPISTRI_CASE(0x19); PCMPISTRI_CASE(0x1a); PCMPISTRI_CASE(0x1b);
+	PCMPISTRI_CASE(0x1c); PCMPISTRI_CASE(0x1d); PCMPISTRI_CASE(0x1e); PCMPISTRI_CASE(0x1f);
+	PCMPISTRI_CASE(0x20); PCMPISTRI_CASE(0x21); PCMPISTRI_CASE(0x22); PCMPISTRI_CASE(0x23);
+	PCMPISTRI_CASE(0x24); PCMPISTRI_CASE(0x25); PCMPISTRI_CASE(0x26); PCMPISTRI_CASE(0x27);
+	PCMPISTRI_CASE(0x28); PCMPISTRI_CASE(0x29); PCMPISTRI_CASE(0x2a); PCMPISTRI_CASE(0x2b);
+	PCMPISTRI_CASE(0x2c); PCMPISTRI_CASE(0x2d); PCMPISTRI_CASE(0x2e); PCMPISTRI_CASE(0x2f);
+	PCMPISTRI_CASE(0x30); PCMPISTRI_CASE(0x31); PCMPISTRI_CASE(0x32); PCMPISTRI_CASE(0x33);
+	PCMPISTRI_CASE(0x34); PCMPISTRI_CASE(0x35); PCMPISTRI_CASE(0x36); PCMPISTRI_CASE(0x37);
+	PCMPISTRI_CASE(0x38); PCMPISTRI_CASE(0x39); PCMPISTRI_CASE(0x3a); PCMPISTRI_CASE(0x3b);
+	PCMPISTRI_CASE(0x3c); PCMPISTRI_CASE(0x3d); PCMPISTRI_CASE(0x3e); PCMPISTRI_CASE(0x3f);
+	PCMPISTRI_CASE(0x40); PCMPISTRI_CASE(0x41); PCMPISTRI_CASE(0x42); PCMPISTRI_CASE(0x43);
+	PCMPISTRI_CASE(0x44); PCMPISTRI_CASE(0x45); PCMPISTRI_CASE(0x46); PCMPISTRI_CASE(0x47);
+	PCMPISTRI_CASE(0x48); PCMPISTRI_CASE(0x49); PCMPISTRI_CASE(0x4a); PCMPISTRI_CASE(0x4b);
+	PCMPISTRI_CASE(0x4c); PCMPISTRI_CASE(0x4d); PCMPISTRI_CASE(0x4e); PCMPISTRI_CASE(0x4f);
+	default:
+		_kvm_write_sse_reg(0, &saved_xmm0);
+		_kvm_write_sse_reg(1, &saved_xmm1);
+		kvm_fpu_put();
+		return X86EMUL_UNHANDLEABLE;
+	}
+#undef PCMPISTRI_CASE
+
+	_kvm_write_sse_reg(0, &saved_xmm0);
+	_kvm_write_sse_reg(1, &saved_xmm1);
+	kvm_fpu_put();
+
+	/* PCMPISTRI writes result to ECX */
+	*reg_write(ctxt, VCPU_REGS_RCX) = ecx_result;
+
+	/* Update flags */
+	ctxt->eflags = (ctxt->eflags & ~(X86_EFLAGS_CF | X86_EFLAGS_ZF |
+			X86_EFLAGS_SF | X86_EFLAGS_OF | X86_EFLAGS_AF |
+			X86_EFLAGS_PF)) |
+		       (flags & (X86_EFLAGS_CF | X86_EFLAGS_ZF |
+				 X86_EFLAGS_SF | X86_EFLAGS_OF));
+
+	ctxt->dst.type = OP_NONE;
+	return X86EMUL_CONTINUE;
+}
+
+/*
+ * PINSRD/PINSRQ (66 0F 3A 22): Insert dword/qword from GPR/m into XMM at imm8 position.
+ */
+static int em_pinsrd(struct x86_emulate_ctxt *ctxt)
+{
+	u8 *dst = (u8 *)ctxt->dst.valptr;
+	u32 src_val;
+	u8 imm;
+	int rc;
+
+	memcpy(&src_val, ctxt->src.valptr, 4);
+
+	rc = do_insn_fetch_bytes(ctxt, 1);
+	if (rc != X86EMUL_CONTINUE)
+		return rc;
+	imm = *ctxt->fetch.ptr++;
+
+	/* Insert at position (imm & 3) for dword */
+	memcpy(dst + (imm & 3) * 4, &src_val, 4);
+	return X86EMUL_CONTINUE;
+}
+
+/*
+ * PEXTRD/PEXTRQ (66 0F 3A 16): Extract dword/qword from XMM to GPR/m at imm8 position.
+ */
+static int em_pextrd(struct x86_emulate_ctxt *ctxt)
+{
+	u8 *src = (u8 *)ctxt->src.valptr;
+	u8 imm;
+	int rc;
+
+	rc = do_insn_fetch_bytes(ctxt, 1);
+	if (rc != X86EMUL_CONTINUE)
+		return rc;
+	imm = *ctxt->fetch.ptr++;
+
+	/* Extract from position (imm & 3) for dword */
+	memcpy(ctxt->dst.valptr, src + (imm & 3) * 4, 4);
+	ctxt->dst.bytes = 4;
+	return X86EMUL_CONTINUE;
+}
+
+/*
+ * PEXTRB (66 0F 3A 14): Extract byte from XMM at imm8 position.
+ */
+static int em_pextrb(struct x86_emulate_ctxt *ctxt)
+{
+	u8 *src = (u8 *)ctxt->src.valptr;
+	u8 imm;
+	int rc;
+
+	rc = do_insn_fetch_bytes(ctxt, 1);
+	if (rc != X86EMUL_CONTINUE)
+		return rc;
+	imm = *ctxt->fetch.ptr++;
+
+	ctxt->dst.val = src[imm & 15];
+	ctxt->dst.bytes = 4; /* zero-extended to 32/64 bits */
+	return X86EMUL_CONTINUE;
+}
+
+/*
+ * PINSRB (66 0F 3A 20): Insert byte from GPR/m8 into XMM at imm8 position.
+ */
+static int em_pinsrb(struct x86_emulate_ctxt *ctxt)
+{
+	u8 *dst = (u8 *)ctxt->dst.valptr;
+	u8 src_val = (u8)ctxt->src.val;
+	u8 imm;
+	int rc;
+
+	rc = do_insn_fetch_bytes(ctxt, 1);
+	if (rc != X86EMUL_CONTINUE)
+		return rc;
+	imm = *ctxt->fetch.ptr++;
+
+	dst[imm & 15] = src_val;
+	return X86EMUL_CONTINUE;
+}
+
+/*
+ * BLENDPS (66 0F 3A 0C): Blend packed singles using imm8 mask.
+ * For each bit i in imm8: if set, dst[i] = src[i]; else dst[i] = src1[i].
+ */
+static int em_blendps(struct x86_emulate_ctxt *ctxt)
+{
+	u32 *dst = (u32 *)ctxt->dst.valptr;
+	u32 *src = (u32 *)ctxt->src.valptr;
+	u32 *src1 = ctxt->src2.type == OP_NONE ? dst : (u32 *)ctxt->src2.valptr;
+	u32 tmp[8];
+	u8 imm;
+	int rc, i;
+
+	rc = do_insn_fetch_bytes(ctxt, 1);
+	if (rc != X86EMUL_CONTINUE)
+		return rc;
+	imm = *ctxt->fetch.ptr++;
+
+	for (i = 0; i < ctxt->dst.bytes / 4; i++)
+		tmp[i] = (imm & (1 << i)) ? src[i] : src1[i];
+	memcpy(dst, tmp, ctxt->dst.bytes);
+	return X86EMUL_CONTINUE;
+}
+
+/*
+ * BLENDPD (66 0F 3A 0D): Blend packed doubles using imm8 mask.
+ */
+static int em_blendpd(struct x86_emulate_ctxt *ctxt)
+{
+	u64 *dst = (u64 *)ctxt->dst.valptr;
+	u64 *src = (u64 *)ctxt->src.valptr;
+	u64 *src1 = ctxt->src2.type == OP_NONE ? dst : (u64 *)ctxt->src2.valptr;
+	u64 tmp[4];
+	u8 imm;
+	int rc, i;
+
+	rc = do_insn_fetch_bytes(ctxt, 1);
+	if (rc != X86EMUL_CONTINUE)
+		return rc;
+	imm = *ctxt->fetch.ptr++;
+
+	for (i = 0; i < ctxt->dst.bytes / 8; i++)
+		tmp[i] = (imm & (1 << i)) ? src[i] : src1[i];
+	memcpy(dst, tmp, ctxt->dst.bytes);
+	return X86EMUL_CONTINUE;
+}
+
+/*
+ * PBLENDW (66 0F 3A 0E): Blend packed words using imm8 mask.
+ */
+static int em_pblendw(struct x86_emulate_ctxt *ctxt)
+{
+	u16 *dst = (u16 *)ctxt->dst.valptr;
+	u16 *src = (u16 *)ctxt->src.valptr;
+	u16 *src1 = ctxt->src2.type == OP_NONE ? dst : (u16 *)ctxt->src2.valptr;
+	u16 tmp[16];
+	u8 imm;
+	int rc, i;
+
+	rc = do_insn_fetch_bytes(ctxt, 1);
+	if (rc != X86EMUL_CONTINUE)
+		return rc;
+	imm = *ctxt->fetch.ptr++;
+
+	for (i = 0; i < ctxt->dst.bytes / 2; i++)
+		tmp[i] = (imm & (1 << (i % 8))) ? src[i] : src1[i];
+	memcpy(dst, tmp, ctxt->dst.bytes);
+	return X86EMUL_CONTINUE;
+}
+
+/*
+ * PBLENDVB (66 0F 38 10): Variable blend packed bytes using XMM0 as mask.
+ * For each byte i: if XMM0[i] bit 7 set, dst[i] = src[i]; else dst[i] = src1[i].
+ */
+static int em_pblendvb(struct x86_emulate_ctxt *ctxt)
+{
+	u8 *dst = (u8 *)ctxt->dst.valptr;
+	u8 *src = (u8 *)ctxt->src.valptr;
+	u8 *src1 = ctxt->src2.type == OP_NONE ? dst : (u8 *)ctxt->src2.valptr;
+	sse128_t xmm0_val;
+	u8 *mask;
+	u8 tmp[32];
+	int i;
+
+	kvm_read_sse_reg(0, &xmm0_val);
+	mask = (u8 *)&xmm0_val;
+
+	for (i = 0; i < ctxt->dst.bytes && i < 16; i++)
+		tmp[i] = (mask[i] & 0x80) ? src[i] : src1[i];
+	memcpy(dst, tmp, min_t(int, ctxt->dst.bytes, 16));
+	return X86EMUL_CONTINUE;
+}
+
+/*
+ * BLENDVPS (66 0F 38 14): Variable blend packed singles using XMM0 as mask.
+ * For each dword i: if XMM0[i] bit 31 set, dst[i] = src[i]; else dst[i] = src1[i].
+ */
+static int em_blendvps(struct x86_emulate_ctxt *ctxt)
+{
+	u32 *dst = (u32 *)ctxt->dst.valptr;
+	u32 *src = (u32 *)ctxt->src.valptr;
+	u32 *src1 = ctxt->src2.type == OP_NONE ? dst : (u32 *)ctxt->src2.valptr;
+	sse128_t xmm0_val;
+	u32 *mask;
+	u32 tmp[8];
+	int i;
+
+	kvm_read_sse_reg(0, &xmm0_val);
+	mask = (u32 *)&xmm0_val;
+
+	for (i = 0; i < ctxt->dst.bytes / 4 && i < 4; i++)
+		tmp[i] = (mask[i] & 0x80000000) ? src[i] : src1[i];
+	memcpy(dst, tmp, min_t(int, ctxt->dst.bytes, 16));
+	return X86EMUL_CONTINUE;
+}
+
+/*
+ * BLENDVPD (66 0F 38 15): Variable blend packed doubles using XMM0 as mask.
+ * For each qword i: if XMM0[i] bit 63 set, dst[i] = src[i]; else dst[i] = src1[i].
+ */
+static int em_blendvpd(struct x86_emulate_ctxt *ctxt)
+{
+	u64 *dst = (u64 *)ctxt->dst.valptr;
+	u64 *src = (u64 *)ctxt->src.valptr;
+	u64 *src1 = ctxt->src2.type == OP_NONE ? dst : (u64 *)ctxt->src2.valptr;
+	sse128_t xmm0_val;
+	u64 *mask;
+	u64 tmp[4];
+	int i;
+
+	kvm_read_sse_reg(0, &xmm0_val);
+	mask = (u64 *)&xmm0_val;
+
+	for (i = 0; i < ctxt->dst.bytes / 8 && i < 2; i++)
+		tmp[i] = (mask[i] & 0x8000000000000000ULL) ? src[i] : src1[i];
+	memcpy(dst, tmp, min_t(int, ctxt->dst.bytes, 16));
+	return X86EMUL_CONTINUE;
+}
+
+/*
+ * ROUNDSS (66 0F 3A 0A): Round scalar single with imm8.
+ * ROUNDSD (66 0F 3A 0B): Round scalar double with imm8.
+ * ROUNDPS (66 0F 3A 08): Round packed singles with imm8.
+ * ROUNDPD (66 0F 3A 09): Round packed doubles with imm8.
+ * Use kvm_fpu_get/put and execute on host CPU.
+ */
+static int em_roundps(struct x86_emulate_ctxt *ctxt)
+{
+	u8 *dst = (u8 *)ctxt->dst.valptr;
+	u8 *src = (u8 *)ctxt->src.valptr;
+	unsigned int bytes = ctxt->dst.bytes;
+	sse128_t saved_xmm0, saved_xmm1;
+	u8 tmp_dst[32] __aligned(32);
+	u8 imm;
+	int rc, i;
+
+	rc = do_insn_fetch_bytes(ctxt, 1);
+	if (rc != X86EMUL_CONTINUE)
+		return rc;
+	imm = *ctxt->fetch.ptr++;
+
+	kvm_fpu_get();
+	_kvm_read_sse_reg(0, &saved_xmm0);
+	_kvm_read_sse_reg(1, &saved_xmm1);
+	for (i = 0; i < bytes; i += 16) {
+		asm volatile("movdqu %0, %%xmm1" : : "m"(*(sse128_t *)&src[i]));
+#define ROUNDPS_CASE(n)							\
+		case n:							\
+			asm volatile("roundps $" #n ", %%xmm1, %%xmm0" :::); \
+			break
+		switch (imm & 0x0f) {
+		ROUNDPS_CASE(0); ROUNDPS_CASE(1); ROUNDPS_CASE(2); ROUNDPS_CASE(3);
+		ROUNDPS_CASE(4); ROUNDPS_CASE(5); ROUNDPS_CASE(6); ROUNDPS_CASE(7);
+		ROUNDPS_CASE(8); ROUNDPS_CASE(9); ROUNDPS_CASE(10); ROUNDPS_CASE(11);
+		ROUNDPS_CASE(12); ROUNDPS_CASE(13); ROUNDPS_CASE(14); ROUNDPS_CASE(15);
+		}
+#undef ROUNDPS_CASE
+		asm volatile("movdqu %%xmm0, %0" : "=m"(*(sse128_t *)&tmp_dst[i]));
+	}
+	_kvm_write_sse_reg(0, &saved_xmm0);
+	_kvm_write_sse_reg(1, &saved_xmm1);
+	kvm_fpu_put();
+	memcpy(dst, tmp_dst, bytes);
+	return X86EMUL_CONTINUE;
+}
+
+static int em_roundpd(struct x86_emulate_ctxt *ctxt)
+{
+	u8 *dst = (u8 *)ctxt->dst.valptr;
+	u8 *src = (u8 *)ctxt->src.valptr;
+	unsigned int bytes = ctxt->dst.bytes;
+	sse128_t saved_xmm0, saved_xmm1;
+	u8 tmp_dst[32] __aligned(32);
+	u8 imm;
+	int rc, i;
+
+	rc = do_insn_fetch_bytes(ctxt, 1);
+	if (rc != X86EMUL_CONTINUE)
+		return rc;
+	imm = *ctxt->fetch.ptr++;
+
+	kvm_fpu_get();
+	_kvm_read_sse_reg(0, &saved_xmm0);
+	_kvm_read_sse_reg(1, &saved_xmm1);
+	for (i = 0; i < bytes; i += 16) {
+		asm volatile("movdqu %0, %%xmm1" : : "m"(*(sse128_t *)&src[i]));
+#define ROUNDPD_CASE(n)							\
+		case n:							\
+			asm volatile("roundpd $" #n ", %%xmm1, %%xmm0" :::); \
+			break
+		switch (imm & 0x0f) {
+		ROUNDPD_CASE(0); ROUNDPD_CASE(1); ROUNDPD_CASE(2); ROUNDPD_CASE(3);
+		ROUNDPD_CASE(4); ROUNDPD_CASE(5); ROUNDPD_CASE(6); ROUNDPD_CASE(7);
+		ROUNDPD_CASE(8); ROUNDPD_CASE(9); ROUNDPD_CASE(10); ROUNDPD_CASE(11);
+		ROUNDPD_CASE(12); ROUNDPD_CASE(13); ROUNDPD_CASE(14); ROUNDPD_CASE(15);
+		}
+#undef ROUNDPD_CASE
+		asm volatile("movdqu %%xmm0, %0" : "=m"(*(sse128_t *)&tmp_dst[i]));
+	}
+	_kvm_write_sse_reg(0, &saved_xmm0);
+	_kvm_write_sse_reg(1, &saved_xmm1);
+	kvm_fpu_put();
+	memcpy(dst, tmp_dst, bytes);
+	return X86EMUL_CONTINUE;
+}
+
+static int em_roundss(struct x86_emulate_ctxt *ctxt)
+{
+	u8 *dst = (u8 *)ctxt->dst.valptr;
+	u8 *src = (u8 *)ctxt->src.valptr;
+	u8 *src1 = ctxt->src2.type == OP_NONE ? dst : (u8 *)ctxt->src2.valptr;
+	sse128_t saved_xmm0, saved_xmm1;
+	u8 tmp_dst[16] __aligned(16);
+	u8 imm;
+	int rc;
+
+	rc = do_insn_fetch_bytes(ctxt, 1);
+	if (rc != X86EMUL_CONTINUE)
+		return rc;
+	imm = *ctxt->fetch.ptr++;
+
+	kvm_fpu_get();
+	_kvm_read_sse_reg(0, &saved_xmm0);
+	_kvm_read_sse_reg(1, &saved_xmm1);
+	asm volatile("movdqu %0, %%xmm0" : : "m"(*(sse128_t *)src1));
+	asm volatile("movdqu %0, %%xmm1" : : "m"(*(sse128_t *)src));
+#define ROUNDSS_CASE(n)							\
+	case n:								\
+		asm volatile("roundss $" #n ", %%xmm1, %%xmm0" :::); \
+		break
+	switch (imm & 0x0f) {
+	ROUNDSS_CASE(0); ROUNDSS_CASE(1); ROUNDSS_CASE(2); ROUNDSS_CASE(3);
+	ROUNDSS_CASE(4); ROUNDSS_CASE(5); ROUNDSS_CASE(6); ROUNDSS_CASE(7);
+	ROUNDSS_CASE(8); ROUNDSS_CASE(9); ROUNDSS_CASE(10); ROUNDSS_CASE(11);
+	ROUNDSS_CASE(12); ROUNDSS_CASE(13); ROUNDSS_CASE(14); ROUNDSS_CASE(15);
+	}
+#undef ROUNDSS_CASE
+	asm volatile("movdqu %%xmm0, %0" : "=m"(*(sse128_t *)tmp_dst));
+	_kvm_write_sse_reg(0, &saved_xmm0);
+	_kvm_write_sse_reg(1, &saved_xmm1);
+	kvm_fpu_put();
+	memcpy(dst, tmp_dst, 16);
+	return X86EMUL_CONTINUE;
+}
+
+static int em_roundsd(struct x86_emulate_ctxt *ctxt)
+{
+	u8 *dst = (u8 *)ctxt->dst.valptr;
+	u8 *src = (u8 *)ctxt->src.valptr;
+	u8 *src1 = ctxt->src2.type == OP_NONE ? dst : (u8 *)ctxt->src2.valptr;
+	sse128_t saved_xmm0, saved_xmm1;
+	u8 tmp_dst[16] __aligned(16);
+	u8 imm;
+	int rc;
+
+	rc = do_insn_fetch_bytes(ctxt, 1);
+	if (rc != X86EMUL_CONTINUE)
+		return rc;
+	imm = *ctxt->fetch.ptr++;
+
+	kvm_fpu_get();
+	_kvm_read_sse_reg(0, &saved_xmm0);
+	_kvm_read_sse_reg(1, &saved_xmm1);
+	asm volatile("movdqu %0, %%xmm0" : : "m"(*(sse128_t *)src1));
+	asm volatile("movdqu %0, %%xmm1" : : "m"(*(sse128_t *)src));
+#define ROUNDSD_CASE(n)							\
+	case n:								\
+		asm volatile("roundsd $" #n ", %%xmm1, %%xmm0" :::); \
+		break
+	switch (imm & 0x0f) {
+	ROUNDSD_CASE(0); ROUNDSD_CASE(1); ROUNDSD_CASE(2); ROUNDSD_CASE(3);
+	ROUNDSD_CASE(4); ROUNDSD_CASE(5); ROUNDSD_CASE(6); ROUNDSD_CASE(7);
+	ROUNDSD_CASE(8); ROUNDSD_CASE(9); ROUNDSD_CASE(10); ROUNDSD_CASE(11);
+	ROUNDSD_CASE(12); ROUNDSD_CASE(13); ROUNDSD_CASE(14); ROUNDSD_CASE(15);
+	}
+#undef ROUNDSD_CASE
+	asm volatile("movdqu %%xmm0, %0" : "=m"(*(sse128_t *)tmp_dst));
+	_kvm_write_sse_reg(0, &saved_xmm0);
+	_kvm_write_sse_reg(1, &saved_xmm1);
+	kvm_fpu_put();
+	memcpy(dst, tmp_dst, 16);
+	return X86EMUL_CONTINUE;
+}
+
+/*
+ * AESKEYGENASSIST (66 0F 3A DF): AES key generation assist with imm8.
+ */
+static int em_aeskeygenassist(struct x86_emulate_ctxt *ctxt)
+{
+	u8 *dst = (u8 *)ctxt->dst.valptr;
+	u8 *src = (u8 *)ctxt->src.valptr;
+	sse128_t saved_xmm0, saved_xmm1;
+	u8 tmp_dst[16] __aligned(16);
+	u8 imm;
+	int rc;
+
+	rc = do_insn_fetch_bytes(ctxt, 1);
+	if (rc != X86EMUL_CONTINUE)
+		return rc;
+	imm = *ctxt->fetch.ptr++;
+
+	kvm_fpu_get();
+	_kvm_read_sse_reg(0, &saved_xmm0);
+	_kvm_read_sse_reg(1, &saved_xmm1);
+	asm volatile("movdqu %0, %%xmm1" : : "m"(*(sse128_t *)src));
+
+#define AESKG_CASE(n)							\
+	case n:								\
+		asm volatile("aeskeygenassist $" #n ", %%xmm1, %%xmm0" :::); \
+		break
+	switch (imm) {
+	AESKG_CASE(0x00); AESKG_CASE(0x01); AESKG_CASE(0x02); AESKG_CASE(0x03);
+	AESKG_CASE(0x04); AESKG_CASE(0x05); AESKG_CASE(0x06); AESKG_CASE(0x07);
+	AESKG_CASE(0x08); AESKG_CASE(0x09); AESKG_CASE(0x0a); AESKG_CASE(0x0b);
+	AESKG_CASE(0x0c); AESKG_CASE(0x0d); AESKG_CASE(0x0e); AESKG_CASE(0x0f);
+	AESKG_CASE(0x10); AESKG_CASE(0x11); AESKG_CASE(0x12); AESKG_CASE(0x13);
+	AESKG_CASE(0x14); AESKG_CASE(0x15); AESKG_CASE(0x16); AESKG_CASE(0x17);
+	AESKG_CASE(0x18); AESKG_CASE(0x19); AESKG_CASE(0x1a); AESKG_CASE(0x1b);
+	AESKG_CASE(0x1c); AESKG_CASE(0x1d); AESKG_CASE(0x1e); AESKG_CASE(0x1f);
+	AESKG_CASE(0x20); AESKG_CASE(0x21); AESKG_CASE(0x22); AESKG_CASE(0x23);
+	AESKG_CASE(0x24); AESKG_CASE(0x25); AESKG_CASE(0x26); AESKG_CASE(0x27);
+	AESKG_CASE(0x28); AESKG_CASE(0x29); AESKG_CASE(0x2a); AESKG_CASE(0x2b);
+	AESKG_CASE(0x2c); AESKG_CASE(0x2d); AESKG_CASE(0x2e); AESKG_CASE(0x2f);
+	AESKG_CASE(0x30); AESKG_CASE(0x31); AESKG_CASE(0x32); AESKG_CASE(0x33);
+	AESKG_CASE(0x34); AESKG_CASE(0x35); AESKG_CASE(0x36); AESKG_CASE(0x37);
+	AESKG_CASE(0x38); AESKG_CASE(0x39); AESKG_CASE(0x3a); AESKG_CASE(0x3b);
+	AESKG_CASE(0x3c); AESKG_CASE(0x3d); AESKG_CASE(0x3e); AESKG_CASE(0x3f);
+	default:
+		/* AES key gen only uses RCON values, typically 0x01-0x36 */
+		_kvm_write_sse_reg(0, &saved_xmm0);
+		_kvm_write_sse_reg(1, &saved_xmm1);
+		kvm_fpu_put();
+		return X86EMUL_UNHANDLEABLE;
+	}
+#undef AESKG_CASE
+
+	asm volatile("movdqu %%xmm0, %0" : "=m"(*(sse128_t *)tmp_dst));
+	_kvm_write_sse_reg(0, &saved_xmm0);
+	_kvm_write_sse_reg(1, &saved_xmm1);
+	kvm_fpu_put();
+	memcpy(dst, tmp_dst, 16);
+	return X86EMUL_CONTINUE;
+}
+
+/*
+ * PCLMULQDQ (66 0F 3A 44): Carry-less multiply with imm8.
+ */
+static int em_pclmulqdq(struct x86_emulate_ctxt *ctxt)
+{
+	u8 *dst = (u8 *)ctxt->dst.valptr;
+	u8 *src = (u8 *)ctxt->src.valptr;
+	u8 *src1 = ctxt->src2.type == OP_NONE ? dst : (u8 *)ctxt->src2.valptr;
+	sse128_t saved_xmm0, saved_xmm1;
+	u8 tmp_dst[16] __aligned(16);
+	u8 imm;
+	int rc;
+
+	rc = do_insn_fetch_bytes(ctxt, 1);
+	if (rc != X86EMUL_CONTINUE)
+		return rc;
+	imm = *ctxt->fetch.ptr++;
+
+	kvm_fpu_get();
+	_kvm_read_sse_reg(0, &saved_xmm0);
+	_kvm_read_sse_reg(1, &saved_xmm1);
+	asm volatile("movdqu %0, %%xmm0" : : "m"(*(sse128_t *)src1));
+	asm volatile("movdqu %0, %%xmm1" : : "m"(*(sse128_t *)src));
+
+#define PCLMUL_CASE(n)							\
+	case n:								\
+		asm volatile("pclmulqdq $" #n ", %%xmm1, %%xmm0" :::); \
+		break
+	switch (imm & 0x11) {
+	PCLMUL_CASE(0x00);
+	PCLMUL_CASE(0x01);
+	PCLMUL_CASE(0x10);
+	PCLMUL_CASE(0x11);
+	}
+#undef PCLMUL_CASE
+
+	asm volatile("movdqu %%xmm0, %0" : "=m"(*(sse128_t *)tmp_dst));
+	_kvm_write_sse_reg(0, &saved_xmm0);
+	_kvm_write_sse_reg(1, &saved_xmm1);
+	kvm_fpu_put();
+	memcpy(dst, tmp_dst, 16);
+	return X86EMUL_CONTINUE;
+}
+
+/*
+ * PSLLDQ (66 0F 73 /7 ib): Shift double quadword left by imm8 bytes.
+ * Operates within each 128-bit lane independently.
+ */
+static int em_pslldq(struct x86_emulate_ctxt *ctxt)
+{
+	sse128_t xmm;
+	u8 *data;
+	u8 imm;
+	int rc, i;
+	u8 tmp[16];
+
+	rc = em_check_sse_prereqs(ctxt);
+	if (rc != X86EMUL_CONTINUE)
+		return rc;
+
+	rc = do_insn_fetch_bytes(ctxt, 1);
+	if (rc != X86EMUL_CONTINUE)
+		return rc;
+	imm = *ctxt->fetch.ptr++;
+	if (imm > 15)
+		imm = 16;
+
+	kvm_read_sse_reg(ctxt->modrm_rm, &xmm);
+	data = (u8 *)&xmm;
+
+	for (i = 0; i < 16; i++)
+		tmp[i] = (i >= imm) ? data[i - imm] : 0;
+
+	memcpy(&xmm, tmp, 16);
+	write_xmm_reg(ctxt, ctxt->modrm_rm, &xmm);
+
+	ctxt->dst.type = OP_NONE;
+	return X86EMUL_CONTINUE;
+}
+
+/*
+ * PSRLDQ (66 0F 73 /3 ib): Shift double quadword right by imm8 bytes.
+ * Operates within each 128-bit lane independently.
+ */
+static int em_psrldq(struct x86_emulate_ctxt *ctxt)
+{
+	sse128_t xmm;
+	u8 *data;
+	u8 imm;
+	int rc, i;
+	u8 tmp[16];
+
+	rc = em_check_sse_prereqs(ctxt);
+	if (rc != X86EMUL_CONTINUE)
+		return rc;
+
+	rc = do_insn_fetch_bytes(ctxt, 1);
+	if (rc != X86EMUL_CONTINUE)
+		return rc;
+	imm = *ctxt->fetch.ptr++;
+	if (imm > 15)
+		imm = 16;
+
+	kvm_read_sse_reg(ctxt->modrm_rm, &xmm);
+	data = (u8 *)&xmm;
+
+	for (i = 0; i < 16; i++)
+		tmp[i] = (i + imm < 16) ? data[i + imm] : 0;
+
+	memcpy(&xmm, tmp, 16);
+	write_xmm_reg(ctxt, ctxt->modrm_rm, &xmm);
+
+	ctxt->dst.type = OP_NONE;
+	return X86EMUL_CONTINUE;
+}
+
+/*
+ * PINSRW (66 0F C4): Insert word from r32/m16 into XMM at position imm8.
+ * This is ImplicitOps because src is GPR/m16, not XMM.
+ */
+static int em_pinsrw(struct x86_emulate_ctxt *ctxt)
+{
+	__sse128_u dst;
+	u16 val;
+	u8 imm;
+	int rc;
+
+	rc = em_check_sse_prereqs(ctxt);
+	if (rc != X86EMUL_CONTINUE)
+		return rc;
+
+	/* Read source (GPR or m16) */
+	if (ctxt->modrm_mod == 3) {
+		val = (u16)reg_read(ctxt, ctxt->modrm_rm);
+	} else {
+		u64 tmp = 0;
+
+		rc = read_modrm_mem(ctxt, &tmp, 2);
+		if (rc != X86EMUL_CONTINUE)
+			return rc;
+		val = (u16)tmp;
+	}
+
+	rc = do_insn_fetch_bytes(ctxt, 1);
+	if (rc != X86EMUL_CONTINUE)
+		return rc;
+	imm = *ctxt->fetch.ptr++ & 7;
+
+	/* Read destination XMM (or VEX.vvvv source for AVX) */
+	if (ctxt->d & Avx)
+		kvm_read_sse_reg(ctxt->vex_reg, &dst.vec);
+	else
+		kvm_read_sse_reg(ctxt->modrm_reg, &dst.vec);
+
+	/* Treat XMM as array of u16 */
+	((u16 *)&dst)[imm] = val;
+	write_xmm_reg(ctxt, ctxt->modrm_reg, &dst.vec);
+
+	ctxt->dst.type = OP_NONE;
+	return X86EMUL_CONTINUE;
+}
+
+/*
+ * PEXTRW (66 0F C5): Extract word from XMM to GPR.
+ * This is ImplicitOps because dst is GPR, src is XMM.
+ */
+static int em_pextrw(struct x86_emulate_ctxt *ctxt)
+{
+	sse128_t xmm;
+	u8 imm;
+	int rc;
+
+	rc = em_check_sse_prereqs(ctxt);
+	if (rc != X86EMUL_CONTINUE)
+		return rc;
+
+	kvm_read_sse_reg(ctxt->modrm_rm, &xmm);
+
+	rc = do_insn_fetch_bytes(ctxt, 1);
+	if (rc != X86EMUL_CONTINUE)
+		return rc;
+	imm = *ctxt->fetch.ptr++ & 7;
+
+	/* Result goes to GPR (modrm_reg), zero-extended */
+	*reg_write(ctxt, ctxt->modrm_reg) = ((u16 *)&xmm)[imm];
+
+	ctxt->dst.type = OP_NONE;
+	return X86EMUL_CONTINUE;
+}
+
+/*
+ * PEXTRW (66 0F 3A 15): Alternate encoding - extract word to r/m16.
+ * Unlike 0F C5, this can write to memory.
+ */
+static int em_pextrw_3a(struct x86_emulate_ctxt *ctxt)
+{
+	u8 *src = (u8 *)ctxt->src.valptr;
+	u8 imm;
+	int rc;
+
+	rc = do_insn_fetch_bytes(ctxt, 1);
+	if (rc != X86EMUL_CONTINUE)
+		return rc;
+	imm = *ctxt->fetch.ptr++;
+
+	ctxt->dst.val = *(u16 *)(src + (imm & 7) * 2);
+	ctxt->dst.bytes = 4; /* zero-extended to 32/64 bits */
+	return X86EMUL_CONTINUE;
+}
+
+/*
+ * EXTRACTPS (66 0F 3A 17): Extract float (dword) from XMM to r/m32.
+ */
+static int em_extractps(struct x86_emulate_ctxt *ctxt)
+{
+	u8 *src = (u8 *)ctxt->src.valptr;
+	u8 imm;
+	int rc;
+
+	rc = do_insn_fetch_bytes(ctxt, 1);
+	if (rc != X86EMUL_CONTINUE)
+		return rc;
+	imm = *ctxt->fetch.ptr++;
+
+	memcpy(ctxt->dst.valptr, src + (imm & 3) * 4, 4);
+	ctxt->dst.bytes = 4;
+	return X86EMUL_CONTINUE;
+}
+
+/*
+ * INSERTPS (66 0F 3A 21): Insert float with imm8 controlling positions.
+ * Use host FPU to execute.
+ */
+static int em_insertps(struct x86_emulate_ctxt *ctxt)
+{
+	u8 *dst = (u8 *)ctxt->dst.valptr;
+	u8 *src = (u8 *)ctxt->src.valptr;
+	u8 *src1 = ctxt->src2.type == OP_NONE ? dst : (u8 *)ctxt->src2.valptr;
+	sse128_t saved_xmm0, saved_xmm1;
+	u8 tmp_dst[16] __aligned(16);
+	u8 imm;
+	int rc;
+
+	rc = do_insn_fetch_bytes(ctxt, 1);
+	if (rc != X86EMUL_CONTINUE)
+		return rc;
+	imm = *ctxt->fetch.ptr++;
+
+	kvm_fpu_get();
+	_kvm_read_sse_reg(0, &saved_xmm0);
+	_kvm_read_sse_reg(1, &saved_xmm1);
+	asm volatile("movdqu %0, %%xmm0" : : "m"(*(sse128_t *)src1));
+	asm volatile("movdqu %0, %%xmm1" : : "m"(*(sse128_t *)src));
+
+#define INSERTPS_CASE(n)						\
+	case n:								\
+		asm volatile("insertps $" #n ", %%xmm1, %%xmm0" :::); \
+		break
+	switch (imm) {
+	INSERTPS_CASE(0x00); INSERTPS_CASE(0x01); INSERTPS_CASE(0x02); INSERTPS_CASE(0x03);
+	INSERTPS_CASE(0x04); INSERTPS_CASE(0x05); INSERTPS_CASE(0x06); INSERTPS_CASE(0x07);
+	INSERTPS_CASE(0x08); INSERTPS_CASE(0x09); INSERTPS_CASE(0x0a); INSERTPS_CASE(0x0b);
+	INSERTPS_CASE(0x0c); INSERTPS_CASE(0x0d); INSERTPS_CASE(0x0e); INSERTPS_CASE(0x0f);
+	INSERTPS_CASE(0x10); INSERTPS_CASE(0x11); INSERTPS_CASE(0x12); INSERTPS_CASE(0x13);
+	INSERTPS_CASE(0x14); INSERTPS_CASE(0x15); INSERTPS_CASE(0x16); INSERTPS_CASE(0x17);
+	INSERTPS_CASE(0x18); INSERTPS_CASE(0x19); INSERTPS_CASE(0x1a); INSERTPS_CASE(0x1b);
+	INSERTPS_CASE(0x1c); INSERTPS_CASE(0x1d); INSERTPS_CASE(0x1e); INSERTPS_CASE(0x1f);
+	INSERTPS_CASE(0x20); INSERTPS_CASE(0x21); INSERTPS_CASE(0x22); INSERTPS_CASE(0x23);
+	INSERTPS_CASE(0x24); INSERTPS_CASE(0x25); INSERTPS_CASE(0x26); INSERTPS_CASE(0x27);
+	INSERTPS_CASE(0x28); INSERTPS_CASE(0x29); INSERTPS_CASE(0x2a); INSERTPS_CASE(0x2b);
+	INSERTPS_CASE(0x2c); INSERTPS_CASE(0x2d); INSERTPS_CASE(0x2e); INSERTPS_CASE(0x2f);
+	INSERTPS_CASE(0x30); INSERTPS_CASE(0x31); INSERTPS_CASE(0x32); INSERTPS_CASE(0x33);
+	INSERTPS_CASE(0x34); INSERTPS_CASE(0x35); INSERTPS_CASE(0x36); INSERTPS_CASE(0x37);
+	INSERTPS_CASE(0x38); INSERTPS_CASE(0x39); INSERTPS_CASE(0x3a); INSERTPS_CASE(0x3b);
+	INSERTPS_CASE(0x3c); INSERTPS_CASE(0x3d); INSERTPS_CASE(0x3e); INSERTPS_CASE(0x3f);
+	INSERTPS_CASE(0x40); INSERTPS_CASE(0x41); INSERTPS_CASE(0x42); INSERTPS_CASE(0x43);
+	INSERTPS_CASE(0x44); INSERTPS_CASE(0x45); INSERTPS_CASE(0x46); INSERTPS_CASE(0x47);
+	INSERTPS_CASE(0x48); INSERTPS_CASE(0x49); INSERTPS_CASE(0x4a); INSERTPS_CASE(0x4b);
+	INSERTPS_CASE(0x4c); INSERTPS_CASE(0x4d); INSERTPS_CASE(0x4e); INSERTPS_CASE(0x4f);
+	INSERTPS_CASE(0x50); INSERTPS_CASE(0x51); INSERTPS_CASE(0x52); INSERTPS_CASE(0x53);
+	INSERTPS_CASE(0x54); INSERTPS_CASE(0x55); INSERTPS_CASE(0x56); INSERTPS_CASE(0x57);
+	INSERTPS_CASE(0x58); INSERTPS_CASE(0x59); INSERTPS_CASE(0x5a); INSERTPS_CASE(0x5b);
+	INSERTPS_CASE(0x5c); INSERTPS_CASE(0x5d); INSERTPS_CASE(0x5e); INSERTPS_CASE(0x5f);
+	INSERTPS_CASE(0x60); INSERTPS_CASE(0x61); INSERTPS_CASE(0x62); INSERTPS_CASE(0x63);
+	INSERTPS_CASE(0x64); INSERTPS_CASE(0x65); INSERTPS_CASE(0x66); INSERTPS_CASE(0x67);
+	INSERTPS_CASE(0x68); INSERTPS_CASE(0x69); INSERTPS_CASE(0x6a); INSERTPS_CASE(0x6b);
+	INSERTPS_CASE(0x6c); INSERTPS_CASE(0x6d); INSERTPS_CASE(0x6e); INSERTPS_CASE(0x6f);
+	INSERTPS_CASE(0x70); INSERTPS_CASE(0x71); INSERTPS_CASE(0x72); INSERTPS_CASE(0x73);
+	INSERTPS_CASE(0x74); INSERTPS_CASE(0x75); INSERTPS_CASE(0x76); INSERTPS_CASE(0x77);
+	INSERTPS_CASE(0x78); INSERTPS_CASE(0x79); INSERTPS_CASE(0x7a); INSERTPS_CASE(0x7b);
+	INSERTPS_CASE(0x7c); INSERTPS_CASE(0x7d); INSERTPS_CASE(0x7e); INSERTPS_CASE(0x7f);
+	INSERTPS_CASE(0x80); INSERTPS_CASE(0x81); INSERTPS_CASE(0x82); INSERTPS_CASE(0x83);
+	INSERTPS_CASE(0x84); INSERTPS_CASE(0x85); INSERTPS_CASE(0x86); INSERTPS_CASE(0x87);
+	INSERTPS_CASE(0x88); INSERTPS_CASE(0x89); INSERTPS_CASE(0x8a); INSERTPS_CASE(0x8b);
+	INSERTPS_CASE(0x8c); INSERTPS_CASE(0x8d); INSERTPS_CASE(0x8e); INSERTPS_CASE(0x8f);
+	INSERTPS_CASE(0x90); INSERTPS_CASE(0x91); INSERTPS_CASE(0x92); INSERTPS_CASE(0x93);
+	INSERTPS_CASE(0x94); INSERTPS_CASE(0x95); INSERTPS_CASE(0x96); INSERTPS_CASE(0x97);
+	INSERTPS_CASE(0x98); INSERTPS_CASE(0x99); INSERTPS_CASE(0x9a); INSERTPS_CASE(0x9b);
+	INSERTPS_CASE(0x9c); INSERTPS_CASE(0x9d); INSERTPS_CASE(0x9e); INSERTPS_CASE(0x9f);
+	INSERTPS_CASE(0xa0); INSERTPS_CASE(0xa1); INSERTPS_CASE(0xa2); INSERTPS_CASE(0xa3);
+	INSERTPS_CASE(0xa4); INSERTPS_CASE(0xa5); INSERTPS_CASE(0xa6); INSERTPS_CASE(0xa7);
+	INSERTPS_CASE(0xa8); INSERTPS_CASE(0xa9); INSERTPS_CASE(0xaa); INSERTPS_CASE(0xab);
+	INSERTPS_CASE(0xac); INSERTPS_CASE(0xad); INSERTPS_CASE(0xae); INSERTPS_CASE(0xaf);
+	INSERTPS_CASE(0xb0); INSERTPS_CASE(0xb1); INSERTPS_CASE(0xb2); INSERTPS_CASE(0xb3);
+	INSERTPS_CASE(0xb4); INSERTPS_CASE(0xb5); INSERTPS_CASE(0xb6); INSERTPS_CASE(0xb7);
+	INSERTPS_CASE(0xb8); INSERTPS_CASE(0xb9); INSERTPS_CASE(0xba); INSERTPS_CASE(0xbb);
+	INSERTPS_CASE(0xbc); INSERTPS_CASE(0xbd); INSERTPS_CASE(0xbe); INSERTPS_CASE(0xbf);
+	INSERTPS_CASE(0xc0); INSERTPS_CASE(0xc1); INSERTPS_CASE(0xc2); INSERTPS_CASE(0xc3);
+	INSERTPS_CASE(0xc4); INSERTPS_CASE(0xc5); INSERTPS_CASE(0xc6); INSERTPS_CASE(0xc7);
+	INSERTPS_CASE(0xc8); INSERTPS_CASE(0xc9); INSERTPS_CASE(0xca); INSERTPS_CASE(0xcb);
+	INSERTPS_CASE(0xcc); INSERTPS_CASE(0xcd); INSERTPS_CASE(0xce); INSERTPS_CASE(0xcf);
+	INSERTPS_CASE(0xd0); INSERTPS_CASE(0xd1); INSERTPS_CASE(0xd2); INSERTPS_CASE(0xd3);
+	INSERTPS_CASE(0xd4); INSERTPS_CASE(0xd5); INSERTPS_CASE(0xd6); INSERTPS_CASE(0xd7);
+	INSERTPS_CASE(0xd8); INSERTPS_CASE(0xd9); INSERTPS_CASE(0xda); INSERTPS_CASE(0xdb);
+	INSERTPS_CASE(0xdc); INSERTPS_CASE(0xdd); INSERTPS_CASE(0xde); INSERTPS_CASE(0xdf);
+	INSERTPS_CASE(0xe0); INSERTPS_CASE(0xe1); INSERTPS_CASE(0xe2); INSERTPS_CASE(0xe3);
+	INSERTPS_CASE(0xe4); INSERTPS_CASE(0xe5); INSERTPS_CASE(0xe6); INSERTPS_CASE(0xe7);
+	INSERTPS_CASE(0xe8); INSERTPS_CASE(0xe9); INSERTPS_CASE(0xea); INSERTPS_CASE(0xeb);
+	INSERTPS_CASE(0xec); INSERTPS_CASE(0xed); INSERTPS_CASE(0xee); INSERTPS_CASE(0xef);
+	INSERTPS_CASE(0xf0); INSERTPS_CASE(0xf1); INSERTPS_CASE(0xf2); INSERTPS_CASE(0xf3);
+	INSERTPS_CASE(0xf4); INSERTPS_CASE(0xf5); INSERTPS_CASE(0xf6); INSERTPS_CASE(0xf7);
+	INSERTPS_CASE(0xf8); INSERTPS_CASE(0xf9); INSERTPS_CASE(0xfa); INSERTPS_CASE(0xfb);
+	INSERTPS_CASE(0xfc); INSERTPS_CASE(0xfd); INSERTPS_CASE(0xfe); INSERTPS_CASE(0xff);
+	}
+#undef INSERTPS_CASE
+
+	asm volatile("movdqu %%xmm0, %0" : "=m"(*(sse128_t *)tmp_dst));
+	_kvm_write_sse_reg(0, &saved_xmm0);
+	_kvm_write_sse_reg(1, &saved_xmm1);
+	kvm_fpu_put();
+	memcpy(dst, tmp_dst, 16);
+	return X86EMUL_CONTINUE;
+}
+
+/*
+ * DPPS (66 0F 3A 40): Dot product of packed singles with imm8 mask.
+ * Use host FPU.
+ */
+static int em_dpps(struct x86_emulate_ctxt *ctxt)
+{
+	u8 *dst = (u8 *)ctxt->dst.valptr;
+	u8 *src = (u8 *)ctxt->src.valptr;
+	u8 *src1 = ctxt->src2.type == OP_NONE ? dst : (u8 *)ctxt->src2.valptr;
+	sse128_t saved_xmm0, saved_xmm1;
+	u8 tmp_dst[16] __aligned(16);
+	u8 imm;
+	int rc;
+
+	rc = do_insn_fetch_bytes(ctxt, 1);
+	if (rc != X86EMUL_CONTINUE)
+		return rc;
+	imm = *ctxt->fetch.ptr++;
+
+	kvm_fpu_get();
+	_kvm_read_sse_reg(0, &saved_xmm0);
+	_kvm_read_sse_reg(1, &saved_xmm1);
+	asm volatile("movdqu %0, %%xmm0" : : "m"(*(sse128_t *)src1));
+	asm volatile("movdqu %0, %%xmm1" : : "m"(*(sse128_t *)src));
+
+#define DPPS_CASE(n)							\
+	case n:								\
+		asm volatile("dpps $" #n ", %%xmm1, %%xmm0" :::); \
+		break
+	switch (imm) {
+	DPPS_CASE(0x00); DPPS_CASE(0x01); DPPS_CASE(0x02); DPPS_CASE(0x03);
+	DPPS_CASE(0x04); DPPS_CASE(0x05); DPPS_CASE(0x06); DPPS_CASE(0x07);
+	DPPS_CASE(0x08); DPPS_CASE(0x09); DPPS_CASE(0x0a); DPPS_CASE(0x0b);
+	DPPS_CASE(0x0c); DPPS_CASE(0x0d); DPPS_CASE(0x0e); DPPS_CASE(0x0f);
+	DPPS_CASE(0x10); DPPS_CASE(0x11); DPPS_CASE(0x12); DPPS_CASE(0x13);
+	DPPS_CASE(0x14); DPPS_CASE(0x15); DPPS_CASE(0x16); DPPS_CASE(0x17);
+	DPPS_CASE(0x18); DPPS_CASE(0x19); DPPS_CASE(0x1a); DPPS_CASE(0x1b);
+	DPPS_CASE(0x1c); DPPS_CASE(0x1d); DPPS_CASE(0x1e); DPPS_CASE(0x1f);
+	DPPS_CASE(0x20); DPPS_CASE(0x21); DPPS_CASE(0x22); DPPS_CASE(0x23);
+	DPPS_CASE(0x24); DPPS_CASE(0x25); DPPS_CASE(0x26); DPPS_CASE(0x27);
+	DPPS_CASE(0x28); DPPS_CASE(0x29); DPPS_CASE(0x2a); DPPS_CASE(0x2b);
+	DPPS_CASE(0x2c); DPPS_CASE(0x2d); DPPS_CASE(0x2e); DPPS_CASE(0x2f);
+	DPPS_CASE(0x30); DPPS_CASE(0x31); DPPS_CASE(0x32); DPPS_CASE(0x33);
+	DPPS_CASE(0x34); DPPS_CASE(0x35); DPPS_CASE(0x36); DPPS_CASE(0x37);
+	DPPS_CASE(0x38); DPPS_CASE(0x39); DPPS_CASE(0x3a); DPPS_CASE(0x3b);
+	DPPS_CASE(0x3c); DPPS_CASE(0x3d); DPPS_CASE(0x3e); DPPS_CASE(0x3f);
+	DPPS_CASE(0x40); DPPS_CASE(0x41); DPPS_CASE(0x42); DPPS_CASE(0x43);
+	DPPS_CASE(0x44); DPPS_CASE(0x45); DPPS_CASE(0x46); DPPS_CASE(0x47);
+	DPPS_CASE(0x48); DPPS_CASE(0x49); DPPS_CASE(0x4a); DPPS_CASE(0x4b);
+	DPPS_CASE(0x4c); DPPS_CASE(0x4d); DPPS_CASE(0x4e); DPPS_CASE(0x4f);
+	DPPS_CASE(0x50); DPPS_CASE(0x51); DPPS_CASE(0x52); DPPS_CASE(0x53);
+	DPPS_CASE(0x54); DPPS_CASE(0x55); DPPS_CASE(0x56); DPPS_CASE(0x57);
+	DPPS_CASE(0x58); DPPS_CASE(0x59); DPPS_CASE(0x5a); DPPS_CASE(0x5b);
+	DPPS_CASE(0x5c); DPPS_CASE(0x5d); DPPS_CASE(0x5e); DPPS_CASE(0x5f);
+	DPPS_CASE(0x60); DPPS_CASE(0x61); DPPS_CASE(0x62); DPPS_CASE(0x63);
+	DPPS_CASE(0x64); DPPS_CASE(0x65); DPPS_CASE(0x66); DPPS_CASE(0x67);
+	DPPS_CASE(0x68); DPPS_CASE(0x69); DPPS_CASE(0x6a); DPPS_CASE(0x6b);
+	DPPS_CASE(0x6c); DPPS_CASE(0x6d); DPPS_CASE(0x6e); DPPS_CASE(0x6f);
+	DPPS_CASE(0x70); DPPS_CASE(0x71); DPPS_CASE(0x72); DPPS_CASE(0x73);
+	DPPS_CASE(0x74); DPPS_CASE(0x75); DPPS_CASE(0x76); DPPS_CASE(0x77);
+	DPPS_CASE(0x78); DPPS_CASE(0x79); DPPS_CASE(0x7a); DPPS_CASE(0x7b);
+	DPPS_CASE(0x7c); DPPS_CASE(0x7d); DPPS_CASE(0x7e); DPPS_CASE(0x7f);
+	DPPS_CASE(0x80); DPPS_CASE(0x81); DPPS_CASE(0x82); DPPS_CASE(0x83);
+	DPPS_CASE(0x84); DPPS_CASE(0x85); DPPS_CASE(0x86); DPPS_CASE(0x87);
+	DPPS_CASE(0x88); DPPS_CASE(0x89); DPPS_CASE(0x8a); DPPS_CASE(0x8b);
+	DPPS_CASE(0x8c); DPPS_CASE(0x8d); DPPS_CASE(0x8e); DPPS_CASE(0x8f);
+	DPPS_CASE(0x90); DPPS_CASE(0x91); DPPS_CASE(0x92); DPPS_CASE(0x93);
+	DPPS_CASE(0x94); DPPS_CASE(0x95); DPPS_CASE(0x96); DPPS_CASE(0x97);
+	DPPS_CASE(0x98); DPPS_CASE(0x99); DPPS_CASE(0x9a); DPPS_CASE(0x9b);
+	DPPS_CASE(0x9c); DPPS_CASE(0x9d); DPPS_CASE(0x9e); DPPS_CASE(0x9f);
+	DPPS_CASE(0xa0); DPPS_CASE(0xa1); DPPS_CASE(0xa2); DPPS_CASE(0xa3);
+	DPPS_CASE(0xa4); DPPS_CASE(0xa5); DPPS_CASE(0xa6); DPPS_CASE(0xa7);
+	DPPS_CASE(0xa8); DPPS_CASE(0xa9); DPPS_CASE(0xaa); DPPS_CASE(0xab);
+	DPPS_CASE(0xac); DPPS_CASE(0xad); DPPS_CASE(0xae); DPPS_CASE(0xaf);
+	DPPS_CASE(0xb0); DPPS_CASE(0xb1); DPPS_CASE(0xb2); DPPS_CASE(0xb3);
+	DPPS_CASE(0xb4); DPPS_CASE(0xb5); DPPS_CASE(0xb6); DPPS_CASE(0xb7);
+	DPPS_CASE(0xb8); DPPS_CASE(0xb9); DPPS_CASE(0xba); DPPS_CASE(0xbb);
+	DPPS_CASE(0xbc); DPPS_CASE(0xbd); DPPS_CASE(0xbe); DPPS_CASE(0xbf);
+	DPPS_CASE(0xc0); DPPS_CASE(0xc1); DPPS_CASE(0xc2); DPPS_CASE(0xc3);
+	DPPS_CASE(0xc4); DPPS_CASE(0xc5); DPPS_CASE(0xc6); DPPS_CASE(0xc7);
+	DPPS_CASE(0xc8); DPPS_CASE(0xc9); DPPS_CASE(0xca); DPPS_CASE(0xcb);
+	DPPS_CASE(0xcc); DPPS_CASE(0xcd); DPPS_CASE(0xce); DPPS_CASE(0xcf);
+	DPPS_CASE(0xd0); DPPS_CASE(0xd1); DPPS_CASE(0xd2); DPPS_CASE(0xd3);
+	DPPS_CASE(0xd4); DPPS_CASE(0xd5); DPPS_CASE(0xd6); DPPS_CASE(0xd7);
+	DPPS_CASE(0xd8); DPPS_CASE(0xd9); DPPS_CASE(0xda); DPPS_CASE(0xdb);
+	DPPS_CASE(0xdc); DPPS_CASE(0xdd); DPPS_CASE(0xde); DPPS_CASE(0xdf);
+	DPPS_CASE(0xe0); DPPS_CASE(0xe1); DPPS_CASE(0xe2); DPPS_CASE(0xe3);
+	DPPS_CASE(0xe4); DPPS_CASE(0xe5); DPPS_CASE(0xe6); DPPS_CASE(0xe7);
+	DPPS_CASE(0xe8); DPPS_CASE(0xe9); DPPS_CASE(0xea); DPPS_CASE(0xeb);
+	DPPS_CASE(0xec); DPPS_CASE(0xed); DPPS_CASE(0xee); DPPS_CASE(0xef);
+	DPPS_CASE(0xf0); DPPS_CASE(0xf1); DPPS_CASE(0xf2); DPPS_CASE(0xf3);
+	DPPS_CASE(0xf4); DPPS_CASE(0xf5); DPPS_CASE(0xf6); DPPS_CASE(0xf7);
+	DPPS_CASE(0xf8); DPPS_CASE(0xf9); DPPS_CASE(0xfa); DPPS_CASE(0xfb);
+	DPPS_CASE(0xfc); DPPS_CASE(0xfd); DPPS_CASE(0xfe); DPPS_CASE(0xff);
+	}
+#undef DPPS_CASE
+
+	asm volatile("movdqu %%xmm0, %0" : "=m"(*(sse128_t *)tmp_dst));
+	_kvm_write_sse_reg(0, &saved_xmm0);
+	_kvm_write_sse_reg(1, &saved_xmm1);
+	kvm_fpu_put();
+	memcpy(dst, tmp_dst, 16);
+	return X86EMUL_CONTINUE;
+}
+
+/*
+ * DPPD (66 0F 3A 41): Dot product of packed doubles with imm8 mask.
+ * Use host FPU.
+ */
+static int em_dppd(struct x86_emulate_ctxt *ctxt)
+{
+	u8 *dst = (u8 *)ctxt->dst.valptr;
+	u8 *src = (u8 *)ctxt->src.valptr;
+	u8 *src1 = ctxt->src2.type == OP_NONE ? dst : (u8 *)ctxt->src2.valptr;
+	sse128_t saved_xmm0, saved_xmm1;
+	u8 tmp_dst[16] __aligned(16);
+	u8 imm;
+	int rc;
+
+	rc = do_insn_fetch_bytes(ctxt, 1);
+	if (rc != X86EMUL_CONTINUE)
+		return rc;
+	imm = *ctxt->fetch.ptr++;
+
+	kvm_fpu_get();
+	_kvm_read_sse_reg(0, &saved_xmm0);
+	_kvm_read_sse_reg(1, &saved_xmm1);
+	asm volatile("movdqu %0, %%xmm0" : : "m"(*(sse128_t *)src1));
+	asm volatile("movdqu %0, %%xmm1" : : "m"(*(sse128_t *)src));
+
+#define DPPD_CASE(n)							\
+	case n:								\
+		asm volatile("dppd $" #n ", %%xmm1, %%xmm0" :::); \
+		break
+	switch (imm & 0x3f) {
+	DPPD_CASE(0x00); DPPD_CASE(0x01); DPPD_CASE(0x02); DPPD_CASE(0x03);
+	DPPD_CASE(0x04); DPPD_CASE(0x05); DPPD_CASE(0x06); DPPD_CASE(0x07);
+	DPPD_CASE(0x08); DPPD_CASE(0x09); DPPD_CASE(0x0a); DPPD_CASE(0x0b);
+	DPPD_CASE(0x0c); DPPD_CASE(0x0d); DPPD_CASE(0x0e); DPPD_CASE(0x0f);
+	DPPD_CASE(0x10); DPPD_CASE(0x11); DPPD_CASE(0x12); DPPD_CASE(0x13);
+	DPPD_CASE(0x14); DPPD_CASE(0x15); DPPD_CASE(0x16); DPPD_CASE(0x17);
+	DPPD_CASE(0x18); DPPD_CASE(0x19); DPPD_CASE(0x1a); DPPD_CASE(0x1b);
+	DPPD_CASE(0x1c); DPPD_CASE(0x1d); DPPD_CASE(0x1e); DPPD_CASE(0x1f);
+	DPPD_CASE(0x20); DPPD_CASE(0x21); DPPD_CASE(0x22); DPPD_CASE(0x23);
+	DPPD_CASE(0x24); DPPD_CASE(0x25); DPPD_CASE(0x26); DPPD_CASE(0x27);
+	DPPD_CASE(0x28); DPPD_CASE(0x29); DPPD_CASE(0x2a); DPPD_CASE(0x2b);
+	DPPD_CASE(0x2c); DPPD_CASE(0x2d); DPPD_CASE(0x2e); DPPD_CASE(0x2f);
+	DPPD_CASE(0x30); DPPD_CASE(0x31); DPPD_CASE(0x32); DPPD_CASE(0x33);
+	DPPD_CASE(0x34); DPPD_CASE(0x35); DPPD_CASE(0x36); DPPD_CASE(0x37);
+	DPPD_CASE(0x38); DPPD_CASE(0x39); DPPD_CASE(0x3a); DPPD_CASE(0x3b);
+	DPPD_CASE(0x3c); DPPD_CASE(0x3d); DPPD_CASE(0x3e); DPPD_CASE(0x3f);
+	}
+#undef DPPD_CASE
+
+	asm volatile("movdqu %%xmm0, %0" : "=m"(*(sse128_t *)tmp_dst));
+	_kvm_write_sse_reg(0, &saved_xmm0);
+	_kvm_write_sse_reg(1, &saved_xmm1);
+	kvm_fpu_put();
+	memcpy(dst, tmp_dst, 16);
+	return X86EMUL_CONTINUE;
+}
+
+/*
+ * MPSADBW (66 0F 3A 42): Multiple sum of absolute differences.
+ * Very complex - delegate to host CPU.
+ */
+static int em_mpsadbw(struct x86_emulate_ctxt *ctxt)
+{
+	u8 *dst = (u8 *)ctxt->dst.valptr;
+	u8 *src = (u8 *)ctxt->src.valptr;
+	u8 *src1 = ctxt->src2.type == OP_NONE ? dst : (u8 *)ctxt->src2.valptr;
+	sse128_t saved_xmm0, saved_xmm1;
+	u8 tmp_dst[16] __aligned(16);
+	u8 imm;
+	int rc;
+
+	rc = do_insn_fetch_bytes(ctxt, 1);
+	if (rc != X86EMUL_CONTINUE)
+		return rc;
+	imm = *ctxt->fetch.ptr++;
+
+	kvm_fpu_get();
+	_kvm_read_sse_reg(0, &saved_xmm0);
+	_kvm_read_sse_reg(1, &saved_xmm1);
+	asm volatile("movdqu %0, %%xmm0" : : "m"(*(sse128_t *)src1));
+	asm volatile("movdqu %0, %%xmm1" : : "m"(*(sse128_t *)src));
+
+#define MPSADBW_CASE(n)							\
+	case n:								\
+		asm volatile("mpsadbw $" #n ", %%xmm1, %%xmm0" :::); \
+		break
+	switch (imm & 0x07) {
+	MPSADBW_CASE(0); MPSADBW_CASE(1); MPSADBW_CASE(2); MPSADBW_CASE(3);
+	MPSADBW_CASE(4); MPSADBW_CASE(5); MPSADBW_CASE(6); MPSADBW_CASE(7);
+	}
+#undef MPSADBW_CASE
+
+	asm volatile("movdqu %%xmm0, %0" : "=m"(*(sse128_t *)tmp_dst));
+	_kvm_write_sse_reg(0, &saved_xmm0);
+	_kvm_write_sse_reg(1, &saved_xmm1);
+	kvm_fpu_put();
+	memcpy(dst, tmp_dst, 16);
+	return X86EMUL_CONTINUE;
+}
+
+/*
+ * PCMPESTRM (66 0F 3A 60): Explicit-length string compare, mask output.
+ * Very complex - delegate to host CPU.
+ */
+static int em_pcmpestrm(struct x86_emulate_ctxt *ctxt)
+{
+	u8 *dst = (u8 *)ctxt->dst.valptr;
+	u8 *src = (u8 *)ctxt->src.valptr;
+	sse128_t saved_xmm0, saved_xmm1;
+	unsigned long flags;
+	u8 imm;
+	int rc;
+	u32 eax_val, edx_val;
+
+	rc = do_insn_fetch_bytes(ctxt, 1);
+	if (rc != X86EMUL_CONTINUE)
+		return rc;
+	imm = *ctxt->fetch.ptr++;
+
+	eax_val = (u32)reg_read(ctxt, VCPU_REGS_RAX);
+	edx_val = (u32)reg_read(ctxt, VCPU_REGS_RDX);
+
+	kvm_fpu_get();
+	_kvm_read_sse_reg(0, &saved_xmm0);
+	_kvm_read_sse_reg(1, &saved_xmm1);
+
+	asm volatile("movdqu %0, %%xmm0" : : "m"(*(sse128_t *)dst));
+	asm volatile("movdqu %0, %%xmm1" : : "m"(*(sse128_t *)src));
+
+#define PCMPESTRM_CASE(n)						\
+	case n:								\
+		asm volatile("pcmpestrm $" #n ", %%xmm1, %%xmm0\n\t"	\
+			     "pushf\n\t"				\
+			     "pop %[flags]"				\
+			     : [flags] "=r" (flags)			\
+			     : "a" (eax_val), "d" (edx_val)		\
+			     : "cc");					\
+		break
+	switch (imm) {
+	PCMPESTRM_CASE(0x00); PCMPESTRM_CASE(0x01); PCMPESTRM_CASE(0x02); PCMPESTRM_CASE(0x03);
+	PCMPESTRM_CASE(0x04); PCMPESTRM_CASE(0x05); PCMPESTRM_CASE(0x06); PCMPESTRM_CASE(0x07);
+	PCMPESTRM_CASE(0x08); PCMPESTRM_CASE(0x09); PCMPESTRM_CASE(0x0a); PCMPESTRM_CASE(0x0b);
+	PCMPESTRM_CASE(0x0c); PCMPESTRM_CASE(0x0d); PCMPESTRM_CASE(0x0e); PCMPESTRM_CASE(0x0f);
+	PCMPESTRM_CASE(0x10); PCMPESTRM_CASE(0x11); PCMPESTRM_CASE(0x12); PCMPESTRM_CASE(0x13);
+	PCMPESTRM_CASE(0x14); PCMPESTRM_CASE(0x15); PCMPESTRM_CASE(0x16); PCMPESTRM_CASE(0x17);
+	PCMPESTRM_CASE(0x18); PCMPESTRM_CASE(0x19); PCMPESTRM_CASE(0x1a); PCMPESTRM_CASE(0x1b);
+	PCMPESTRM_CASE(0x1c); PCMPESTRM_CASE(0x1d); PCMPESTRM_CASE(0x1e); PCMPESTRM_CASE(0x1f);
+	PCMPESTRM_CASE(0x20); PCMPESTRM_CASE(0x21); PCMPESTRM_CASE(0x22); PCMPESTRM_CASE(0x23);
+	PCMPESTRM_CASE(0x24); PCMPESTRM_CASE(0x25); PCMPESTRM_CASE(0x26); PCMPESTRM_CASE(0x27);
+	PCMPESTRM_CASE(0x28); PCMPESTRM_CASE(0x29); PCMPESTRM_CASE(0x2a); PCMPESTRM_CASE(0x2b);
+	PCMPESTRM_CASE(0x2c); PCMPESTRM_CASE(0x2d); PCMPESTRM_CASE(0x2e); PCMPESTRM_CASE(0x2f);
+	PCMPESTRM_CASE(0x30); PCMPESTRM_CASE(0x31); PCMPESTRM_CASE(0x32); PCMPESTRM_CASE(0x33);
+	PCMPESTRM_CASE(0x34); PCMPESTRM_CASE(0x35); PCMPESTRM_CASE(0x36); PCMPESTRM_CASE(0x37);
+	PCMPESTRM_CASE(0x38); PCMPESTRM_CASE(0x39); PCMPESTRM_CASE(0x3a); PCMPESTRM_CASE(0x3b);
+	PCMPESTRM_CASE(0x3c); PCMPESTRM_CASE(0x3d); PCMPESTRM_CASE(0x3e); PCMPESTRM_CASE(0x3f);
+	PCMPESTRM_CASE(0x40); PCMPESTRM_CASE(0x41); PCMPESTRM_CASE(0x42); PCMPESTRM_CASE(0x43);
+	PCMPESTRM_CASE(0x44); PCMPESTRM_CASE(0x45); PCMPESTRM_CASE(0x46); PCMPESTRM_CASE(0x47);
+	PCMPESTRM_CASE(0x48); PCMPESTRM_CASE(0x49); PCMPESTRM_CASE(0x4a); PCMPESTRM_CASE(0x4b);
+	PCMPESTRM_CASE(0x4c); PCMPESTRM_CASE(0x4d); PCMPESTRM_CASE(0x4e); PCMPESTRM_CASE(0x4f);
+	default:
+		_kvm_write_sse_reg(0, &saved_xmm0);
+		_kvm_write_sse_reg(1, &saved_xmm1);
+		kvm_fpu_put();
+		return X86EMUL_UNHANDLEABLE;
+	}
+#undef PCMPESTRM_CASE
+
+	/* PCMPESTRM writes result mask to XMM0 - read it into dst */
+	{
+		sse128_t result;
+		_kvm_read_sse_reg(0, &result);
+		memcpy(dst, &result, 16);
+	}
+
+	_kvm_write_sse_reg(0, &saved_xmm0);
+	_kvm_write_sse_reg(1, &saved_xmm1);
+	kvm_fpu_put();
+
+	/* Update flags */
+	ctxt->eflags = (ctxt->eflags & ~(X86_EFLAGS_CF | X86_EFLAGS_ZF |
+			X86_EFLAGS_SF | X86_EFLAGS_OF | X86_EFLAGS_AF |
+			X86_EFLAGS_PF)) |
+		       (flags & (X86_EFLAGS_CF | X86_EFLAGS_ZF |
+				 X86_EFLAGS_SF | X86_EFLAGS_OF));
+
+	return X86EMUL_CONTINUE;
+}
+
+/*
+ * PCMPESTRI (66 0F 3A 61): Explicit-length string compare, index output.
+ * Very complex - delegate to host CPU.
+ */
+static int em_pcmpestri(struct x86_emulate_ctxt *ctxt)
+{
+	u8 *dst = (u8 *)ctxt->dst.valptr;
+	u8 *src = (u8 *)ctxt->src.valptr;
+	sse128_t saved_xmm0, saved_xmm1;
+	unsigned long flags;
+	u32 ecx_result;
+	u8 imm;
+	int rc;
+	u32 eax_val, edx_val;
+
+	rc = do_insn_fetch_bytes(ctxt, 1);
+	if (rc != X86EMUL_CONTINUE)
+		return rc;
+	imm = *ctxt->fetch.ptr++;
+
+	eax_val = (u32)reg_read(ctxt, VCPU_REGS_RAX);
+	edx_val = (u32)reg_read(ctxt, VCPU_REGS_RDX);
+
+	kvm_fpu_get();
+	_kvm_read_sse_reg(0, &saved_xmm0);
+	_kvm_read_sse_reg(1, &saved_xmm1);
+
+	asm volatile("movdqu %0, %%xmm0" : : "m"(*(sse128_t *)dst));
+	asm volatile("movdqu %0, %%xmm1" : : "m"(*(sse128_t *)src));
+
+#define PCMPESTRI_CASE(n)						\
+	case n:								\
+		asm volatile("pcmpestri $" #n ", %%xmm1, %%xmm0\n\t"	\
+			     "pushf\n\t"				\
+			     "pop %[flags]\n\t"				\
+			     "mov %%ecx, %[ecx]"			\
+			     : [flags] "=r" (flags), [ecx] "=r" (ecx_result) \
+			     : "a" (eax_val), "d" (edx_val)		\
+			     : "ecx", "cc");				\
+		break
+	switch (imm) {
+	PCMPESTRI_CASE(0x00); PCMPESTRI_CASE(0x01); PCMPESTRI_CASE(0x02); PCMPESTRI_CASE(0x03);
+	PCMPESTRI_CASE(0x04); PCMPESTRI_CASE(0x05); PCMPESTRI_CASE(0x06); PCMPESTRI_CASE(0x07);
+	PCMPESTRI_CASE(0x08); PCMPESTRI_CASE(0x09); PCMPESTRI_CASE(0x0a); PCMPESTRI_CASE(0x0b);
+	PCMPESTRI_CASE(0x0c); PCMPESTRI_CASE(0x0d); PCMPESTRI_CASE(0x0e); PCMPESTRI_CASE(0x0f);
+	PCMPESTRI_CASE(0x10); PCMPESTRI_CASE(0x11); PCMPESTRI_CASE(0x12); PCMPESTRI_CASE(0x13);
+	PCMPESTRI_CASE(0x14); PCMPESTRI_CASE(0x15); PCMPESTRI_CASE(0x16); PCMPESTRI_CASE(0x17);
+	PCMPESTRI_CASE(0x18); PCMPESTRI_CASE(0x19); PCMPESTRI_CASE(0x1a); PCMPESTRI_CASE(0x1b);
+	PCMPESTRI_CASE(0x1c); PCMPESTRI_CASE(0x1d); PCMPESTRI_CASE(0x1e); PCMPESTRI_CASE(0x1f);
+	PCMPESTRI_CASE(0x20); PCMPESTRI_CASE(0x21); PCMPESTRI_CASE(0x22); PCMPESTRI_CASE(0x23);
+	PCMPESTRI_CASE(0x24); PCMPESTRI_CASE(0x25); PCMPESTRI_CASE(0x26); PCMPESTRI_CASE(0x27);
+	PCMPESTRI_CASE(0x28); PCMPESTRI_CASE(0x29); PCMPESTRI_CASE(0x2a); PCMPESTRI_CASE(0x2b);
+	PCMPESTRI_CASE(0x2c); PCMPESTRI_CASE(0x2d); PCMPESTRI_CASE(0x2e); PCMPESTRI_CASE(0x2f);
+	PCMPESTRI_CASE(0x30); PCMPESTRI_CASE(0x31); PCMPESTRI_CASE(0x32); PCMPESTRI_CASE(0x33);
+	PCMPESTRI_CASE(0x34); PCMPESTRI_CASE(0x35); PCMPESTRI_CASE(0x36); PCMPESTRI_CASE(0x37);
+	PCMPESTRI_CASE(0x38); PCMPESTRI_CASE(0x39); PCMPESTRI_CASE(0x3a); PCMPESTRI_CASE(0x3b);
+	PCMPESTRI_CASE(0x3c); PCMPESTRI_CASE(0x3d); PCMPESTRI_CASE(0x3e); PCMPESTRI_CASE(0x3f);
+	PCMPESTRI_CASE(0x40); PCMPESTRI_CASE(0x41); PCMPESTRI_CASE(0x42); PCMPESTRI_CASE(0x43);
+	PCMPESTRI_CASE(0x44); PCMPESTRI_CASE(0x45); PCMPESTRI_CASE(0x46); PCMPESTRI_CASE(0x47);
+	PCMPESTRI_CASE(0x48); PCMPESTRI_CASE(0x49); PCMPESTRI_CASE(0x4a); PCMPESTRI_CASE(0x4b);
+	PCMPESTRI_CASE(0x4c); PCMPESTRI_CASE(0x4d); PCMPESTRI_CASE(0x4e); PCMPESTRI_CASE(0x4f);
+	default:
+		_kvm_write_sse_reg(0, &saved_xmm0);
+		_kvm_write_sse_reg(1, &saved_xmm1);
+		kvm_fpu_put();
+		return X86EMUL_UNHANDLEABLE;
+	}
+#undef PCMPESTRI_CASE
+
+	_kvm_write_sse_reg(0, &saved_xmm0);
+	_kvm_write_sse_reg(1, &saved_xmm1);
+	kvm_fpu_put();
+
+	/* PCMPESTRI writes result to ECX */
+	*reg_write(ctxt, VCPU_REGS_RCX) = ecx_result;
+
+	/* Update flags */
+	ctxt->eflags = (ctxt->eflags & ~(X86_EFLAGS_CF | X86_EFLAGS_ZF |
+			X86_EFLAGS_SF | X86_EFLAGS_OF | X86_EFLAGS_AF |
+			X86_EFLAGS_PF)) |
+		       (flags & (X86_EFLAGS_CF | X86_EFLAGS_ZF |
+				 X86_EFLAGS_SF | X86_EFLAGS_OF));
+
+	ctxt->dst.type = OP_NONE;
+	return X86EMUL_CONTINUE;
+}
+
+/*
+ * PCMPISTRM (66 0F 3A 62): Implicit-length string compare, mask output.
+ * Very complex - delegate to host CPU.
+ */
+static int em_pcmpistrm(struct x86_emulate_ctxt *ctxt)
+{
+	u8 *dst = (u8 *)ctxt->dst.valptr;
+	u8 *src = (u8 *)ctxt->src.valptr;
+	sse128_t saved_xmm0, saved_xmm1;
+	unsigned long flags;
+	u8 imm;
+	int rc;
+
+	rc = do_insn_fetch_bytes(ctxt, 1);
+	if (rc != X86EMUL_CONTINUE)
+		return rc;
+	imm = *ctxt->fetch.ptr++;
+
+	kvm_fpu_get();
+	_kvm_read_sse_reg(0, &saved_xmm0);
+	_kvm_read_sse_reg(1, &saved_xmm1);
+
+	asm volatile("movdqu %0, %%xmm0" : : "m"(*(sse128_t *)dst));
+	asm volatile("movdqu %0, %%xmm1" : : "m"(*(sse128_t *)src));
+
+#define PCMPISTRM_CASE(n)						\
+	case n:								\
+		asm volatile("pcmpistrm $" #n ", %%xmm1, %%xmm0\n\t"	\
+			     "pushf\n\t"				\
+			     "pop %[flags]"				\
+			     : [flags] "=r" (flags)			\
+			     : : "cc");					\
+		break
+	switch (imm) {
+	PCMPISTRM_CASE(0x00); PCMPISTRM_CASE(0x01); PCMPISTRM_CASE(0x02); PCMPISTRM_CASE(0x03);
+	PCMPISTRM_CASE(0x04); PCMPISTRM_CASE(0x05); PCMPISTRM_CASE(0x06); PCMPISTRM_CASE(0x07);
+	PCMPISTRM_CASE(0x08); PCMPISTRM_CASE(0x09); PCMPISTRM_CASE(0x0a); PCMPISTRM_CASE(0x0b);
+	PCMPISTRM_CASE(0x0c); PCMPISTRM_CASE(0x0d); PCMPISTRM_CASE(0x0e); PCMPISTRM_CASE(0x0f);
+	PCMPISTRM_CASE(0x10); PCMPISTRM_CASE(0x11); PCMPISTRM_CASE(0x12); PCMPISTRM_CASE(0x13);
+	PCMPISTRM_CASE(0x14); PCMPISTRM_CASE(0x15); PCMPISTRM_CASE(0x16); PCMPISTRM_CASE(0x17);
+	PCMPISTRM_CASE(0x18); PCMPISTRM_CASE(0x19); PCMPISTRM_CASE(0x1a); PCMPISTRM_CASE(0x1b);
+	PCMPISTRM_CASE(0x1c); PCMPISTRM_CASE(0x1d); PCMPISTRM_CASE(0x1e); PCMPISTRM_CASE(0x1f);
+	PCMPISTRM_CASE(0x20); PCMPISTRM_CASE(0x21); PCMPISTRM_CASE(0x22); PCMPISTRM_CASE(0x23);
+	PCMPISTRM_CASE(0x24); PCMPISTRM_CASE(0x25); PCMPISTRM_CASE(0x26); PCMPISTRM_CASE(0x27);
+	PCMPISTRM_CASE(0x28); PCMPISTRM_CASE(0x29); PCMPISTRM_CASE(0x2a); PCMPISTRM_CASE(0x2b);
+	PCMPISTRM_CASE(0x2c); PCMPISTRM_CASE(0x2d); PCMPISTRM_CASE(0x2e); PCMPISTRM_CASE(0x2f);
+	PCMPISTRM_CASE(0x30); PCMPISTRM_CASE(0x31); PCMPISTRM_CASE(0x32); PCMPISTRM_CASE(0x33);
+	PCMPISTRM_CASE(0x34); PCMPISTRM_CASE(0x35); PCMPISTRM_CASE(0x36); PCMPISTRM_CASE(0x37);
+	PCMPISTRM_CASE(0x38); PCMPISTRM_CASE(0x39); PCMPISTRM_CASE(0x3a); PCMPISTRM_CASE(0x3b);
+	PCMPISTRM_CASE(0x3c); PCMPISTRM_CASE(0x3d); PCMPISTRM_CASE(0x3e); PCMPISTRM_CASE(0x3f);
+	PCMPISTRM_CASE(0x40); PCMPISTRM_CASE(0x41); PCMPISTRM_CASE(0x42); PCMPISTRM_CASE(0x43);
+	PCMPISTRM_CASE(0x44); PCMPISTRM_CASE(0x45); PCMPISTRM_CASE(0x46); PCMPISTRM_CASE(0x47);
+	PCMPISTRM_CASE(0x48); PCMPISTRM_CASE(0x49); PCMPISTRM_CASE(0x4a); PCMPISTRM_CASE(0x4b);
+	PCMPISTRM_CASE(0x4c); PCMPISTRM_CASE(0x4d); PCMPISTRM_CASE(0x4e); PCMPISTRM_CASE(0x4f);
+	default:
+		_kvm_write_sse_reg(0, &saved_xmm0);
+		_kvm_write_sse_reg(1, &saved_xmm1);
+		kvm_fpu_put();
+		return X86EMUL_UNHANDLEABLE;
+	}
+#undef PCMPISTRM_CASE
+
+	/* PCMPISTRM writes result mask to XMM0 - read it into dst */
+	{
+		sse128_t result;
+		_kvm_read_sse_reg(0, &result);
+		memcpy(dst, &result, 16);
+	}
+
+	_kvm_write_sse_reg(0, &saved_xmm0);
+	_kvm_write_sse_reg(1, &saved_xmm1);
+	kvm_fpu_put();
+
+	/* Update flags */
+	ctxt->eflags = (ctxt->eflags & ~(X86_EFLAGS_CF | X86_EFLAGS_ZF |
+			X86_EFLAGS_SF | X86_EFLAGS_OF | X86_EFLAGS_AF |
+			X86_EFLAGS_PF)) |
+		       (flags & (X86_EFLAGS_CF | X86_EFLAGS_ZF |
+				 X86_EFLAGS_SF | X86_EFLAGS_OF));
+
+	return X86EMUL_CONTINUE;
+}
+
+/*
+ * PHMINPOSUW (66 0F 38 41): Horizontal minimum of unsigned words.
+ * Use host FPU.
+ */
+static int em_phminposuw(struct x86_emulate_ctxt *ctxt)
+{
+	u8 *dst = (u8 *)ctxt->dst.valptr;
+	u8 *src = (u8 *)ctxt->src.valptr;
+	sse128_t saved_xmm0, saved_xmm1;
+	u8 tmp_dst[16] __aligned(16);
+
+	kvm_fpu_get();
+	_kvm_read_sse_reg(0, &saved_xmm0);
+	_kvm_read_sse_reg(1, &saved_xmm1);
+	asm volatile("movdqu %0, %%xmm1" : : "m"(*(sse128_t *)src));
+	asm volatile("phminposuw %%xmm1, %%xmm0" :::);
+	asm volatile("movdqu %%xmm0, %0" : "=m"(*(sse128_t *)tmp_dst));
+	_kvm_write_sse_reg(0, &saved_xmm0);
+	_kvm_write_sse_reg(1, &saved_xmm1);
+	kvm_fpu_put();
+	memcpy(dst, tmp_dst, 16);
+	return X86EMUL_CONTINUE;
+}
+
 static int em_movbe(struct x86_emulate_ctxt *ctxt)
 {
 	u16 tmp;
@@ -3659,13 +8206,6 @@ static int check_fxsr(struct x86_emulate_ctxt *ctxt)
 	if (ctxt->ops->get_cr(ctxt, 0) & (X86_CR0_TS | X86_CR0_EM))
 		return emulate_nm(ctxt);
 
-	/*
-	 * Don't emulate a case that should never be hit, instead of working
-	 * around a lack of fxsave64/fxrstor64 on old compilers.
-	 */
-	if (ctxt->mode >= X86EMUL_MODE_PROT64)
-		return X86EMUL_UNHANDLEABLE;
-
 	return X86EMUL_CONTINUE;
 }
 
@@ -3695,13 +8235,14 @@ static inline size_t fxstate_size(struct x86_emulate_ctxt *ctxt)
  *     - like (1), but FIP and FDP (foo) are only 16 bit.  At least Intel CPUs
  *       preserve whole 32 bit values, though, so (1) and (2) are the same wrt.
  *       save and restore
- *  3) 64-bit mode with REX.W prefix
+ *  3) 64-bit mode without REX.W prefix
  *     - like (2), but XMM 8-15 are being saved and restored
- *  4) 64-bit mode without REX.W prefix
+ *  4) 64-bit mode with REX.W prefix (FXSAVE64 / FXRSTOR64)
  *     - like (3), but FIP and FDP are 64 bit
  *
- * Emulation uses (3) for (1) and (2) and preserves XMM 8-15 to reach the
- * desired result.  (4) is not emulated.
+ * The CPU on the host produces the right on-disk layout for us as long as we
+ * use the right mnemonic: `fxsave` (no REX.W) for cases (1)-(3) and `fxsaveq`
+ * (REX.W=1) for case (4).
  *
  * Note: Guest and host CPUID.(EAX=07H,ECX=0H):EBX[bit 13] (deprecate FPU CS
  * and FPU DS) should match.
@@ -3717,15 +8258,34 @@ static int em_fxsave(struct x86_emulate_ctxt *ctxt)
 
 	kvm_fpu_get();
 
-	rc = asm_safe("fxsave %[fx]", , [fx] "+m"(fx_state));
+	if (ctxt->mode == X86EMUL_MODE_PROT64 && (ctxt->rex_bits & REX_W))
+		rc = asm_safe("fxsaveq %[fx]", , [fx] "+m"(fx_state));
+	else
+		rc = asm_safe("fxsave %[fx]", , [fx] "+m"(fx_state));
 
 	kvm_fpu_put();
 
 	if (rc != X86EMUL_CONTINUE)
 		return rc;
 
-	return segmented_write_std(ctxt, ctxt->memop.addr.mem, &fx_state,
-		                   fxstate_size(ctxt));
+	/*
+	 * Use segmented_write (not segmented_write_std) so MMIO destinations
+	 * are routed through the emulator's MMIO fragment path.  The std
+	 * variant calls kvm_vcpu_write_guest, which fails on MMIO and would
+	 * silently drop the FXSAVE bytes.
+	 *
+	 * The MMIO fragment captures *frag->data = val*, then complete_emulated_mmio
+	 * walks the buffer 8 bytes at a time across many vmexits.  The source
+	 * buffer therefore must outlive this function -- a kernel-stack local
+	 * does NOT, since the emulator returns to userspace between chunks.
+	 * Stash the saved state in ctxt->mem_read.data, which is part of the
+	 * persistent vcpu emulate_ctxt and is large enough (1024 > 416 bytes).
+	 */
+	BUILD_BUG_ON(sizeof(ctxt->mem_read.data) <
+		     offsetof(struct fxregs_state, xmm_space[0]) + 16 * 16);
+	memcpy(ctxt->mem_read.data, &fx_state, fxstate_size(ctxt));
+	return segmented_write(ctxt, ctxt->memop.addr.mem,
+			       ctxt->mem_read.data, fxstate_size(ctxt));
 }
 
 /*
@@ -3759,7 +8319,9 @@ static int em_fxrstor(struct x86_emulate_ctxt *ctxt)
 		return rc;
 
 	size = fxstate_size(ctxt);
-	rc = segmented_read_std(ctxt, ctxt->memop.addr.mem, &fx_state, size);
+	/* Use segmented_read so MMIO sources go through the emulator's
+	 * MMIO fragment path, not kvm_vcpu_read_guest. */
+	rc = segmented_read(ctxt, ctxt->memop.addr.mem, &fx_state, size);
 	if (rc != X86EMUL_CONTINUE)
 		return rc;
 
@@ -3776,8 +8338,13 @@ static int em_fxrstor(struct x86_emulate_ctxt *ctxt)
 		goto out;
 	}
 
-	if (rc == X86EMUL_CONTINUE)
-		rc = asm_safe("fxrstor %[fx]", : [fx] "m"(fx_state));
+	if (rc == X86EMUL_CONTINUE) {
+		if (ctxt->mode == X86EMUL_MODE_PROT64 &&
+		    (ctxt->rex_bits & REX_W))
+			rc = asm_safe("fxrstorq %[fx]", : [fx] "m"(fx_state));
+		else
+			rc = asm_safe("fxrstor %[fx]", : [fx] "m"(fx_state));
+	}
 
 out:
 	kvm_fpu_put();
@@ -4046,8 +8613,8 @@ static const struct opcode group4[] = {
 static const struct opcode group5[] = {
 	I(DstMem | SrcNone | Lock,		em_inc),
 	I(DstMem | SrcNone | Lock,		em_dec),
-	I(SrcMem | NearBranch | IsBranch | ShadowStack, em_call_near_abs),
-	I(SrcMemFAddr | ImplicitOps | IsBranch | ShadowStack, em_call_far),
+	I(SrcMem | NearBranch | IsBranch | ShadowStack | TwoMemOp, em_call_near_abs),
+	I(SrcMemFAddr | ImplicitOps | IsBranch | ShadowStack | TwoMemOp, em_call_far),
 	I(SrcMem | NearBranch | IsBranch,       em_jmp_abs),
 	I(SrcMemFAddr | ImplicitOps | IsBranch, em_jmp_far),
 	I(SrcMem | Stack | TwoMemOp,		em_push), D(Undefined),
@@ -4120,6 +8687,48 @@ static const struct group_dual group15 = { {
 	N, N, N, N, N, N, N, N,
 } };
 
+/*
+ * Group table for opcode 0F 73 (66 prefix only):
+ * /2 = PSRLQ imm8, /3 = PSRLDQ imm8, /6 = PSLLQ imm8, /7 = PSLLDQ imm8
+ * The group table is indexed by modrm_reg (bits 5:3).
+ */
+static const struct opcode group_0f_73[] = {
+	N, N,
+	N, /* /2: PSRLQ imm8 - not yet wired */
+	I(ImplicitOps | Sse | Avx, em_psrldq),	/* /3: PSRLDQ */
+	N, N,
+	N, /* /6: PSLLQ imm8 - not yet wired */
+	I(ImplicitOps | Sse | Avx, em_pslldq),	/* /7: PSLLDQ */
+};
+
+static const struct gprefix pfx_0f_73 = {
+	N,
+	G(Sse | Avx, group_0f_73),	/* 66: group for PSRLDQ/PSLLDQ */
+	N, N,
+};
+
+/* 0F C4: PINSRW */
+static const struct gprefix pfx_0f_c4 = {
+	N,
+	I(ImplicitOps | Sse | Avx, em_pinsrw),	/* 66: PINSRW */
+	N, N,
+};
+
+/* 0F C5: PEXTRW */
+static const struct gprefix pfx_0f_c5 = {
+	N,
+	I(ImplicitOps | Sse | Avx, em_pextrw),	/* 66: PEXTRW */
+	N, N,
+};
+
+/* 0F D0: ADDSUBPD (66) / ADDSUBPS (F2) */
+static const struct gprefix pfx_0f_d0 = {
+	N,
+	I(Sse | Avx | Src2VexReg, em_addsubpd),	/* 66: ADDSUBPD */
+	I(Sse | Avx | Src2VexReg, em_addsubps),	/* F2: ADDSUBPS */
+	N,
+};
+
 static const struct gprefix pfx_0f_6f_0f_7f = {
 	I(Mmx, em_mov), I(Sse | Avx | Aligned, em_mov), N, I(Sse | Avx | Unaligned, em_mov),
 };
@@ -4132,8 +8741,702 @@ static const struct gprefix pfx_0f_2b = {
 	ID(0, &instr_dual_0f_2b), ID(0, &instr_dual_0f_2b), N, N,
 };
 
-static const struct gprefix pfx_0f_10_0f_11 = {
-	I(Unaligned, em_mov), I(Unaligned, em_mov), N, N,
+/* 0F 2A: CVTPI2PS (NP) / CVTPI2PD (66) / CVTSI2SD (F2) / CVTSI2SS (F3) */
+static const struct gprefix pfx_0f_2a = {
+	N,						/* NP: CVTPI2PS (MMX, not emulated) */
+	N,						/* 66: CVTPI2PD (MMX, not emulated) */
+	I(ImplicitOps | Sse | Avx | No16, em_cvtsi2sd),	/* F2: CVTSI2SD */
+	I(ImplicitOps | Sse | Avx | No16, em_cvtsi2ss),	/* F3: CVTSI2SS */
+};
+
+/* 0F 2C: CVTTPS2PI (NP) / CVTTPD2PI (66) / CVTTSD2SI (F2) / CVTTSS2SI (F3) */
+static const struct gprefix pfx_0f_2c = {
+	N,						 /* NP: CVTTPS2PI (MMX, not emulated) */
+	N,						 /* 66: CVTTPD2PI (MMX, not emulated) */
+	I(ImplicitOps | Sse | Avx | No16, em_cvttsd2si), /* F2: CVTTSD2SI */
+	I(ImplicitOps | Sse | Avx | No16, em_cvttss2si), /* F3: CVTTSS2SI */
+};
+
+/* 0F 2D: CVTPS2PI (NP) / CVTPD2PI (66) / CVTSD2SI (F2) / CVTSS2SI (F3) */
+static const struct gprefix pfx_0f_2d = {
+	N,						/* NP: CVTPS2PI (MMX, not emulated) */
+	N,						/* 66: CVTPD2PI (MMX, not emulated) */
+	I(ImplicitOps | Sse | Avx | No16, em_cvtsd2si), /* F2: CVTSD2SI */
+	I(ImplicitOps | Sse | Avx | No16, em_cvtss2si), /* F3: CVTSS2SI */
+};
+
+/* 0F 2E: UCOMISS (NP) / UCOMISD (66) */
+static const struct gprefix pfx_0f_2e = {
+	I(ImplicitOps | SrcMem32 | Sse | Avx, em_ucomiss),	/* NP: UCOMISS */
+	I(ImplicitOps | SrcMem64 | Sse | Avx, em_ucomisd),	/* 66: UCOMISD */
+	N, N,
+};
+
+/* 0F 2F: COMISS (NP) / COMISD (66) */
+static const struct gprefix pfx_0f_2f = {
+	I(ImplicitOps | SrcMem32 | Sse | Avx, em_comiss),	/* NP: COMISS */
+	I(ImplicitOps | SrcMem64 | Sse | Avx, em_comisd),	/* 66: COMISD */
+	N, N,
+};
+
+/* 0F 50: MOVMSKPS (NP) / MOVMSKPD (66) */
+static const struct gprefix pfx_0f_50 = {
+	I(ImplicitOps | Sse | Avx, em_movmskps),	/* NP: MOVMSKPS */
+	I(ImplicitOps | Sse | Avx, em_movmskpd),	/* 66: MOVMSKPD */
+	N, N,
+};
+
+/* 0F 51: SQRTPS/SQRTPD/SQRTSD/SQRTSS */
+static const struct gprefix pfx_0f_51 = {
+	I(DstReg | SrcMem | Sse | Avx, em_sqrtps),		/* NP: SQRTPS */
+	I(DstReg | SrcMem | Sse | Avx, em_sqrtpd),		/* 66: SQRTPD */
+	I(ImplicitOps | Sse | Avx, em_sqrtsd),			/* F2: SQRTSD */
+	I(ImplicitOps | Sse | Avx, em_sqrtss),			/* F3: SQRTSS */
+};
+
+/* 0F 52: RSQRTPS (NP) / RSQRTSS (F3) */
+static const struct gprefix pfx_0f_52 = {
+	I(DstReg | SrcMem | Sse | Avx, em_rsqrtps),		/* NP: RSQRTPS */
+	N,							/* 66: undefined */
+	N,							/* F2: undefined */
+	I(DstReg | SrcMem | Sse | Avx, em_rsqrtps),		/* F3: RSQRTSS */
+};
+
+/* 0F 53: RCPPS (NP) / RCPSS (F3) */
+static const struct gprefix pfx_0f_53 = {
+	I(DstReg | SrcMem | Sse | Avx, em_rcpps),		/* NP: RCPPS */
+	N,							/* 66: undefined */
+	N,							/* F2: undefined */
+	I(DstReg | SrcMem | Sse | Avx, em_rcpps),		/* F3: RCPSS */
+};
+
+/* 0F 54: ANDPS (NP) / ANDPD (66) */
+static const struct gprefix pfx_0f_54 = {
+	I(DstReg | SrcMem | Sse | Avx | Src2VexReg, em_pand),	/* NP: ANDPS */
+	I(DstReg | SrcMem | Sse | Avx | Src2VexReg, em_pand),	/* 66: ANDPD */
+	N, N,
+};
+
+/* 0F 55: ANDNPS (NP) / ANDNPD (66) */
+static const struct gprefix pfx_0f_55 = {
+	I(DstReg | SrcMem | Sse | Avx | Src2VexReg, em_pandn),	/* NP: ANDNPS */
+	I(DstReg | SrcMem | Sse | Avx | Src2VexReg, em_pandn),	/* 66: ANDNPD */
+	N, N,
+};
+
+/* 0F 56: ORPS (NP) / ORPD (66) */
+static const struct gprefix pfx_0f_56 = {
+	I(DstReg | SrcMem | Sse | Avx | Src2VexReg, em_por),	/* NP: ORPS */
+	I(DstReg | SrcMem | Sse | Avx | Src2VexReg, em_por),	/* 66: ORPD */
+	N, N,
+};
+
+/* 0F 57: XORPS (NP) / XORPD (66) */
+static const struct gprefix pfx_0f_57 = {
+	I(DstReg | SrcMem | Sse | Avx | Src2VexReg, em_pxor),	/* NP: XORPS */
+	I(DstReg | SrcMem | Sse | Avx | Src2VexReg, em_pxor),	/* 66: XORPD */
+	N, N,
+};
+
+/* 0F 58: ADDPS/ADDPD/ADDSD/ADDSS */
+static const struct gprefix pfx_0f_58 = {
+	I(DstReg | SrcMem | Sse | Avx | Src2VexReg, em_addps),	/* NP: ADDPS */
+	I(DstReg | SrcMem | Sse | Avx | Src2VexReg, em_addpd),	/* 66: ADDPD */
+	I(ImplicitOps | Sse | Avx, em_addsd),			/* F2: ADDSD */
+	I(ImplicitOps | Sse | Avx, em_addss),			/* F3: ADDSS */
+};
+
+/* 0F 59: MULPS/MULPD/MULSD/MULSS */
+static const struct gprefix pfx_0f_59 = {
+	I(DstReg | SrcMem | Sse | Avx | Src2VexReg, em_mulps),	/* NP: MULPS */
+	I(DstReg | SrcMem | Sse | Avx | Src2VexReg, em_mulpd),	/* 66: MULPD */
+	I(ImplicitOps | Sse | Avx, em_mulsd),			/* F2: MULSD */
+	I(ImplicitOps | Sse | Avx, em_mulss),			/* F3: MULSS */
+};
+
+/* 0F 5A: CVTPS2PD/CVTPD2PS/CVTSD2SS/CVTSS2SD */
+static const struct gprefix pfx_0f_5a = {
+	I(Sse | Avx, em_cvtps2pd),				/* NP: CVTPS2PD (src=dst/2, own fetch) */
+	I(DstReg | SrcMem | Sse | Avx, em_cvtpd2ps),		/* 66: CVTPD2PS */
+	I(ImplicitOps | Sse | Avx, em_cvtsd2ss),		/* F2: CVTSD2SS */
+	I(ImplicitOps | Sse | Avx, em_cvtss2sd),		/* F3: CVTSS2SD */
+};
+
+/* 0F 5B: CVTDQ2PS (NP) / CVTPS2DQ (66) / CVTTPS2DQ (F3) */
+static const struct gprefix pfx_0f_5b = {
+	I(DstReg | SrcMem | Sse | Avx, em_cvtdq2ps),		/* NP: CVTDQ2PS */
+	I(DstReg | SrcMem | Sse | Avx, em_cvtps2dq),		/* 66: CVTPS2DQ */
+	N,							/* F2: undefined */
+	I(DstReg | SrcMem | Sse | Avx, em_cvttps2dq),		/* F3: CVTTPS2DQ */
+};
+
+/* 0F 5C: SUBPS/SUBPD/SUBSD/SUBSS */
+static const struct gprefix pfx_0f_5c = {
+	I(DstReg | SrcMem | Sse | Avx | Src2VexReg, em_subps),	/* NP: SUBPS */
+	I(DstReg | SrcMem | Sse | Avx | Src2VexReg, em_subpd),	/* 66: SUBPD */
+	I(ImplicitOps | Sse | Avx, em_subsd),			/* F2: SUBSD */
+	I(ImplicitOps | Sse | Avx, em_subss),			/* F3: SUBSS */
+};
+
+/* 0F 5D: MINPS/MINPD/MINSD/MINSS */
+static const struct gprefix pfx_0f_5d = {
+	I(DstReg | SrcMem | Sse | Avx | Src2VexReg, em_minps),	/* NP: MINPS */
+	I(DstReg | SrcMem | Sse | Avx | Src2VexReg, em_minpd),	/* 66: MINPD */
+	I(ImplicitOps | Sse | Avx, em_minsd),			/* F2: MINSD */
+	I(ImplicitOps | Sse | Avx, em_minss),			/* F3: MINSS */
+};
+
+/* 0F 5E: DIVPS/DIVPD/DIVSD/DIVSS */
+static const struct gprefix pfx_0f_5e = {
+	I(DstReg | SrcMem | Sse | Avx | Src2VexReg, em_divps),	/* NP: DIVPS */
+	I(DstReg | SrcMem | Sse | Avx | Src2VexReg, em_divpd),	/* 66: DIVPD */
+	I(ImplicitOps | Sse | Avx, em_divsd),			/* F2: DIVSD */
+	I(ImplicitOps | Sse | Avx, em_divss),			/* F3: DIVSS */
+};
+
+/* 0F 5F: MAXPS/MAXPD/MAXSD/MAXSS */
+static const struct gprefix pfx_0f_5f = {
+	I(DstReg | SrcMem | Sse | Avx | Src2VexReg, em_maxps),	/* NP: MAXPS */
+	I(DstReg | SrcMem | Sse | Avx | Src2VexReg, em_maxpd),	/* 66: MAXPD */
+	I(ImplicitOps | Sse | Avx, em_maxsd),			/* F2: MAXSD */
+	I(ImplicitOps | Sse | Avx, em_maxss),			/* F3: MAXSS */
+};
+
+/*
+ * 0F 10: MOVUPS / MOVUPD / MOVSD xmm,m64 / MOVSS xmm,m32
+ * Refactored from shared pfx_0f_10_0f_11: operand flags moved inward
+ * so scalar variants can have smaller memory access sizes.
+ */
+static const struct gprefix pfx_0f_10 = {
+	I(DstReg | SrcMem | Sse | Avx | Unaligned | Mov, em_mov), /* MOVUPS */
+	I(DstReg | SrcMem | Sse | Avx | Unaligned | Mov, em_mov), /* MOVUPD */
+	I(ImplicitOps | Sse | Avx, em_movsd_load),		 /* MOVSD */
+	I(ImplicitOps | Sse | Avx, em_movss_load),		 /* MOVSS */
+};
+
+/* 0F 11: MOVUPS / MOVUPD / MOVSD m64,xmm / MOVSS m32,xmm (store) */
+static const struct gprefix pfx_0f_11 = {
+	I(DstMem | SrcReg | Sse | Avx | Unaligned | Mov, em_mov), /* MOVUPS */
+	I(DstMem | SrcReg | Sse | Avx | Unaligned | Mov, em_mov), /* MOVUPD */
+	I(ImplicitOps | Sse | Avx, em_movsd_store),		 /* MOVSD */
+	I(ImplicitOps | Sse | Avx, em_movss_store),		 /* MOVSS */
+};
+
+/* --- MOVLPS/MOVLPD (0F 12/13) + MOVSLDUP/MOVDDUP --- */
+
+static const struct instr_dual instr_dual_movddup = {
+	I(DstReg | SrcMem64 | Sse | Mov, em_movddup), N
+};
+
+/* 0F 12: MOVLPS / MOVLPD / MOVDDUP / MOVSLDUP */
+static const struct gprefix pfx_0f_12 = {
+	I(ImplicitOps | Sse | Avx, em_movlps),				/* MOVLPS/HLPS */
+	I(ImplicitOps | Sse | Avx, em_movlps),				/* MOVLPD */
+	ID(0, &instr_dual_movddup),					/* MOVDDUP */
+	I(DstReg | SrcMem | Sse | Avx | Unaligned | Mov, em_movsldup),	/* MOVSLDUP */
+};
+
+/* 0F 13: MOVLPS m64,xmm / MOVLPD m64,xmm (store, memory-only) */
+static const struct gprefix pfx_0f_13 = {
+	I(ImplicitOps | Sse | Avx, em_movlps_store),
+	I(ImplicitOps | Sse | Avx, em_movlps_store),
+	N, N,
+};
+
+/* --- MOVHPS/MOVHPD (0F 16/17) + MOVSHDUP --- */
+
+/* 0F 16: MOVHPS / MOVHPD / MOVSHDUP */
+static const struct gprefix pfx_0f_16 = {
+	I(ImplicitOps | Sse | Avx, em_movhps_load),			/* MOVHPS/LHPS */
+	I(ImplicitOps | Sse | Avx, em_movhps_load),			/* MOVHPD */
+	N,								/* F2: undef */
+	I(DstReg | SrcMem | Sse | Avx | Unaligned | Mov, em_movshdup),	/* MOVSHDUP */
+};
+
+/* 0F 17: MOVHPS m64,xmm / MOVHPD m64,xmm (store, memory-only) */
+static const struct gprefix pfx_0f_17 = {
+	I(ImplicitOps | Sse | Avx, em_movhps_store),
+	I(ImplicitOps | Sse | Avx, em_movhps_store),
+	N, N,
+};
+
+/* --- UNPCKLPS/UNPCKHPS (0F 14/15) --- */
+static const struct gprefix pfx_0f_14 = {
+	I(Sse | Avx | Src2VexReg, em_unpcklps),	/* NP: UNPCKLPS */
+	I(Sse | Avx | Src2VexReg, em_unpcklpd),	/* 66: UNPCKLPD */
+	N, N,
+};
+
+static const struct gprefix pfx_0f_15 = {
+	I(Sse | Avx | Src2VexReg, em_unpckhps),	/* NP: UNPCKHPS */
+	I(Sse | Avx | Src2VexReg, em_unpckhpd),	/* 66: UNPCKHPD */
+	N, N,
+};
+
+/* --- PUNPCK/PACK* (0F 60-6D with 66 prefix) --- */
+static const struct gprefix pfx_0f_60 = {
+	N,
+	I(Sse | Avx | Src2VexReg, em_punpcklbw),	/* 66: PUNPCKLBW */
+	N, N,
+};
+
+static const struct gprefix pfx_0f_61 = {
+	N,
+	I(Sse | Avx | Src2VexReg, em_punpcklwd),	/* 66: PUNPCKLWD */
+	N, N,
+};
+
+static const struct gprefix pfx_0f_62 = {
+	N,
+	I(Sse | Avx | Src2VexReg, em_punpckldq),	/* 66: PUNPCKLDQ */
+	N, N,
+};
+
+static const struct gprefix pfx_0f_63 = {
+	N,
+	I(Sse | Avx | Src2VexReg, em_packsswb),	/* 66: PACKSSWB */
+	N, N,
+};
+
+static const struct gprefix pfx_0f_67 = {
+	N,
+	I(Sse | Avx | Src2VexReg, em_packuswb),	/* 66: PACKUSWB */
+	N, N,
+};
+
+static const struct gprefix pfx_0f_68 = {
+	N,
+	I(Sse | Avx | Src2VexReg, em_punpckhbw),	/* 66: PUNPCKHBW */
+	N, N,
+};
+
+static const struct gprefix pfx_0f_69 = {
+	N,
+	I(Sse | Avx | Src2VexReg, em_punpckhwd),	/* 66: PUNPCKHWD */
+	N, N,
+};
+
+static const struct gprefix pfx_0f_6a = {
+	N,
+	I(Sse | Avx | Src2VexReg, em_punpckhdq),	/* 66: PUNPCKHDQ */
+	N, N,
+};
+
+static const struct gprefix pfx_0f_6b = {
+	N,
+	I(Sse | Avx | Src2VexReg, em_packssdw),	/* 66: PACKSSDW */
+	N, N,
+};
+
+static const struct gprefix pfx_0f_6c = {
+	N,
+	I(Sse | Avx | Src2VexReg, em_punpcklqdq),	/* 66: PUNPCKLQDQ */
+	N, N,
+};
+
+static const struct gprefix pfx_0f_6d = {
+	N,
+	I(Sse | Avx | Src2VexReg, em_punpckhqdq),	/* 66: PUNPCKHQDQ */
+	N, N,
+};
+
+/* --- 0F 70: PSHUFD / PSHUFHW / PSHUFLW --- */
+static const struct gprefix pfx_0f_70 = {
+	N,						/* NP: PSHUFW (MMX, skip) */
+	I(Sse | Avx, em_pshufd),			/* 66: PSHUFD */
+	I(Sse | Avx, em_pshuflw),			/* F2: PSHUFLW */
+	I(Sse | Avx, em_pshufhw),			/* F3: PSHUFHW */
+};
+
+/* --- 0F C2: CMPPS/CMPPD/CMPSS/CMPSD (with imm8) --- */
+static const struct gprefix pfx_0f_c2 = {
+	I(Sse | Avx | Src2VexReg, em_cmpps_imm),	/* NP: CMPPS */
+	I(Sse | Avx | Src2VexReg, em_cmppd_imm),	/* 66: CMPPD */
+	I(ImplicitOps | Sse | Avx, em_cmpsd_imm),	/* F2: CMPSD */
+	I(ImplicitOps | Sse | Avx, em_cmpss_imm),	/* F3: CMPSS */
+};
+
+/* --- 0F C6: SHUFPS / SHUFPD --- */
+static const struct gprefix pfx_0f_c6 = {
+	I(Sse | Avx | Src2VexReg, em_shufps),		/* NP: SHUFPS */
+	I(Sse | Avx | Src2VexReg, em_shufpd),		/* 66: SHUFPD */
+	N, N,
+};
+
+/* --- 0F D7: PMOVMSKB --- */
+static const struct gprefix pfx_0f_d7 = {
+	N,
+	I(ImplicitOps | Sse | Avx, em_pmovmskb),	/* 66: PMOVMSKB */
+	N, N,
+};
+
+/* --- Shift instructions (0F D1-D3, 0F E1-E2, 0F F1-F3) --- */
+static const struct gprefix pfx_0f_d1 = {
+	N,
+	I(Sse | Avx | Src2VexReg, em_psrlw),		/* 66: PSRLW */
+	N, N,
+};
+
+static const struct gprefix pfx_0f_d2 = {
+	N,
+	I(Sse | Avx | Src2VexReg, em_psrld),		/* 66: PSRLD */
+	N, N,
+};
+
+static const struct gprefix pfx_0f_d3 = {
+	N,
+	I(Sse | Avx | Src2VexReg, em_psrlq),		/* 66: PSRLQ */
+	N, N,
+};
+
+/* 0F D8: PSUBUSB */
+static const struct gprefix pfx_0f_d8 = {
+	N,
+	I(Sse | Avx | Src2VexReg, em_psubusb),		/* 66: PSUBUSB */
+	N, N,
+};
+
+/* 0F D9: PSUBUSW */
+static const struct gprefix pfx_0f_d9 = {
+	N,
+	I(Sse | Avx | Src2VexReg, em_psubusw),		/* 66: PSUBUSW */
+	N, N,
+};
+
+/* 0F DC: PADDUSB */
+static const struct gprefix pfx_0f_dc = {
+	N,
+	I(Sse | Avx | Src2VexReg, em_paddusb),		/* 66: PADDUSB */
+	N, N,
+};
+
+/* 0F DD: PADDUSW */
+static const struct gprefix pfx_0f_dd = {
+	N,
+	I(Sse | Avx | Src2VexReg, em_paddusw),		/* 66: PADDUSW */
+	N, N,
+};
+
+/* 0F DE: PMAXUB */
+static const struct gprefix pfx_0f_de = {
+	N,
+	I(Sse | Avx | Src2VexReg, em_pmaxub),		/* 66: PMAXUB */
+	N, N,
+};
+
+static const struct gprefix pfx_0f_e1 = {
+	N,
+	I(Sse | Avx | Src2VexReg, em_psraw),		/* 66: PSRAW */
+	N, N,
+};
+
+static const struct gprefix pfx_0f_e2 = {
+	N,
+	I(Sse | Avx | Src2VexReg, em_psrad),		/* 66: PSRAD */
+	N, N,
+};
+
+/* 0F E3: PAVGW */
+static const struct gprefix pfx_0f_e3 = {
+	N,
+	I(Sse | Avx | Src2VexReg, em_pavgw),		/* 66: PAVGW */
+	N, N,
+};
+
+/* 0F E4: PMULHUW */
+static const struct gprefix pfx_0f_e4 = {
+	N,
+	I(Sse | Avx | Src2VexReg, em_pmulhuw),		/* 66: PMULHUW */
+	N, N,
+};
+
+/* 0F E5: PMULHW */
+static const struct gprefix pfx_0f_e5 = {
+	N,
+	I(Sse | Avx | Src2VexReg, em_pmulhw),		/* 66: PMULHW */
+	N, N,
+};
+
+/* 0F E6: CVTPD2DQ (F2) / CVTTPD2DQ (66) / CVTDQ2PD (F3) */
+static const struct gprefix pfx_0f_e6 = {
+	N,
+	I(DstReg | SrcMem | Sse | Avx, em_cvttpd2dq),	/* 66: CVTTPD2DQ */
+	I(DstReg | SrcMem | Sse | Avx, em_cvtpd2dq),	/* F2: CVTPD2DQ */
+	I(Sse | Avx, em_cvtdq2pd),			/* F3: CVTDQ2PD (src=dst/2, own fetch) */
+};
+
+/* 0F E8: PSUBSB */
+static const struct gprefix pfx_0f_e8 = {
+	N,
+	I(Sse | Avx | Src2VexReg, em_psubsb),		/* 66: PSUBSB */
+	N, N,
+};
+
+/* 0F E9: PSUBSW */
+static const struct gprefix pfx_0f_e9 = {
+	N,
+	I(Sse | Avx | Src2VexReg, em_psubsw),		/* 66: PSUBSW */
+	N, N,
+};
+
+/* 0F EA: PMINSW */
+static const struct gprefix pfx_0f_ea = {
+	N,
+	I(Sse | Avx | Src2VexReg, em_pminsw),		/* 66: PMINSW */
+	N, N,
+};
+
+/* 0F EC: PADDSB */
+static const struct gprefix pfx_0f_ec = {
+	N,
+	I(Sse | Avx | Src2VexReg, em_paddsb),		/* 66: PADDSB */
+	N, N,
+};
+
+/* 0F ED: PADDSW */
+static const struct gprefix pfx_0f_ed = {
+	N,
+	I(Sse | Avx | Src2VexReg, em_paddsw),		/* 66: PADDSW */
+	N, N,
+};
+
+/* 0F EE: PMAXSW */
+static const struct gprefix pfx_0f_ee = {
+	N,
+	I(Sse | Avx | Src2VexReg, em_pmaxsw),		/* 66: PMAXSW */
+	N, N,
+};
+
+static const struct gprefix pfx_0f_f1 = {
+	N,
+	I(Sse | Avx | Src2VexReg, em_psllw),		/* 66: PSLLW */
+	N, N,
+};
+
+static const struct gprefix pfx_0f_f2 = {
+	N,
+	I(Sse | Avx | Src2VexReg, em_pslld),		/* 66: PSLLD */
+	N, N,
+};
+
+static const struct gprefix pfx_0f_f3 = {
+	N,
+	I(Sse | Avx | Src2VexReg, em_psllq),		/* 66: PSLLQ */
+	N, N,
+};
+
+/* 0F F4: PMULUDQ */
+static const struct gprefix pfx_0f_f4 = {
+	N,
+	I(Sse | Avx | Src2VexReg, em_pmuludq),		/* 66: PMULUDQ */
+	N, N,
+};
+
+/* 0F F5: PMADDWD */
+static const struct gprefix pfx_0f_f5 = {
+	N,
+	I(Sse | Avx | Src2VexReg, em_pmaddwd),		/* 66: PMADDWD */
+	N, N,
+};
+
+/* 0F F6: PSADBW */
+static const struct gprefix pfx_0f_f6 = {
+	N,
+	I(Sse | Avx | Src2VexReg, em_psadbw),		/* 66: PSADBW */
+	N, N,
+};
+
+/* 0F F0: LDDQU (F2) */
+static const struct gprefix pfx_0f_f0 = {
+	N, N,
+	I(DstReg | SrcMem | Sse | Avx | Unaligned | Mov, em_lddqu),	/* F2: LDDQU */
+	N,
+};
+
+/* 0F 7C: HADDPS (F2) / HADDPD (66) */
+static const struct gprefix pfx_0f_7c = {
+	N,
+	I(Sse | Avx | Src2VexReg, em_haddpd),		/* 66: HADDPD */
+	I(Sse | Avx | Src2VexReg, em_haddps),		/* F2: HADDPS */
+	N,
+};
+
+/* 0F 7D: HSUBPS (F2) / HSUBPD (66) */
+static const struct gprefix pfx_0f_7d = {
+	N,
+	I(Sse | Avx | Src2VexReg, em_hsubpd),		/* 66: HSUBPD */
+	I(Sse | Avx | Src2VexReg, em_hsubps),		/* F2: HSUBPS */
+	N,
+};
+
+/* --- MOVD/MOVQ XMM (0F 6E / 0F 7E / 0F D6) --- */
+
+/* 0F 6E: MOVD mm,r/m32 (NP) / MOVD xmm,m32 or MOVQ xmm,m64 (66) */
+static const struct gprefix pfx_0f_6e = {
+	I(Mmx | DstReg | SrcMem | Mov, em_mov),			/* MOVD mm, r/m32 */
+	I(ImplicitOps | Sse | Avx | No16, em_movd_xmm_load),	/* MOVD/Q xmm, r/m */
+	N, N,
+};
+
+/* 0F 7E: MOVD r/m32,mm (NP) / MOVD m32/m64,xmm (66) / MOVQ xmm,m64 (F3) */
+static const struct gprefix pfx_0f_7e = {
+	I(Mmx | DstMem | SrcReg | Mov, em_mov),			/* MOVD r/m32, mm */
+	I(ImplicitOps | Sse | Avx | No16, em_movd_xmm_store),	/* MOVD/Q r/m, xmm */
+	N,							/* F2: undef */
+	I(ImplicitOps | Sse | Avx, em_movq_load),		/* MOVQ xmm, xmm/m64 */
+};
+
+static const struct gprefix pfx_0f_d6 = {
+	N,						 /* NP: undef */
+	I(ImplicitOps | Sse | Avx, em_movq_store), /* MOVQ xmm/m64, xmm */
+	N, N,						 /* F2/F3: MOVDQ2Q/MOVQ2DQ (skip) */
+};
+
+/* 0F EB: POR mm,mm/m64 (NP) / POR xmm,xmm/m128 (66) */
+static const struct gprefix pfx_0f_eb = {
+	N,							/* NP: MMX (not emulated) */
+	I(Sse | Avx | Src2VexReg, em_por),		/* 66: POR/vPOR xmm */
+	N, N,
+};
+
+/* 0F E0: PAVGB mm,mm/m64 (NP) / PAVGB xmm,xmm/m128 (66) */
+static const struct gprefix pfx_0f_e0 = {
+	N,							/* NP: MMX (not emulated) */
+	I(Sse | Avx | Src2VexReg, em_pavgb),	/* 66: PAVGB/vPAVGB xmm */
+	N, N,
+};
+
+/* 0F DA: PMINUB mm,mm/m64 (NP) / PMINUB xmm,xmm/m128 (66) */
+static const struct gprefix pfx_0f_da = {
+	N,							/* NP: MMX (not emulated) */
+	I(Sse | Avx | Src2VexReg, em_pminub),	/* 66: PMINUB/vPMINUB xmm */
+	N, N,
+};
+
+/* 0F 64: PCMPGTB mm,mm/m64 (NP) / PCMPGTB xmm,xmm/m128 (66) */
+static const struct gprefix pfx_0f_64 = {
+	N,							/* NP: MMX (not emulated) */
+	I(Sse | Avx | Src2VexReg, em_pcmpgtb),	/* 66: PCMPGTB/vPCMPGTB */
+	N, N,
+};
+
+/* 0F 65: PCMPGTW mm,mm/m64 (NP) / PCMPGTW xmm,xmm/m128 (66) */
+static const struct gprefix pfx_0f_65 = {
+	N,							/* NP: MMX (not emulated) */
+	I(Sse | Avx | Src2VexReg, em_pcmpgtw),	/* 66: PCMPGTW/vPCMPGTW */
+	N, N,
+};
+
+/* 0F 66: PCMPGTD mm,mm/m64 (NP) / PCMPGTD xmm,xmm/m128 (66) */
+static const struct gprefix pfx_0f_66 = {
+	N,							/* NP: MMX (not emulated) */
+	I(Sse | Avx | Src2VexReg, em_pcmpgtd),	/* 66: PCMPGTD/vPCMPGTD */
+	N, N,
+};
+
+/* 0F 74: PCMPEQB mm,mm/m64 (NP) / PCMPEQB xmm,xmm/m128 (66) */
+static const struct gprefix pfx_0f_74 = {
+	N,							 /* NP: MMX (not emulated) */
+	I(Sse | Avx | Src2VexReg, em_pcmpeqb), /* 66: PCMPEQB/vPCMPEQB */
+	N, N,
+};
+
+/* 0F 75: PCMPEQW mm,mm/m64 (NP) / PCMPEQW xmm,xmm/m128 (66) */
+static const struct gprefix pfx_0f_75 = {
+	N,							 /* NP: MMX (not emulated) */
+	I(Sse | Avx | Src2VexReg, em_pcmpeqw), /* 66: PCMPEQW/vPCMPEQW */
+	N, N,
+};
+
+/* 0F 76: PCMPEQD mm,mm/m64 (NP) / PCMPEQD xmm,xmm/m128 (66) */
+static const struct gprefix pfx_0f_76 = {
+	N,							/* NP: MMX (not emulated) */
+	I(Sse | Avx | Src2VexReg, em_pcmpeqd),	/* 66: PCMPEQD/vPCMPEQD */
+	N, N,
+};
+
+/* 0F DB: PAND mm,mm/m64 (NP) / PAND xmm,xmm/m128 (66) */
+static const struct gprefix pfx_0f_db = {
+	N,
+	I(Sse | Avx | Src2VexReg, em_pand),	/* 66: PAND/vPAND */
+	N, N,
+};
+
+/* 0F DF: PANDN mm,mm/m64 (NP) / PANDN xmm,xmm/m128 (66) */
+static const struct gprefix pfx_0f_df = {
+	N,
+	I(Sse | Avx | Src2VexReg, em_pandn),	/* 66: PANDN/vPANDN */
+	N, N,
+};
+
+/* 0F D4: PADDQ mm,mm/m64 (NP) / PADDQ xmm,xmm/m128 (66) */
+static const struct gprefix pfx_0f_d4 = {
+	N,
+	I(Sse | Avx | Src2VexReg, em_paddq),	/* 66: PADDQ/vPADDQ */
+	N, N,
+};
+
+/* 0F D5: PMULLW mm,mm/m64 (NP) / PMULLW xmm,xmm/m128 (66) */
+static const struct gprefix pfx_0f_d5 = {
+	N,
+	I(Sse | Avx | Src2VexReg, em_pmullw),	/* 66: PMULLW/vPMULLW */
+	N, N,
+};
+
+/* 0F EF: PXOR mm,mm/m64 (NP) / PXOR xmm,xmm/m128 (66) */
+static const struct gprefix pfx_0f_ef = {
+	N,
+	I(Sse | Avx | Src2VexReg, em_pxor),	/* 66: PXOR/vPXOR */
+	N, N,
+};
+
+/* 0F F8: PSUBB mm,mm/m64 (NP) / PSUBB xmm,xmm/m128 (66) */
+static const struct gprefix pfx_0f_f8 = {
+	N,
+	I(Sse | Avx | Src2VexReg, em_psubb),	/* 66: PSUBB/vPSUBB */
+	N, N,
+};
+
+/* 0F F9: PSUBW mm,mm/m64 (NP) / PSUBW xmm,xmm/m128 (66) */
+static const struct gprefix pfx_0f_f9 = {
+	N,
+	I(Sse | Avx | Src2VexReg, em_psubw),	/* 66: PSUBW/vPSUBW */
+	N, N,
+};
+
+/* 0F FA: PSUBD mm,mm/m64 (NP) / PSUBD xmm,xmm/m128 (66) */
+static const struct gprefix pfx_0f_fa = {
+	N,
+	I(Sse | Avx | Src2VexReg, em_psubd),	/* 66: PSUBD/vPSUBD */
+	N, N,
+};
+
+/* 0F FB: PSUBQ mm,mm/m64 (NP) / PSUBQ xmm,xmm/m128 (66) */
+static const struct gprefix pfx_0f_fb = {
+	N,
+	I(Sse | Avx | Src2VexReg, em_psubq),	/* 66: PSUBQ/vPSUBQ */
+	N, N,
+};
+
+/* 0F FC: PADDB mm,mm/m64 (NP) / PADDB xmm,xmm/m128 (66) */
+static const struct gprefix pfx_0f_fc = {
+	N,
+	I(Sse | Avx | Src2VexReg, em_paddb),	/* 66: PADDB/vPADDB */
+	N, N,
+};
+
+/* 0F FD: PADDW mm,mm/m64 (NP) / PADDW xmm,xmm/m128 (66) */
+static const struct gprefix pfx_0f_fd = {
+	N,
+	I(Sse | Avx | Src2VexReg, em_paddw),	/* 66: PADDW/vPADDW */
+	N, N,
+};
+
+/* 0F FE: PADDD mm,mm/m64 (NP) / PADDD xmm,xmm/m128 (66) */
+static const struct gprefix pfx_0f_fe = {
+	N,
+	I(Sse | Avx | Src2VexReg, em_paddd),	/* 66: PADDD/vPADDD */
+	N, N,
 };
 
 static const struct gprefix pfx_0f_28_0f_29 = {
@@ -4144,8 +9447,39 @@ static const struct gprefix pfx_0f_e7_0f_38_2a = {
 	N, I(Sse | Avx, em_mov), N, N,
 };
 
+static const struct escape escape_d8 = { {
+	I(SrcMem32 | ImplicitOps, em_fadd_m32fp),
+	I(SrcMem32 | ImplicitOps, em_fmul_m32fp),
+	I(SrcMem32 | ImplicitOps, em_fcom_m32fp),
+	I(SrcMem32 | ImplicitOps, em_fcomp_m32fp),
+	I(SrcMem32 | ImplicitOps, em_fsub_m32fp),
+	I(SrcMem32 | ImplicitOps, em_fsubr_m32fp),
+	I(SrcMem32 | ImplicitOps, em_fdiv_m32fp),
+	I(SrcMem32 | ImplicitOps, em_fdivr_m32fp),
+}, {
+	/* 0xC0 - 0xC7 */
+	X8(I(ImplicitOps, em_x87_d8_reg)),
+	/* 0xC8 - 0xCF */
+	X8(I(ImplicitOps, em_x87_d8_reg)),
+	/* 0xD0 - 0xD7 */
+	X8(I(ImplicitOps, em_x87_d8_reg)),
+	/* 0xD8 - 0xDF */
+	X8(I(ImplicitOps, em_x87_d8_reg)),
+	/* 0xE0 - 0xE7 */
+	X8(I(ImplicitOps, em_x87_d8_reg)),
+	/* 0xE8 - 0xEF */
+	X8(I(ImplicitOps, em_x87_d8_reg)),
+	/* 0xF0 - 0xF7 */
+	X8(I(ImplicitOps, em_x87_d8_reg)),
+	/* 0xF8 - 0xFF */
+	X8(I(ImplicitOps, em_x87_d8_reg)),
+} };
+
 static const struct escape escape_d9 = { {
-	N, N, N, N, N, N, N, I(DstMem16 | Mov, em_fnstcw),
+	I(SrcMem32 | ImplicitOps, em_fld), N,
+	I(DstMem32, em_fst_m32fp),
+	I(DstMem32, em_fstp_m32fp),
+	N, N, N, I(DstMem16 | Mov, em_fnstcw),
 }, {
 	/* 0xC0 - 0xC7 */
 	N, N, N, N, N, N, N, N,
@@ -4166,7 +9500,7 @@ static const struct escape escape_d9 = { {
 } };
 
 static const struct escape escape_db = { {
-	N, N, N, N, N, N, N, N,
+	N, N, N, N, N, N, N, I(DstMem | Mov, em_fstp_m80fp),
 }, {
 	/* 0xC0 - 0xC7 */
 	N, N, N, N, N, N, N, N,
@@ -4187,7 +9521,11 @@ static const struct escape escape_db = { {
 } };
 
 static const struct escape escape_dd = { {
-	N, N, N, N, N, N, N, I(DstMem16 | Mov, em_fnstsw),
+	I(SrcMem64 | ImplicitOps, em_fld_m64fp),
+	N,
+	I(DstMem64, em_fst_m64fp),
+	I(DstMem64, em_fstp_m64fp),
+	N, N, N, I(DstMem16 | Mov, em_fnstsw),
 }, {
 	/* 0xC0 - 0xC7 */
 	N, N, N, N, N, N, N, N,
@@ -4323,7 +9661,7 @@ static const struct opcode opcode_table[256] = {
 	I(DstAcc | ByteOp | No64, em_salc),
 	I(DstAcc | SrcXLat | ByteOp, em_mov),
 	/* 0xD8 - 0xDF */
-	N, E(0, &escape_d9), N, E(0, &escape_db), N, E(0, &escape_dd), N, N,
+	E(0, &escape_d8), E(0, &escape_d9), N, E(0, &escape_db), N, E(0, &escape_dd), N, N,
 	/* 0xE0 - 0xE7 */
 	X3(I(SrcImmByte | NearBranch | IsBranch, em_loop)),
 	I(SrcImmByte | NearBranch | IsBranch, em_jcxz),
@@ -4354,9 +9692,14 @@ static const struct opcode twobyte_table[256] = {
 	DI(ImplicitOps | Priv, invd), DI(ImplicitOps | Priv, wbinvd), N, N,
 	N, D(ImplicitOps | ModRM | SrcMem | NoAccess), N, N,
 	/* 0x10 - 0x1F */
-	GP(ModRM | DstReg | SrcMem | Mov | Sse | Avx, &pfx_0f_10_0f_11),
-	GP(ModRM | DstMem | SrcReg | Mov | Sse | Avx, &pfx_0f_10_0f_11),
-	N, N, N, N, N, N,
+	GP(ModRM, &pfx_0f_10),
+	GP(ModRM, &pfx_0f_11),
+	GP(ModRM, &pfx_0f_12),
+	GP(ModRM, &pfx_0f_13),
+	GP(ModRM | DstReg | SrcMem, &pfx_0f_14),
+	GP(ModRM | DstReg | SrcMem, &pfx_0f_15),
+	GP(ModRM, &pfx_0f_16),
+	GP(ModRM, &pfx_0f_17),
 	D(ImplicitOps | ModRM | SrcMem | NoAccess), /* 4 * prefetch + 4 * reserved NOP */
 	D(ImplicitOps | ModRM | SrcMem | NoAccess), N, N,
 	D(ImplicitOps | ModRM | SrcMem | NoAccess), /* 8 * reserved NOP */
@@ -4373,8 +9716,12 @@ static const struct opcode twobyte_table[256] = {
 	N, N, N, N,
 	GP(ModRM | DstReg | SrcMem | Mov | Sse | Avx, &pfx_0f_28_0f_29),
 	GP(ModRM | DstMem | SrcReg | Mov | Sse | Avx, &pfx_0f_28_0f_29),
-	N, GP(ModRM | DstMem | SrcReg | Mov | Sse | Avx, &pfx_0f_2b),
-	N, N, N, N,
+	GP(ModRM | No16, &pfx_0f_2a),
+	GP(ModRM | DstMem | SrcReg | Mov | Sse | Avx, &pfx_0f_2b),
+	GP(ModRM | No16, &pfx_0f_2c),
+	GP(ModRM | No16, &pfx_0f_2d),
+	GP(ModRM, &pfx_0f_2e),
+	GP(ModRM, &pfx_0f_2f),
 	/* 0x30 - 0x3F */
 	II(ImplicitOps | Priv, em_wrmsr, wrmsr),
 	IIP(ImplicitOps, em_rdtsc, rdtsc, check_rdtsc),
@@ -4387,17 +9734,40 @@ static const struct opcode twobyte_table[256] = {
 	/* 0x40 - 0x4F */
 	X16(D(DstReg | SrcMem | ModRM)),
 	/* 0x50 - 0x5F */
-	N, N, N, N, N, N, N, N, N, N, N, N, N, N, N, N,
+	GP(ModRM, &pfx_0f_50),
+	GP(ModRM, &pfx_0f_51), GP(ModRM, &pfx_0f_52), GP(ModRM, &pfx_0f_53),
+	GP(ModRM, &pfx_0f_54),
+	GP(ModRM, &pfx_0f_55),
+	GP(ModRM, &pfx_0f_56),
+	GP(ModRM, &pfx_0f_57),
+	GP(ModRM, &pfx_0f_58), GP(ModRM, &pfx_0f_59), GP(ModRM, &pfx_0f_5a), GP(ModRM, &pfx_0f_5b),
+	GP(ModRM, &pfx_0f_5c), GP(ModRM, &pfx_0f_5d), GP(ModRM, &pfx_0f_5e), GP(ModRM, &pfx_0f_5f),
 	/* 0x60 - 0x6F */
-	N, N, N, N,
-	N, N, N, N,
-	N, N, N, N,
-	N, N, N, GP(SrcMem | DstReg | ModRM | Mov, &pfx_0f_6f_0f_7f),
+	GP(ModRM | DstReg | SrcMem, &pfx_0f_60),
+	GP(ModRM | DstReg | SrcMem, &pfx_0f_61),
+	GP(ModRM | DstReg | SrcMem, &pfx_0f_62),
+	GP(ModRM | DstReg | SrcMem, &pfx_0f_63),
+	GP(ModRM | DstReg | SrcMem, &pfx_0f_64),
+	GP(ModRM | DstReg | SrcMem, &pfx_0f_65),
+	GP(ModRM | DstReg | SrcMem, &pfx_0f_66),
+	GP(ModRM | DstReg | SrcMem, &pfx_0f_67),
+	GP(ModRM | DstReg | SrcMem, &pfx_0f_68),
+	GP(ModRM | DstReg | SrcMem, &pfx_0f_69),
+	GP(ModRM | DstReg | SrcMem, &pfx_0f_6a),
+	GP(ModRM | DstReg | SrcMem, &pfx_0f_6b),
+	GP(ModRM | DstReg | SrcMem, &pfx_0f_6c),
+	GP(ModRM | DstReg | SrcMem, &pfx_0f_6d),
+	GP(ModRM, &pfx_0f_6e), GP(SrcMem | DstReg | ModRM | Mov, &pfx_0f_6f_0f_7f),
 	/* 0x70 - 0x7F */
+	GP(ModRM | DstReg | SrcMem, &pfx_0f_70), N, N,
+	GP(ModRM, &pfx_0f_73),				/* PSRLDQ/PSLLDQ group */
+	GP(ModRM | DstReg | SrcMem, &pfx_0f_74),
+	GP(ModRM | DstReg | SrcMem, &pfx_0f_75),
+	GP(ModRM | DstReg | SrcMem, &pfx_0f_76), N,
 	N, N, N, N,
-	N, N, N, N,
-	N, N, N, N,
-	N, N, N, GP(SrcReg | DstMem | ModRM | Mov, &pfx_0f_6f_0f_7f),
+	GP(ModRM | DstReg | SrcMem, &pfx_0f_7c),
+	GP(ModRM | DstReg | SrcMem, &pfx_0f_7d),
+	GP(ModRM, &pfx_0f_7e), GP(SrcReg | DstMem | ModRM | Mov, &pfx_0f_6f_0f_7f),
 	/* 0x80 - 0x8F */
 	X16(D(SrcImm | NearBranch | IsBranch)),
 	/* 0x90 - 0x9F */
@@ -4431,17 +9801,62 @@ static const struct opcode twobyte_table[256] = {
 	D(DstReg | SrcMem8 | ModRM | Mov), D(DstReg | SrcMem16 | ModRM | Mov),
 	/* 0xC0 - 0xC7 */
 	I2bv(DstMem | SrcReg | ModRM | SrcWrite | Lock, em_xadd),
-	N, ID(0, &instr_dual_0f_c3),
-	N, N, N, GD(0, &group9),
+	GP(ModRM | DstReg | SrcMem, &pfx_0f_c2), ID(0, &instr_dual_0f_c3),
+	GP(ModRM, &pfx_0f_c4),					/* PINSRW */
+	GP(ModRM, &pfx_0f_c5),					/* PEXTRW */
+	GP(ModRM | DstReg | SrcMem, &pfx_0f_c6), GD(0, &group9),
 	/* 0xC8 - 0xCF */
 	X8(I(DstReg, em_bswap)),
 	/* 0xD0 - 0xDF */
-	N, N, N, N, N, N, N, N, N, N, N, N, N, N, N, N,
+	GP(ModRM | DstReg | SrcMem, &pfx_0f_d0),		/* ADDSUBPD/PS */
+	GP(ModRM | DstReg | SrcMem, &pfx_0f_d1),
+	GP(ModRM | DstReg | SrcMem, &pfx_0f_d2),
+	GP(ModRM | DstReg | SrcMem, &pfx_0f_d3),
+	GP(ModRM | DstReg | SrcMem, &pfx_0f_d4),
+	GP(ModRM | DstReg | SrcMem, &pfx_0f_d5),
+	GP(ModRM, &pfx_0f_d6),
+	GP(ModRM, &pfx_0f_d7),
+	GP(ModRM | DstReg | SrcMem, &pfx_0f_d8),
+	GP(ModRM | DstReg | SrcMem, &pfx_0f_d9),
+	GP(ModRM | DstReg | SrcMem, &pfx_0f_da),
+	GP(ModRM | DstReg | SrcMem, &pfx_0f_db),
+	GP(ModRM | DstReg | SrcMem, &pfx_0f_dc),
+	GP(ModRM | DstReg | SrcMem, &pfx_0f_dd),
+	GP(ModRM | DstReg | SrcMem, &pfx_0f_de),
+	GP(ModRM | DstReg | SrcMem, &pfx_0f_df),
 	/* 0xE0 - 0xEF */
-	N, N, N, N, N, N, N, GP(SrcReg | DstMem | ModRM | Mov, &pfx_0f_e7_0f_38_2a),
-	N, N, N, N, N, N, N, N,
+	GP(ModRM | DstReg | SrcMem, &pfx_0f_e0),
+	GP(ModRM | DstReg | SrcMem, &pfx_0f_e1),
+	GP(ModRM | DstReg | SrcMem, &pfx_0f_e2),
+	GP(ModRM | DstReg | SrcMem, &pfx_0f_e3),
+	GP(ModRM | DstReg | SrcMem, &pfx_0f_e4),
+	GP(ModRM | DstReg | SrcMem, &pfx_0f_e5),
+	GP(ModRM, &pfx_0f_e6),
+	GP(SrcReg | DstMem | ModRM | Mov, &pfx_0f_e7_0f_38_2a),
+	GP(ModRM | DstReg | SrcMem, &pfx_0f_e8),
+	GP(ModRM | DstReg | SrcMem, &pfx_0f_e9),
+	GP(ModRM | DstReg | SrcMem, &pfx_0f_ea),
+	GP(ModRM | DstReg | SrcMem, &pfx_0f_eb),
+	GP(ModRM | DstReg | SrcMem, &pfx_0f_ec),
+	GP(ModRM | DstReg | SrcMem, &pfx_0f_ed),
+	GP(ModRM | DstReg | SrcMem, &pfx_0f_ee),
+	GP(ModRM | DstReg | SrcMem, &pfx_0f_ef),
 	/* 0xF0 - 0xFF */
-	N, N, N, N, N, N, N, N, N, N, N, N, N, N, N, N
+	GP(ModRM | DstReg | SrcMem, &pfx_0f_f0),
+	GP(ModRM | DstReg | SrcMem, &pfx_0f_f1),
+	GP(ModRM | DstReg | SrcMem, &pfx_0f_f2),
+	GP(ModRM | DstReg | SrcMem, &pfx_0f_f3),
+	GP(ModRM | DstReg | SrcMem, &pfx_0f_f4),
+	GP(ModRM | DstReg | SrcMem, &pfx_0f_f5),
+	GP(ModRM | DstReg | SrcMem, &pfx_0f_f6),
+	N,
+	GP(ModRM | DstReg | SrcMem, &pfx_0f_f8),
+	GP(ModRM | DstReg | SrcMem, &pfx_0f_f9),
+	GP(ModRM | DstReg | SrcMem, &pfx_0f_fa),
+	GP(ModRM | DstReg | SrcMem, &pfx_0f_fb),
+	GP(ModRM | DstReg | SrcMem, &pfx_0f_fc),
+	GP(ModRM | DstReg | SrcMem, &pfx_0f_fd),
+	GP(ModRM | DstReg | SrcMem, &pfx_0f_fe), N
 };
 
 static const struct instr_dual instr_dual_0f_38_f0 = {
@@ -4464,21 +9879,608 @@ static const struct gprefix three_byte_0f_38_f1 = {
  * Insns below are selected by the prefix which indexed by the third opcode
  * byte.
  */
+/* 0F 38 00: PSHUFB */
+static const struct gprefix pfx_0f_38_00 = {
+	N,
+	I(Sse | Avx | Src2VexReg, em_pshufb),	/* 66: PSHUFB */
+	N, N,
+};
+
+/* 0F 38 01: PHADDW */
+static const struct gprefix pfx_0f_38_01 = {
+	N,
+	I(Sse | Avx | Src2VexReg, em_phaddw),	/* 66: PHADDW */
+	N, N,
+};
+
+/* 0F 38 02: PHADDD */
+static const struct gprefix pfx_0f_38_02 = {
+	N,
+	I(Sse | Avx | Src2VexReg, em_phaddd),	/* 66: PHADDD */
+	N, N,
+};
+
+/* 0F 38 03: PHADDSW */
+static const struct gprefix pfx_0f_38_03 = {
+	N,
+	I(Sse | Avx | Src2VexReg, em_phaddsw),	/* 66: PHADDSW */
+	N, N,
+};
+
+/* 0F 38 05: PHSUBW */
+static const struct gprefix pfx_0f_38_05 = {
+	N,
+	I(Sse | Avx | Src2VexReg, em_phsubw),	/* 66: PHSUBW */
+	N, N,
+};
+
+/* 0F 38 06: PHSUBD */
+static const struct gprefix pfx_0f_38_06 = {
+	N,
+	I(Sse | Avx | Src2VexReg, em_phsubd),	/* 66: PHSUBD */
+	N, N,
+};
+
+/* 0F 38 07: PHSUBSW */
+static const struct gprefix pfx_0f_38_07 = {
+	N,
+	I(Sse | Avx | Src2VexReg, em_phsubsw),	/* 66: PHSUBSW */
+	N, N,
+};
+
+/* 0F 38 08: PSIGNB */
+static const struct gprefix pfx_0f_38_08 = {
+	N,
+	I(Sse | Avx | Src2VexReg, em_psignb),	/* 66: PSIGNB */
+	N, N,
+};
+
+/* 0F 38 09: PSIGNW */
+static const struct gprefix pfx_0f_38_09 = {
+	N,
+	I(Sse | Avx | Src2VexReg, em_psignw),	/* 66: PSIGNW */
+	N, N,
+};
+
+/* 0F 38 0A: PSIGND */
+static const struct gprefix pfx_0f_38_0a = {
+	N,
+	I(Sse | Avx | Src2VexReg, em_psignd),	/* 66: PSIGND */
+	N, N,
+};
+
+/* 0F 38 0B: PMULHRSW */
+static const struct gprefix pfx_0f_38_0b = {
+	N,
+	I(Sse | Avx | Src2VexReg, em_pmulhrsw), /* 66: PMULHRSW */
+	N, N,
+};
+
+/* 0F 38 17: PTEST */
+static const struct gprefix pfx_0f_38_17 = {
+	N,
+	I(Sse | Avx, em_ptest),		/* 66: PTEST */
+	N, N,
+};
+
+/* 0F 38 1C: PABSB */
+static const struct gprefix pfx_0f_38_1c = {
+	N,
+	I(Sse | Avx, em_pabsb),		/* 66: PABSB */
+	N, N,
+};
+
+/* 0F 38 1D: PABSW */
+static const struct gprefix pfx_0f_38_1d = {
+	N,
+	I(Sse | Avx, em_pabsw),		/* 66: PABSW */
+	N, N,
+};
+
+/* 0F 38 1E: PABSD */
+static const struct gprefix pfx_0f_38_1e = {
+	N,
+	I(Sse | Avx, em_pabsd),		/* 66: PABSD */
+	N, N,
+};
+
+/* 0F 38 20-25: PMOVSXBW/BD/BQ/WD/WQ/DQ */
+static const struct gprefix pfx_0f_38_20 = {
+	N, I(Sse | Avx, em_pmovsxbw), N, N,
+};
+static const struct gprefix pfx_0f_38_21 = {
+	N, I(Sse | Avx, em_pmovsxbd), N, N,
+};
+static const struct gprefix pfx_0f_38_22 = {
+	N, I(Sse | Avx, em_pmovsxbq), N, N,
+};
+static const struct gprefix pfx_0f_38_23 = {
+	N, I(Sse | Avx, em_pmovsxwd), N, N,
+};
+static const struct gprefix pfx_0f_38_24 = {
+	N, I(Sse | Avx, em_pmovsxwq), N, N,
+};
+static const struct gprefix pfx_0f_38_25 = {
+	N, I(Sse | Avx, em_pmovsxdq), N, N,
+};
+
+/* 0F 38 28: PMULDQ */
+static const struct gprefix pfx_0f_38_28 = {
+	N,
+	I(Sse | Avx | Src2VexReg, em_pmuldq),	/* 66: PMULDQ */
+	N, N,
+};
+
+/* 0F 38 30-35: PMOVZXBW/BD/BQ/WD/WQ/DQ */
+static const struct gprefix pfx_0f_38_30 = {
+	N, I(Sse | Avx, em_pmovzxbw), N, N,
+};
+static const struct gprefix pfx_0f_38_31 = {
+	N, I(Sse | Avx, em_pmovzxbd), N, N,
+};
+static const struct gprefix pfx_0f_38_32 = {
+	N, I(Sse | Avx, em_pmovzxbq), N, N,
+};
+static const struct gprefix pfx_0f_38_33 = {
+	N, I(Sse | Avx, em_pmovzxwd), N, N,
+};
+static const struct gprefix pfx_0f_38_34 = {
+	N, I(Sse | Avx, em_pmovzxwq), N, N,
+};
+static const struct gprefix pfx_0f_38_35 = {
+	N, I(Sse | Avx, em_pmovzxdq), N, N,
+};
+
+/* 0F 38 38: PMINSB */
+static const struct gprefix pfx_0f_38_38 = {
+	N,
+	I(Sse | Avx | Src2VexReg, em_pminsb),	/* 66: PMINSB */
+	N, N,
+};
+
+/* 0F 38 39: PMINSD */
+static const struct gprefix pfx_0f_38_39 = {
+	N,
+	I(Sse | Avx | Src2VexReg, em_pminsd),	/* 66: PMINSD */
+	N, N,
+};
+
+/* 0F 38 3A: PMINUW */
+static const struct gprefix pfx_0f_38_3a = {
+	N,
+	I(Sse | Avx | Src2VexReg, em_pminuw),	/* 66: PMINUW */
+	N, N,
+};
+
+/* 0F 38 3B: PMINUD xmm,xmm/m128 (66) / VPMINUD (VEX.66) */
+static const struct gprefix pfx_0f_38_3b = {
+	N,
+	I(Sse | Avx | Src2VexReg, em_pminud),	/* 66: PMINUD/vPMINUD */
+	N, N,
+};
+
+/* 0F 38 3C: PMAXSB */
+static const struct gprefix pfx_0f_38_3c = {
+	N,
+	I(Sse | Avx | Src2VexReg, em_pmaxsb),	/* 66: PMAXSB */
+	N, N,
+};
+
+/* 0F 38 3D: PMAXSD */
+static const struct gprefix pfx_0f_38_3d = {
+	N,
+	I(Sse | Avx | Src2VexReg, em_pmaxsd),	/* 66: PMAXSD */
+	N, N,
+};
+
+/* 0F 38 3E: PMAXUW */
+static const struct gprefix pfx_0f_38_3e = {
+	N,
+	I(Sse | Avx | Src2VexReg, em_pmaxuw),	/* 66: PMAXUW */
+	N, N,
+};
+
+/* 0F 38 04: PMADDUBSW */
+static const struct gprefix pfx_0f_38_04 = {
+	N,
+	I(Sse | Avx | Src2VexReg, em_pmaddubsw), /* 66: PMADDUBSW */
+	N, N,
+};
+
+/* 0F 38 10: PBLENDVB */
+static const struct gprefix pfx_0f_38_10 = {
+	N,
+	I(Sse | Avx | Src2VexReg, em_pblendvb),	/* 66: PBLENDVB */
+	N, N,
+};
+
+/* 0F 38 14: BLENDVPS */
+static const struct gprefix pfx_0f_38_14 = {
+	N,
+	I(Sse | Avx | Src2VexReg, em_blendvps),	/* 66: BLENDVPS */
+	N, N,
+};
+
+/* 0F 38 15: BLENDVPD */
+static const struct gprefix pfx_0f_38_15 = {
+	N,
+	I(Sse | Avx | Src2VexReg, em_blendvpd),	/* 66: BLENDVPD */
+	N, N,
+};
+
+/* 0F 38 29: PCMPEQQ */
+static const struct gprefix pfx_0f_38_29 = {
+	N,
+	I(Sse | Avx | Src2VexReg, em_pcmpeqq),	/* 66: PCMPEQQ */
+	N, N,
+};
+
+/* 0F 38 2B: PACKUSDW */
+static const struct gprefix pfx_0f_38_2b = {
+	N,
+	I(Sse | Avx | Src2VexReg, em_packusdw),	/* 66: PACKUSDW */
+	N, N,
+};
+
+/* 0F 38 37: PCMPGTQ */
+static const struct gprefix pfx_0f_38_37 = {
+	N,
+	I(Sse | Avx | Src2VexReg, em_pcmpgtq),	/* 66: PCMPGTQ */
+	N, N,
+};
+
+/* 0F 38 3F: PMAXUD */
+static const struct gprefix pfx_0f_38_3f = {
+	N,
+	I(Sse | Avx | Src2VexReg, em_pmaxud),	/* 66: PMAXUD */
+	N, N,
+};
+
+/* 0F 38 40: PMULLD */
+static const struct gprefix pfx_0f_38_40 = {
+	N,
+	I(Sse | Avx | Src2VexReg, em_pmulld),	/* 66: PMULLD */
+	N, N,
+};
+
+/* 0F 38 41: PHMINPOSUW */
+static const struct gprefix pfx_0f_38_41 = {
+	N,
+	I(Sse | Avx, em_phminposuw),		/* 66: PHMINPOSUW */
+	N, N,
+};
+
+/* 0F 38 DC-DF,DB: AES-NI */
+static const struct gprefix pfx_0f_38_db = {
+	N,
+	I(Sse | Avx, em_aesimc),		/* 66: AESIMC */
+	N, N,
+};
+
+static const struct gprefix pfx_0f_38_dc = {
+	N,
+	I(Sse | Avx | Src2VexReg, em_aesenc),	/* 66: AESENC */
+	N, N,
+};
+
+static const struct gprefix pfx_0f_38_dd = {
+	N,
+	I(Sse | Avx | Src2VexReg, em_aesenclast), /* 66: AESENCLAST */
+	N, N,
+};
+
+static const struct gprefix pfx_0f_38_de = {
+	N,
+	I(Sse | Avx | Src2VexReg, em_aesdec),	/* 66: AESDEC */
+	N, N,
+};
+
+static const struct gprefix pfx_0f_38_df = {
+	N,
+	I(Sse | Avx | Src2VexReg, em_aesdeclast), /* 66: AESDECLAST */
+	N, N,
+};
+
 static const struct opcode opcode_map_0f_38[256] = {
-	/* 0x00 - 0x1f */
-	X16(N), X16(N),
+	/* 0x00 - 0x0f */
+	GP(ModRM | DstReg | SrcMem, &pfx_0f_38_00),	/* PSHUFB */
+	GP(ModRM | DstReg | SrcMem, &pfx_0f_38_01),	/* PHADDW */
+	GP(ModRM | DstReg | SrcMem, &pfx_0f_38_02),	/* PHADDD */
+	GP(ModRM | DstReg | SrcMem, &pfx_0f_38_03),	/* PHADDSW */
+	GP(ModRM | DstReg | SrcMem, &pfx_0f_38_04),	/* PMADDUBSW */
+	GP(ModRM | DstReg | SrcMem, &pfx_0f_38_05),	/* PHSUBW */
+	GP(ModRM | DstReg | SrcMem, &pfx_0f_38_06),	/* PHSUBD */
+	GP(ModRM | DstReg | SrcMem, &pfx_0f_38_07),	/* PHSUBSW */
+	GP(ModRM | DstReg | SrcMem, &pfx_0f_38_08),	/* PSIGNB */
+	GP(ModRM | DstReg | SrcMem, &pfx_0f_38_09),	/* PSIGNW */
+	GP(ModRM | DstReg | SrcMem, &pfx_0f_38_0a),	/* PSIGND */
+	GP(ModRM | DstReg | SrcMem, &pfx_0f_38_0b),	/* PMULHRSW */
+	X4(N),
+	/* 0x10 - 0x1f */
+	GP(ModRM | DstReg | SrcMem, &pfx_0f_38_10),	/* PBLENDVB */
+	N, N, N,
+	GP(ModRM | DstReg | SrcMem, &pfx_0f_38_14),	/* BLENDVPS */
+	GP(ModRM | DstReg | SrcMem, &pfx_0f_38_15),	/* BLENDVPD */
+	N,
+	GP(ModRM | DstReg | SrcMem, &pfx_0f_38_17),	/* PTEST */
+	X4(N),
+	GP(ModRM | DstReg | SrcMem, &pfx_0f_38_1c),	/* PABSB */
+	GP(ModRM | DstReg | SrcMem, &pfx_0f_38_1d),	/* PABSW */
+	GP(ModRM | DstReg | SrcMem, &pfx_0f_38_1e),	/* PABSD */
+	N,
 	/* 0x20 - 0x2f */
-	X8(N),
-	X2(N), GP(SrcReg | DstMem | ModRM | Mov | Aligned, &pfx_0f_e7_0f_38_2a), N, N, N, N, N,
-	/* 0x30 - 0x7f */
-	X16(N), X16(N), X16(N), X16(N), X16(N),
-	/* 0x80 - 0xef */
-	X16(N), X16(N), X16(N), X16(N), X16(N), X16(N), X16(N),
+	GP(ModRM, &pfx_0f_38_20),	/* PMOVSXBW (src=dst/2, own fetch) */
+	GP(ModRM, &pfx_0f_38_21),	/* PMOVSXBD (src=dst/4, own fetch) */
+	GP(ModRM, &pfx_0f_38_22),	/* PMOVSXBQ (src=dst/8, own fetch) */
+	GP(ModRM, &pfx_0f_38_23),	/* PMOVSXWD (src=dst/2, own fetch) */
+	GP(ModRM, &pfx_0f_38_24),	/* PMOVSXWQ (src=dst/4, own fetch) */
+	GP(ModRM, &pfx_0f_38_25),	/* PMOVSXDQ (src=dst/2, own fetch) */
+	N, N,
+	GP(ModRM | DstReg | SrcMem, &pfx_0f_38_28),	/* PMULDQ */
+	GP(ModRM | DstReg | SrcMem, &pfx_0f_38_29),	/* PCMPEQQ */
+	GP(SrcReg | DstMem | ModRM | Mov | Aligned, &pfx_0f_e7_0f_38_2a),
+	GP(ModRM | DstReg | SrcMem, &pfx_0f_38_2b),	/* PACKUSDW */
+	N, N, N, N,
+	/* 0x30 - 0x3f */
+	GP(ModRM, &pfx_0f_38_30),	/* PMOVZXBW (src=dst/2, own fetch) */
+	GP(ModRM, &pfx_0f_38_31),	/* PMOVZXBD (src=dst/4, own fetch) */
+	GP(ModRM, &pfx_0f_38_32),	/* PMOVZXBQ (src=dst/8, own fetch) */
+	GP(ModRM, &pfx_0f_38_33),	/* PMOVZXWD (src=dst/2, own fetch) */
+	GP(ModRM, &pfx_0f_38_34),	/* PMOVZXWQ (src=dst/4, own fetch) */
+	GP(ModRM, &pfx_0f_38_35),	/* PMOVZXDQ (src=dst/2, own fetch) */
+	N,
+	GP(ModRM | DstReg | SrcMem, &pfx_0f_38_37),	/* PCMPGTQ */
+	GP(ModRM | DstReg | SrcMem, &pfx_0f_38_38),	/* PMINSB */
+	GP(ModRM | DstReg | SrcMem, &pfx_0f_38_39),	/* PMINSD */
+	GP(ModRM | DstReg | SrcMem, &pfx_0f_38_3a),	/* PMINUW */
+	GP(ModRM | DstReg | SrcMem, &pfx_0f_38_3b),	/* PMINUD */
+	GP(ModRM | DstReg | SrcMem, &pfx_0f_38_3c),	/* PMAXSB */
+	GP(ModRM | DstReg | SrcMem, &pfx_0f_38_3d),	/* PMAXSD */
+	GP(ModRM | DstReg | SrcMem, &pfx_0f_38_3e),	/* PMAXUW */
+	GP(ModRM | DstReg | SrcMem, &pfx_0f_38_3f),	/* PMAXUD */
+	/* 0x40 - 0x7f */
+	GP(ModRM | DstReg | SrcMem, &pfx_0f_38_40),	/* PMULLD */
+	GP(ModRM | DstReg | SrcMem, &pfx_0f_38_41),	/* PHMINPOSUW */
+	X6(N), X8(N), X16(N), X16(N), X16(N),
+	/* 0x80 - 0xbf */
+	X16(N), X16(N), X16(N), X16(N),
+	/* 0xc0 - 0xcf */
+	X16(N),
+	/* 0xd0 - 0xdf */
+	X8(N), X3(N),
+	GP(ModRM | DstReg | SrcMem, &pfx_0f_38_db),	/* AESIMC */
+	GP(ModRM | DstReg | SrcMem, &pfx_0f_38_dc),	/* AESENC */
+	GP(ModRM | DstReg | SrcMem, &pfx_0f_38_dd),	/* AESENCLAST */
+	GP(ModRM | DstReg | SrcMem, &pfx_0f_38_de),	/* AESDEC */
+	GP(ModRM | DstReg | SrcMem, &pfx_0f_38_df),	/* AESDECLAST */
+	/* 0xe0 - 0xef */
+	X16(N),
 	/* 0xf0 - 0xf1 */
 	GP(EmulateOnUD | ModRM, &three_byte_0f_38_f0),
 	GP(EmulateOnUD | ModRM, &three_byte_0f_38_f1),
 	/* 0xf2 - 0xff */
 	N, N, X4(N), X8(N)
+};
+
+/*
+ * 0F 3A instruction table (three-byte opcodes with imm8)
+ */
+/* 0F 3A 08: ROUNDPS */
+static const struct gprefix pfx_0f_3a_08 = {
+	N,
+	I(Sse | Avx, em_roundps),		/* 66: ROUNDPS */
+	N, N,
+};
+
+/* 0F 3A 09: ROUNDPD */
+static const struct gprefix pfx_0f_3a_09 = {
+	N,
+	I(Sse | Avx, em_roundpd),		/* 66: ROUNDPD */
+	N, N,
+};
+
+/* 0F 3A 0A: ROUNDSS */
+static const struct gprefix pfx_0f_3a_0a = {
+	N,
+	I(Sse | Avx | Src2VexReg, em_roundss),	/* 66: ROUNDSS */
+	N, N,
+};
+
+/* 0F 3A 0B: ROUNDSD */
+static const struct gprefix pfx_0f_3a_0b = {
+	N,
+	I(Sse | Avx | Src2VexReg, em_roundsd),	/* 66: ROUNDSD */
+	N, N,
+};
+
+/* 0F 3A 0C: BLENDPS */
+static const struct gprefix pfx_0f_3a_0c = {
+	N,
+	I(Sse | Avx | Src2VexReg, em_blendps),	/* 66: BLENDPS */
+	N, N,
+};
+
+/* 0F 3A 0D: BLENDPD */
+static const struct gprefix pfx_0f_3a_0d = {
+	N,
+	I(Sse | Avx | Src2VexReg, em_blendpd),	/* 66: BLENDPD */
+	N, N,
+};
+
+/* 0F 3A 0E: PBLENDW */
+static const struct gprefix pfx_0f_3a_0e = {
+	N,
+	I(Sse | Avx | Src2VexReg, em_pblendw),	/* 66: PBLENDW */
+	N, N,
+};
+
+/* 0F 3A 0F: PALIGNR */
+static const struct gprefix pfx_0f_3a_0f = {
+	N,
+	I(Sse | Avx | Src2VexReg, em_palignr),	/* 66: PALIGNR */
+	N, N,
+};
+
+/* 0F 3A 14: PEXTRB */
+static const struct gprefix pfx_0f_3a_14 = {
+	N,
+	I(Sse | Avx, em_pextrb),		/* 66: PEXTRB */
+	N, N,
+};
+
+/* 0F 3A 16: PEXTRD */
+static const struct gprefix pfx_0f_3a_16 = {
+	N,
+	I(Sse | Avx, em_pextrd),		/* 66: PEXTRD */
+	N, N,
+};
+
+/* 0F 3A 20: PINSRB */
+static const struct gprefix pfx_0f_3a_20 = {
+	N,
+	I(Sse | Avx | Src2VexReg, em_pinsrb),	/* 66: PINSRB */
+	N, N,
+};
+
+/* 0F 3A 22: PINSRD */
+static const struct gprefix pfx_0f_3a_22 = {
+	N,
+	I(Sse | Avx | Src2VexReg, em_pinsrd),	/* 66: PINSRD */
+	N, N,
+};
+
+/* 0F 3A 44: PCLMULQDQ */
+static const struct gprefix pfx_0f_3a_44 = {
+	N,
+	I(Sse | Avx | Src2VexReg, em_pclmulqdq),	/* 66: PCLMULQDQ */
+	N, N,
+};
+
+/* 0F 3A 63: PCMPISTRI */
+static const struct gprefix pfx_0f_3a_63 = {
+	N,
+	I(Sse | Avx, em_pcmpistri),		/* 66: PCMPISTRI */
+	N, N,
+};
+
+/* 0F 3A 15: PEXTRW (memory form) */
+static const struct gprefix pfx_0f_3a_15 = {
+	N,
+	I(Sse | Avx, em_pextrw_3a),		/* 66: PEXTRW */
+	N, N,
+};
+
+/* 0F 3A 17: EXTRACTPS */
+static const struct gprefix pfx_0f_3a_17 = {
+	N,
+	I(Sse | Avx, em_extractps),		/* 66: EXTRACTPS */
+	N, N,
+};
+
+/* 0F 3A 21: INSERTPS */
+static const struct gprefix pfx_0f_3a_21 = {
+	N,
+	I(Sse | Avx | Src2VexReg, em_insertps),	/* 66: INSERTPS */
+	N, N,
+};
+
+/* 0F 3A 40: DPPS */
+static const struct gprefix pfx_0f_3a_40 = {
+	N,
+	I(Sse | Avx | Src2VexReg, em_dpps),	/* 66: DPPS */
+	N, N,
+};
+
+/* 0F 3A 41: DPPD */
+static const struct gprefix pfx_0f_3a_41 = {
+	N,
+	I(Sse | Avx | Src2VexReg, em_dppd),	/* 66: DPPD */
+	N, N,
+};
+
+/* 0F 3A 42: MPSADBW */
+static const struct gprefix pfx_0f_3a_42 = {
+	N,
+	I(Sse | Avx | Src2VexReg, em_mpsadbw),	/* 66: MPSADBW */
+	N, N,
+};
+
+/* 0F 3A 60: PCMPESTRM */
+static const struct gprefix pfx_0f_3a_60 = {
+	N,
+	I(Sse | Avx, em_pcmpestrm),		/* 66: PCMPESTRM */
+	N, N,
+};
+
+/* 0F 3A 61: PCMPESTRI */
+static const struct gprefix pfx_0f_3a_61 = {
+	N,
+	I(Sse | Avx, em_pcmpestri),		/* 66: PCMPESTRI */
+	N, N,
+};
+
+/* 0F 3A 62: PCMPISTRM */
+static const struct gprefix pfx_0f_3a_62 = {
+	N,
+	I(Sse | Avx, em_pcmpistrm),		/* 66: PCMPISTRM */
+	N, N,
+};
+
+/* 0F 3A DF: AESKEYGENASSIST */
+static const struct gprefix pfx_0f_3a_df = {
+	N,
+	I(Sse | Avx, em_aeskeygenassist),	/* 66: AESKEYGENASSIST */
+	N, N,
+};
+
+static const struct opcode opcode_map_0f_3a[256] = {
+	/* 0x00 - 0x07 */
+	X8(N),
+	/* 0x08 - 0x0f */
+	GP(ModRM | DstReg | SrcMem, &pfx_0f_3a_08),	/* ROUNDPS */
+	GP(ModRM | DstReg | SrcMem, &pfx_0f_3a_09),	/* ROUNDPD */
+	GP(ModRM | DstReg | SrcMem, &pfx_0f_3a_0a),	/* ROUNDSS */
+	GP(ModRM | DstReg | SrcMem, &pfx_0f_3a_0b),	/* ROUNDSD */
+	GP(ModRM | DstReg | SrcMem, &pfx_0f_3a_0c),	/* BLENDPS */
+	GP(ModRM | DstReg | SrcMem, &pfx_0f_3a_0d),	/* BLENDPD */
+	GP(ModRM | DstReg | SrcMem, &pfx_0f_3a_0e),	/* PBLENDW */
+	GP(ModRM | DstReg | SrcMem, &pfx_0f_3a_0f),	/* PALIGNR */
+	/* 0x10 - 0x1f */
+	X4(N),
+	GP(ModRM | DstMem | SrcReg, &pfx_0f_3a_14),	/* PEXTRB */
+	GP(ModRM | DstMem | SrcReg, &pfx_0f_3a_15),	/* PEXTRW */
+	GP(ModRM | DstMem | SrcReg, &pfx_0f_3a_16),	/* PEXTRD */
+	GP(ModRM | DstMem | SrcReg, &pfx_0f_3a_17),	/* EXTRACTPS */
+	X8(N),
+	/* 0x20 - 0x2f */
+	GP(ModRM | DstReg | SrcMem, &pfx_0f_3a_20),	/* PINSRB */
+	GP(ModRM | DstReg | SrcMem, &pfx_0f_3a_21),	/* INSERTPS */
+	GP(ModRM | DstReg | SrcMem, &pfx_0f_3a_22),	/* PINSRD */
+	N, X4(N), X8(N),
+	/* 0x30 - 0x3f */
+	X16(N),
+	/* 0x40 - 0x4f */
+	GP(ModRM | DstReg | SrcMem, &pfx_0f_3a_40),	/* DPPS */
+	GP(ModRM | DstReg | SrcMem, &pfx_0f_3a_41),	/* DPPD */
+	GP(ModRM | DstReg | SrcMem, &pfx_0f_3a_42),	/* MPSADBW */
+	N,
+	GP(ModRM | DstReg | SrcMem, &pfx_0f_3a_44),	/* PCLMULQDQ */
+	X3(N), X8(N),
+	/* 0x50 - 0x5f */
+	X16(N),
+	/* 0x60 - 0x6f */
+	GP(ModRM | DstReg | SrcMem, &pfx_0f_3a_60),	/* PCMPESTRM */
+	GP(ModRM | DstReg | SrcMem, &pfx_0f_3a_61),	/* PCMPESTRI */
+	GP(ModRM | DstReg | SrcMem, &pfx_0f_3a_62),	/* PCMPISTRM */
+	GP(ModRM | DstReg | SrcMem, &pfx_0f_3a_63),	/* PCMPISTRI */
+	X4(N), X8(N),
+	/* 0x70 - 0xdf */
+	X16(N), X16(N), X16(N), X16(N), X16(N), X16(N),
+	/* 0xd0 - 0xde */
+	X8(N), X7(N),
+	GP(ModRM | DstReg | SrcMem, &pfx_0f_3a_df),	/* 0xDF: AESKEYGENASSIST */
+	/* 0xe0 - 0xff */
+	X16(N), X16(N),
 };
 
 #undef D
@@ -4609,6 +10611,13 @@ static int decode_operand(struct x86_emulate_ctxt *ctxt, struct operand *op,
 	switch (d) {
 	case OpReg:
 		decode_register_operand(ctxt, op);
+		break;
+	case OpVexReg:
+		if (!(ctxt->d & Avx)) {
+			op->type = OP_NONE;
+			break;
+		}
+		__decode_register_operand(ctxt, op, ctxt->vex_reg);
 		break;
 	case OpImmUByte:
 		rc = decode_imm(ctxt, op, 1, false);
@@ -4764,6 +10773,243 @@ done:
 	return rc;
 }
 
+static bool vex_uses_vvvv(u8 map, u8 pp, u8 opcode)
+{
+	if (map == 2) {
+		/* 0F 38 map */
+		switch (opcode) {
+		case 0x00:	/* VPSHUFB */
+		case 0x01:	/* VPHADDW */
+		case 0x02:	/* VPHADDD */
+		case 0x03:	/* VPHADDSW */
+		case 0x05:	/* VPHSUBW */
+		case 0x06:	/* VPHSUBD */
+		case 0x07:	/* VPHSUBSW */
+		case 0x08:	/* VPSIGNB */
+		case 0x09:	/* VPSIGNW */
+		case 0x0a:	/* VPSIGND */
+		case 0x0b:	/* VPMULHRSW */
+		case 0x04:	/* VPMADDUBSW */
+		case 0x10:	/* VPBLENDVB */
+		case 0x14:	/* VBLENDVPS */
+		case 0x15:	/* VBLENDVPD */
+		case 0x28:	/* VPMULDQ */
+		case 0x29:	/* VPCMPEQQ */
+		case 0x2b:	/* VPACKUSDW */
+		case 0x37:	/* VPCMPGTQ */
+		case 0x3f:	/* VPMAXUD */
+		case 0x40:	/* VPMULLD */
+		case 0x38:	/* VPMINSB */
+		case 0x39:	/* VPMINSD */
+		case 0x3a:	/* VPMINUW */
+		case 0x3b:	/* VPMINUD */
+		case 0x3c:	/* VPMAXSB */
+		case 0x3d:	/* VPMAXSD */
+		case 0x3e:	/* VPMAXUW */
+		case 0xdc:	/* VAESENC */
+		case 0xdd:	/* VAESENCLAST */
+		case 0xde:	/* VAESDEC */
+		case 0xdf:	/* VAESDECLAST */
+			return pp == 1;
+		default:
+			return false;
+		}
+	}
+
+	if (map == 3) {
+		/* 0F 3A map */
+		switch (opcode) {
+		case 0x0a:	/* VROUNDSS */
+		case 0x0b:	/* VROUNDSD */
+		case 0x0c:	/* VBLENDPS */
+		case 0x0d:	/* VBLENDPD */
+		case 0x0e:	/* VPBLENDW */
+		case 0x0f:	/* VPALIGNR */
+		case 0x20:	/* VPINSRB */
+		case 0x21:	/* VINSERTPS */
+		case 0x22:	/* VPINSRD */
+		case 0x40:	/* VDPPS */
+		case 0x41:	/* VDPPD */
+		case 0x42:	/* VMPSADBW */
+		case 0x44:	/* VPCLMULQDQ */
+			return pp == 1;
+		default:
+			return false;
+		}
+	}
+
+	if (map != 1)
+		return false;
+
+	switch (opcode) {
+	case 0x10:
+	case 0x11:
+		return pp == 2 || pp == 3;
+	case 0x12:
+	case 0x16:
+		return pp == 0 || pp == 1;
+	case 0x14:	/* VUNPCKLPS / VUNPCKLPD */
+	case 0x15:	/* VUNPCKHPS / VUNPCKHPD */
+		return pp == 0 || pp == 1;
+	case 0x2a:
+		return pp == 2 || pp == 3;
+	case 0x51:	/* VSQRTSS / VSQRTSD (VEX.vvvv for scalar only) */
+		return pp == 2 || pp == 3;
+	case 0x54:	/* VANDPS / VANDPD */
+	case 0x55:	/* VANDNPS / VANDNPD */
+	case 0x56:	/* VORPS / VORPD */
+	case 0x57:	/* VXORPS / VXORPD */
+		return pp == 0 || pp == 1;
+	case 0x58:	/* VADDPS/PD/SS/SD */
+	case 0x59:	/* VMULPS/PD/SS/SD */
+	case 0x5c:	/* VSUBPS/PD/SS/SD */
+	case 0x5d:	/* VMINPS/PD/SS/SD */
+	case 0x5e:	/* VDIVPS/PD/SS/SD */
+	case 0x5f:	/* VMAXPS/PD/SS/SD */
+		return true;
+	case 0x5a:	/* VCVTSS2SD / VCVTSD2SS */
+		return pp == 2 || pp == 3;
+	case 0x60:	/* VPUNPCKLBW */
+	case 0x61:	/* VPUNPCKLWD */
+	case 0x62:	/* VPUNPCKLDQ */
+	case 0x63:	/* VPACKSSWB */
+	case 0x64:	/* VPCMPGTB */
+	case 0x65:	/* VPCMPGTW */
+	case 0x66:	/* VPCMPGTD */
+	case 0x67:	/* VPACKUSWB */
+	case 0x68:	/* VPUNPCKHBW */
+	case 0x69:	/* VPUNPCKHWD */
+	case 0x6a:	/* VPUNPCKHDQ */
+	case 0x6b:	/* VPACKSSDW */
+	case 0x6c:	/* VPUNPCKLQDQ */
+	case 0x6d:	/* VPUNPCKHQDQ */
+		return pp == 1;
+	case 0x74:	/* VPCMPEQB */
+	case 0x75:	/* VPCMPEQW */
+	case 0x76:	/* VPCMPEQD */
+		return pp == 1;
+	case 0x7c:	/* VHADDPD (66) / VHADDPS (F2) */
+	case 0x7d:	/* VHSUBPD (66) / VHSUBPS (F2) */
+		return pp == 1 || pp == 3;
+	case 0xc2:	/* VCMPPS/PD/SS/SD */
+		return true;
+	case 0xc4:	/* VPINSRW */
+		return pp == 1;
+	case 0xc6:	/* VSHUFPS / VSHUFPD */
+		return pp == 0 || pp == 1;
+	case 0xd0:	/* VADDSUBPD (66) / VADDSUBPS (F2) */
+		return pp == 1 || pp == 3;
+	case 0xd1:	/* VPSRLW */
+	case 0xd2:	/* VPSRLD */
+	case 0xd3:	/* VPSRLQ */
+	case 0xd4:	/* VPADDQ */
+	case 0xd5:	/* VPMULLW */
+	case 0xd8:	/* VPSUBUSB */
+	case 0xd9:	/* VPSUBUSW */
+	case 0xda:	/* VPMINUB */
+	case 0xdb:	/* VPAND */
+	case 0xdc:	/* VPADDUSB */
+	case 0xdd:	/* VPADDUSW */
+	case 0xde:	/* VPMAXUB */
+	case 0xdf:	/* VPANDN */
+	case 0xe0:	/* VPAVGB */
+	case 0xe1:	/* VPSRAW */
+	case 0xe2:	/* VPSRAD */
+	case 0xe3:	/* VPAVGW */
+	case 0xe4:	/* VPMULHUW */
+	case 0xe5:	/* VPMULHW */
+	case 0xe8:	/* VPSUBSB */
+	case 0xe9:	/* VPSUBSW */
+	case 0xea:	/* VPMINSW */
+	case 0xeb:	/* VPOR */
+	case 0xec:	/* VPADDSB */
+	case 0xed:	/* VPADDSW */
+	case 0xee:	/* VPMAXSW */
+	case 0xef:	/* VPXOR */
+	case 0xf1:	/* VPSLLW */
+	case 0xf2:	/* VPSLLD */
+	case 0xf3:	/* VPSLLQ */
+	case 0xf4:	/* VPMULUDQ */
+	case 0xf5:	/* VPMADDWD */
+	case 0xf6:	/* VPSADBW */
+	case 0xf8:	/* VPSUBB */
+	case 0xf9:	/* VPSUBW */
+	case 0xfa:	/* VPSUBD */
+	case 0xfb:	/* VPSUBQ */
+	case 0xfc:	/* VPADDB */
+	case 0xfd:	/* VPADDW */
+	case 0xfe:	/* VPADDD */
+		return pp == 1;
+	default:
+		return false;
+	}
+}
+
+static bool vex_128_only(u8 map, u8 pp, u8 opcode)
+{
+	if (map == 2) {
+		/* 0F 38 map: AES-NI and PHMINPOSUW are 128-bit only */
+		switch (opcode) {
+		case 0x41:	/* VPHMINPOSUW */
+		case 0xdb:	/* VAESIMC */
+		case 0xdc:	/* VAESENC */
+		case 0xdd:	/* VAESENCLAST */
+		case 0xde:	/* VAESDEC */
+		case 0xdf:	/* VAESDECLAST */
+			return pp == 1;
+		default:
+			return false;
+		}
+	}
+
+	if (map == 3) {
+		/* 0F 3A map */
+		switch (opcode) {
+		case 0x21:	/* VINSERTPS */
+		case 0x41:	/* VDPPD */
+		case 0x44:	/* VPCLMULQDQ */
+		case 0x60:	/* VPCMPESTRM */
+		case 0x61:	/* VPCMPESTRI */
+		case 0x62:	/* VPCMPISTRM */
+		case 0x63:	/* VPCMPISTRI */
+		case 0xdf:	/* VAESKEYGENASSIST */
+			return pp == 1;
+		default:
+			return false;
+		}
+	}
+
+	if (map != 1)
+		return false;
+
+	switch (opcode) {
+	case 0x10:
+	case 0x11:
+		return pp == 2 || pp == 3;
+	case 0x12:
+	case 0x16:
+		return pp == 0 || pp == 1;
+	case 0x2a:
+		return pp == 2 || pp == 3;
+	case 0x2c:
+	case 0x2d:
+		return pp == 2 || pp == 3;
+	case 0x2e:
+	case 0x2f:
+		return pp == 0 || pp == 1;
+	case 0x51:
+		return pp == 2 || pp == 3;
+	case 0x6e:
+		return pp == 1;
+	case 0xd6:
+		return pp == 1;
+	case 0x7e:
+		return pp == 1 || pp == 2;
+	default:
+		return false;
+	}
+}
+
 static int x86_decode_avx(struct x86_emulate_ctxt *ctxt,
 			  u8 vex_1st, u8 vex_2nd, struct opcode *opcode)
 {
@@ -4795,6 +11041,7 @@ static int x86_decode_avx(struct x86_emulate_ctxt *ctxt,
 	v = (vex_3rd >> 3) & 0xf;
 	l = vex_3rd & 0x4;
 	pp = vex_3rd & 0x3;
+	ctxt->vex_reg = v;
 
 	ctxt->b = insn_fetch(u8, ctxt);
 	switch (map) {
@@ -4807,17 +11054,17 @@ static int x86_decode_avx(struct x86_emulate_ctxt *ctxt,
 		*opcode = opcode_map_0f_38[ctxt->b];
 		break;
 	case 3:
-		/* no 0f 3a instructions are supported yet */
-		return X86EMUL_UNHANDLEABLE;
+		ctxt->opcode_len = 3;
+		*opcode = opcode_map_0f_3a[ctxt->b];
+		break;
 	default:
 		goto ud;
 	}
 
-	/*
-	 * No three operand instructions are supported yet; those that
-	 * *are* marked with the Avx flag reserve the VVVV flag.
-	 */
-	if (v)
+	if (v && !vex_uses_vvvv(map, pp, ctxt->b))
+		goto ud;
+
+	if (l && vex_128_only(map, pp, ctxt->b))
 		goto ud;
 
 	if (l)
@@ -4987,6 +11234,13 @@ done_prefixes:
 			ctxt->b = insn_fetch(u8, ctxt);
 			opcode = opcode_map_0f_38[ctxt->b];
 		}
+
+		/* 0F_3A opcode map */
+		if (ctxt->b == 0x3a) {
+			ctxt->opcode_len = 3;
+			ctxt->b = insn_fetch(u8, ctxt);
+			opcode = opcode_map_0f_3a[ctxt->b];
+		}
 	} else {
 		/* Opcode byte(s). */
 		opcode = opcode_table[ctxt->b];
@@ -5073,6 +11327,8 @@ done_modrm:
 
 		if (!(ctxt->d & AlignMask))
 			ctxt->d |= Unaligned;
+	} else {
+		ctxt->d &= ~Avx;
 	}
 
 	ctxt->execute = opcode.u.execute;
@@ -5148,7 +11404,7 @@ done_modrm:
 		if (vex_prefix)
 			;
 		else if (ctxt->d & Sse)
-			ctxt->op_bytes = 16, ctxt->d &= ~Avx;
+			ctxt->op_bytes = 16;
 		else if (ctxt->d & Mmx)
 			ctxt->op_bytes = 8;
 	}
@@ -5189,9 +11445,12 @@ done_modrm:
 	/* Decode and fetch the destination operand: register or memory. */
 	rc = decode_operand(ctxt, &ctxt->dst, (ctxt->d >> DstShift) & OpMask);
 
-	if (ctxt->rip_relative && likely(ctxt->memopp))
-		ctxt->memopp->addr.mem.ea = address_mask(ctxt,
-					ctxt->memopp->addr.mem.ea + ctxt->_eip);
+	if (ctxt->rip_relative) {
+		struct segmented_address *addr = likely(ctxt->memopp) ?
+			&ctxt->memopp->addr.mem : &ctxt->memop.addr.mem;
+
+		addr->ea = address_mask(ctxt, addr->ea + ctxt->_eip);
+	}
 
 done:
 	if (rc == X86EMUL_PROPAGATE_FAULT)
@@ -5253,6 +11512,7 @@ void init_decode_cache(struct x86_emulate_ctxt *ctxt)
 	ctxt->lock_prefix = 0;
 	ctxt->op_prefix = false;
 	ctxt->rep_prefix = 0;
+	ctxt->vex_reg = 0;
 	ctxt->regs_valid = 0;
 	ctxt->regs_dirty = 0;
 

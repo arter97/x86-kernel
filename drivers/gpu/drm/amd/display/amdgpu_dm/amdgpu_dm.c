@@ -2079,6 +2079,11 @@ static int amdgpu_dm_init(struct amdgpu_device *adev)
 		init_data.flags.unify_link_enc_assignment = true;
 		init_data.flags.usb4_bw_alloc_support = true;
 	}
+
+	/* DCN201 audio desyncs using DP SS */
+	if (adev->apu_flags & AMD_APU_IS_CYAN_SKILLFISH2)
+		init_data.flags.ignore_dpref_ss = true;
+
 	retrieve_dmi_info(&adev->dm);
 	if (adev->dm.edp0_on_dp1_quirk)
 		init_data.flags.support_edp0_on_dp1 = true;
@@ -5401,11 +5406,11 @@ amdgpu_dm_register_backlight_device(struct amdgpu_dm_connector *aconnector)
 	caps = &dm->backlight_caps[aconnector->bl_idx];
 	if (get_brightness_range(caps, &min, &max)) {
 		if (power_supply_is_system_supplied() > 0)
-			props.brightness = DIV_ROUND_CLOSEST(max * caps->ac_level, 100);
+			props.brightness = DIV_ROUND_CLOSEST((max - min) * caps->ac_level, 100);
 		else
-			props.brightness = DIV_ROUND_CLOSEST(max * caps->dc_level, 100);
+			props.brightness = DIV_ROUND_CLOSEST((max - min) * caps->dc_level, 100);
 		/* min is zero, so max needs to be adjusted */
-		props.max_brightness = max;
+		props.max_brightness = max - min;
 		drm_dbg(drm, "Backlight caps: min: %d, max: %d, ac %d, dc %d\n", min, max,
 			caps->ac_level, caps->dc_level);
 	} else

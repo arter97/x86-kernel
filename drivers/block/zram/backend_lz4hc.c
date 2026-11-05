@@ -44,7 +44,11 @@ static int lz4hc_setup_params(struct zcomp_params *params)
 	if (!dict_stream)
 		return -ENOMEM;
 
-	LZ4_resetStreamHC(dict_stream, params->level);
+	if (!LZ4_initStreamHC(dict_stream, sizeof(*dict_stream))) {
+		vfree(dict_stream);
+		return -EINVAL;
+	}
+	LZ4_resetStreamHC_fast(dict_stream, params->level);
 	ret = LZ4_loadDictHC(dict_stream, params->dict, params->dict_sz);
 	if (ret != params->dict_sz) {
 		vfree(dict_stream);

@@ -222,6 +222,7 @@ int of_pci_range_to_resource(const struct of_pci_range *range,
 	u64 start;
 	int err;
 	res->flags = range->flags;
+	res->desc = IORES_DESC_NONE;
 	res->parent = res->child = res->sibling = NULL;
 	res->name = np->full_name;
 

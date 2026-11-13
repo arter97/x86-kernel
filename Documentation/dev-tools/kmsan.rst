@@ -124,7 +124,7 @@ In order for KMSAN to work the kernel must be built with Clang, which so far is
 the only compiler that has KMSAN support. The kernel instrumentation pass is
 based on the userspace `MemorySanitizer tool`_.
 
-The runtime library only supports x86_64 at the moment.
+The runtime library supports x86_64, s390 and arm64 at the moment.
 
 How KMSAN works
 ===============
@@ -416,8 +416,8 @@ range, its shadow and origin. KMSAN reduces the vmalloc area by 3/4, making only
 the first quarter available to ``vmalloc()``. The second quarter of the vmalloc
 area contains shadow memory for the first quarter, the third one holds the
 origins. A small part of the fourth quarter contains shadow and origins for the
-kernel modules. Please refer to ``arch/x86/include/asm/pgtable_64_types.h`` for
-more details.
+kernel modules. Please refer to ``arch/x86/include/asm/pgtable_64_types.h`` and
+``arch/arm64/include/asm/pgtable.h`` for more details.
 
 When an array of pages is mapped into a contiguous virtual memory space, their
 shadow and origin pages are similarly mapped into contiguous regions.

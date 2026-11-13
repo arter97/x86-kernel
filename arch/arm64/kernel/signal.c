@@ -310,6 +310,13 @@ static int read_fpsimd_context(struct user_fpsimd_state *fpsimd,
 	__get_user_error(fpsimd->fpsr, &(user->fpsimd->fpsr), err);
 	__get_user_error(fpsimd->fpcr, &(user->fpsimd->fpcr), err);
 
+	/*
+	 * The signal frame has no counterpart of the reserved fields, but the
+	 * whole structure ends up in the task's FPSIMD state, which is visible
+	 * to userspace via ptrace. Do not leak stack contents there.
+	 */
+	memset(fpsimd->__reserved, 0, sizeof(fpsimd->__reserved));
+
 	return err ? -EFAULT : 0;
 }
 

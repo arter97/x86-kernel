@@ -185,7 +185,10 @@ static noinstr irqentry_state_t arm64_enter_el1_dbg(struct pt_regs *regs)
 	lockdep_hardirqs_off(CALLER_ADDR0);
 	ct_nmi_enter();
 
+	instrumentation_begin();
+	kmsan_unpoison_entry_regs(regs);
 	trace_hardirqs_off_finish();
+	instrumentation_end();
 
 	return state;
 }

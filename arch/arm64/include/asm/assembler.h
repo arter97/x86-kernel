@@ -520,7 +520,13 @@ alternative_else_nop_endif
 #define NOKPROBE(x)
 #endif
 
-#if defined(CONFIG_KASAN_GENERIC) || defined(CONFIG_KASAN_SW_TAGS)
+/*
+ * With KASAN and KMSAN, the generic C implementations of the string functions
+ * are used instead of the assembly ones, so that they can be instrumented.
+ * The assembly ones are still built, but they must not be exported.
+ */
+#if defined(CONFIG_KASAN_GENERIC) || defined(CONFIG_KASAN_SW_TAGS) || \
+	defined(CONFIG_KMSAN)
 #define EXPORT_SYMBOL_NOKASAN(name)
 #else
 #define EXPORT_SYMBOL_NOKASAN(name)	EXPORT_SYMBOL(name)

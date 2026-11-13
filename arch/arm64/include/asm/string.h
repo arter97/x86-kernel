@@ -5,7 +5,12 @@
 #ifndef __ASM_STRING_H
 #define __ASM_STRING_H
 
-#if !(defined(CONFIG_KASAN_GENERIC) || defined(CONFIG_KASAN_SW_TAGS))
+/*
+ * KASAN and KMSAN need the string functions to be instrumented, so use the
+ * generic C implementations from lib/string.c instead of the assembly ones.
+ */
+#if !(defined(CONFIG_KASAN_GENERIC) || defined(CONFIG_KASAN_SW_TAGS) || \
+      defined(CONFIG_KMSAN))
 #define __HAVE_ARCH_STRRCHR
 extern char *strrchr(const char *, int c);
 

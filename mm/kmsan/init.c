@@ -82,8 +82,12 @@ void __init kmsan_init_shadow(void)
 	for_each_reserved_mem_range(loop, &p_start, &p_end)
 		kmsan_record_future_shadow_range(phys_to_virt(p_start),
 						 phys_to_virt(p_end));
-	/* Allocate shadow for .data */
-	kmsan_record_future_shadow_range(_sdata, _edata);
+	/*
+	 * Allocate shadow for .data. Use its linear map alias, because the
+	 * metadata is looked up via struct page, and some architectures (e.g.
+	 * arm64) map the kernel image outside of the linear map.
+	 */
+	kmsan_record_future_shadow_range(lm_alias(_sdata), lm_alias(_edata));
 
 	for_each_online_node(nid)
 		kmsan_record_future_shadow_range(

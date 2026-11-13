@@ -21,12 +21,40 @@
  * VMALLOC_END: extends to the available space below vmemmap
  */
 #define VMALLOC_START		(MODULES_END)
+#ifndef CONFIG_KMSAN
 #if VA_BITS == VA_BITS_MIN
 #define VMALLOC_END		(VMEMMAP_START - SZ_8M)
 #else
 #define VMEMMAP_UNUSED_NPAGES	((_PAGE_OFFSET(vabits_actual) - PAGE_OFFSET) >> PAGE_SHIFT)
 #define VMALLOC_END		(VMEMMAP_START + VMEMMAP_UNUSED_NPAGES * sizeof(struct page) - SZ_8M)
 #endif
+#else /* CONFIG_KMSAN */
+/*
+ * KMSAN keeps the metadata (shadow and origins) of vmalloc and module memory
+ * at fixed offsets from the memory itself, so in KMSAN builds the space below
+ * vmemmap is split into four parts of KMSAN_VMALLOC_SIZE each:
+ *
+ * 1st part: VMALLOC_START..VMALLOC_END - the actual vmalloc area
+ * 2nd part: KMSAN_VMALLOC_SHADOW_START - shadow for the vmalloc area
+ * 3rd part: KMSAN_VMALLOC_ORIGIN_START - origins for the vmalloc area
+ * 4th part: KMSAN_MODULES_SHADOW_START - shadow for the modules area,
+ *           KMSAN_MODULES_ORIGIN_START - origins for the modules area
+ *
+ * The size of the area below vmemmap is taken for VA_BITS_MIN, so the layout
+ * does not depend on vabits_actual. The parts are PUD-aligned, so that huge
+ * vmalloc mappings have suitably aligned metadata.
+ *
+ * The kernel image also lives in the vmalloc area. Since KASLR places it
+ * relative to VMALLOC_END, it automatically stays within the 1st part.
+ */
+#define KMSAN_VMALLOC_SIZE	(((VMEMMAP_START - SZ_8M - VMALLOC_START) / 4) & PUD_MASK)
+#define VMALLOC_END		(VMALLOC_START + KMSAN_VMALLOC_SIZE)
+#define KMSAN_VMALLOC_SHADOW_START	(VMALLOC_END)
+#define KMSAN_VMALLOC_ORIGIN_START	(KMSAN_VMALLOC_SHADOW_START + KMSAN_VMALLOC_SIZE)
+#define KMSAN_MODULES_SHADOW_START	(KMSAN_VMALLOC_ORIGIN_START + KMSAN_VMALLOC_SIZE)
+#define KMSAN_MODULES_ORIGIN_START	(KMSAN_MODULES_SHADOW_START + MODULES_VSIZE)
+#define KMSAN_MODULES_ORIGIN_END	(KMSAN_MODULES_ORIGIN_START + MODULES_VSIZE)
+#endif /* CONFIG_KMSAN */
 
 #define vmemmap			((struct page *)VMEMMAP_START - (memstart_addr >> PAGE_SHIFT))
 

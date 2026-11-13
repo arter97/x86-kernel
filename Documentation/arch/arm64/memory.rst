@@ -33,6 +33,14 @@ ARM64_SPECTRE_V3A is enabled for particular CPUs.
 When using KVM with the Virtualization Host Extensions, no additional
 mappings are created, since the host kernel runs directly in EL2.
 
+When KMSAN is enabled, the space between the start of the vmalloc area
+and vmemmap is split into four equally sized parts: the vmalloc area
+proper, the KMSAN shadow for it, the KMSAN origins for it, and the KMSAN
+shadow and origins for the modules area. The vmalloc area is therefore
+about four times smaller than usual, and its size does not depend on
+whether 52-bit VAs are supported at runtime. See the KMSAN_* definitions
+in arch/arm64/include/asm/pgtable.h for details.
+
 52-bit VA support in the kernel
 -------------------------------
 If the ARMv8.2-LVA optional feature is present, and we are running

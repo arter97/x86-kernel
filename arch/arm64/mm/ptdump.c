@@ -394,6 +394,13 @@ static int __init ptdump_init(void)
 		{ MODULES_END,		"Modules end" },
 		{ VMALLOC_START,	"vmalloc() area" },
 		{ VMALLOC_END,		"vmalloc() end" },
+#ifdef CONFIG_KMSAN
+		{ KMSAN_VMALLOC_SHADOW_START,	"Kmsan vmalloc shadow start" },
+		{ KMSAN_VMALLOC_ORIGIN_START,	"Kmsan vmalloc origin start" },
+		{ KMSAN_MODULES_SHADOW_START,	"Kmsan modules shadow start" },
+		{ KMSAN_MODULES_ORIGIN_START,	"Kmsan modules origin start" },
+		{ KMSAN_MODULES_ORIGIN_END,	"Kmsan modules origin end" },
+#endif
 		{ vmemmap_start,	"vmemmap start" },
 		{ VMEMMAP_END,		"vmemmap end" },
 		{ PCI_IO_START,		"PCI I/O start" },

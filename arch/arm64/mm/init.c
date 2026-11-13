@@ -369,6 +369,11 @@ void __init arch_mm_preinit(void)
 	BUILD_BUG_ON(ARM64_HW_PGTABLE_LEVELS(CONFIG_ARM64_VA_BITS) !=
 		     CONFIG_PGTABLE_LEVELS);
 
+#ifdef CONFIG_KMSAN
+	/* KMSAN metadata areas must fit below vmemmap, see asm/pgtable.h. */
+	BUILD_BUG_ON(KMSAN_MODULES_ORIGIN_END > VMEMMAP_START - SZ_8M);
+#endif
+
 	if (PAGE_SIZE >= 16384 && get_num_physpages() <= 128) {
 		extern int sysctl_overcommit_memory;
 		/*

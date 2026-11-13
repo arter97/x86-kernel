@@ -166,6 +166,14 @@ void kmsan_internal_check_memory(void *addr, size_t size,
 				 const void __user *user_addr, int reason);
 
 struct page *kmsan_vmalloc_to_page_or_null(void *vaddr);
+
+/*
+ * Return the address of the shadow or origins of @addr inside the vmalloc or
+ * module metadata areas, or 0 if @addr belongs to neither the vmalloc nor the
+ * module area. Unlike kmsan_get_metadata(), does not handle any special ranges,
+ * nor check whether the metadata is actually mapped.
+ */
+unsigned long kmsan_vmalloc_meta(void *addr, bool is_origin);
 void kmsan_setup_meta(struct page *page, struct page *shadow,
 		      struct page *origin, int order);
 

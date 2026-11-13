@@ -53,7 +53,7 @@ static void set_no_shadow_origin_page(struct page *page)
 static char dummy_load_page[PAGE_SIZE] __aligned(PAGE_SIZE);
 static char dummy_store_page[PAGE_SIZE] __aligned(PAGE_SIZE);
 
-static unsigned long vmalloc_meta(void *addr, bool is_origin)
+unsigned long kmsan_vmalloc_meta(void *addr, bool is_origin)
 {
 	unsigned long addr64 = (unsigned long)addr, off;
 
@@ -131,13 +131,18 @@ void *kmsan_get_metadata(void *address, bool is_origin)
 	if (is_origin)
 		addr = ALIGN_DOWN(addr, KMSAN_ORIGIN_SIZE);
 	address = (void *)addr;
-	if (kmsan_internal_is_vmalloc_addr(address) ||
-	    kmsan_internal_is_module_addr(address))
-		return (void *)vmalloc_meta(address, is_origin);
-
+	/*
+	 * Let the architecture handle special ranges first: some of them (e.g.
+	 * the kernel image on arm64) may overlap with the vmalloc area, but
+	 * have no metadata mapped at kmsan_vmalloc_meta().
+	 */
 	ret = arch_kmsan_get_meta_or_null(address, is_origin);
 	if (ret)
 		return ret;
+
+	if (kmsan_internal_is_vmalloc_addr(address) ||
+	    kmsan_internal_is_module_addr(address))
+		return (void *)kmsan_vmalloc_meta(address, is_origin);
 
 	page = virt_to_page_or_null(address);
 	if (!page)
@@ -230,7 +235,7 @@ int kmsan_vmap_pages_range_noflush(unsigned long start, unsigned long end,
 	 * its range from @end, which may lie right past the end of the vmalloc
 	 * area (e.g. for percpu chunks, which are allocated at its very top).
 	 */
-	shadow_start = vmalloc_meta((void *)start, KMSAN_META_SHADOW);
+	shadow_start = kmsan_vmalloc_meta((void *)start, KMSAN_META_SHADOW);
 	if (!shadow_start)
 		return 0;
 	shadow_end = shadow_start + (end - start);
@@ -248,7 +253,7 @@ int kmsan_vmap_pages_range_noflush(unsigned long start, unsigned long end,
 	}
 	prot = PAGE_KERNEL;
 
-	origin_start = vmalloc_meta((void *)start, KMSAN_META_ORIGIN);
+	origin_start = kmsan_vmalloc_meta((void *)start, KMSAN_META_ORIGIN);
 	origin_end = origin_start + (end - start);
 	kmsan_enter_runtime();
 	mapped = __vmap_pages_range_noflush(shadow_start, shadow_end, prot,

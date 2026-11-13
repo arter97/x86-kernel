@@ -126,14 +126,12 @@ void kmsan_kfree_large(const void *ptr)
 
 static unsigned long vmalloc_shadow(unsigned long addr)
 {
-	return (unsigned long)kmsan_get_metadata((void *)addr,
-						 KMSAN_META_SHADOW);
+	return kmsan_vmalloc_meta((void *)addr, KMSAN_META_SHADOW);
 }
 
 static unsigned long vmalloc_origin(unsigned long addr)
 {
-	return (unsigned long)kmsan_get_metadata((void *)addr,
-						 KMSAN_META_ORIGIN);
+	return kmsan_vmalloc_meta((void *)addr, KMSAN_META_ORIGIN);
 }
 
 /*

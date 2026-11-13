@@ -135,6 +135,16 @@ static unsigned long vmalloc_origin(unsigned long addr)
 }
 
 /*
+ * Only the vmalloc and module areas have corresponding metadata areas. Other
+ * ranges may also be mapped via the vmap API, e.g. the PCI I/O space on arm64
+ * via pci_remap_iospace(), but KMSAN does not track them.
+ */
+static bool has_vmalloc_meta(unsigned long addr)
+{
+	return vmalloc_shadow(addr);
+}
+
+/*
  * The metadata of [start, end) is contiguous, so the end of its range is
  * computed from @start. @end itself may lie right past the end of the vmalloc
  * area (e.g. for percpu chunks, which are allocated at its very top), so it
@@ -145,6 +155,9 @@ void kmsan_vunmap_range_noflush(unsigned long start, unsigned long end)
 	unsigned long shadow = vmalloc_shadow(start);
 	unsigned long origin = vmalloc_origin(start);
 	unsigned long size = end - start;
+
+	if (!has_vmalloc_meta(start))
+		return;
 
 	__vunmap_range_noflush(shadow, shadow + size);
 	__vunmap_range_noflush(origin, origin + size);
@@ -199,6 +212,8 @@ int kmsan_ioremap_page_range(unsigned long start, unsigned long end,
 
 	if (!kmsan_enabled || kmsan_in_runtime())
 		return 0;
+	if (!has_vmalloc_meta(start))
+		return 0;
 
 	nr = (end - start) / PAGE_SIZE;
 	kmsan_enter_runtime();
@@ -251,6 +266,8 @@ ret:
 void kmsan_iounmap_page_range(unsigned long start, unsigned long end)
 {
 	if (!kmsan_enabled || kmsan_in_runtime())
+		return;
+	if (!has_vmalloc_meta(start))
 		return;
 
 	kmsan_enter_runtime();

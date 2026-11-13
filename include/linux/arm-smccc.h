@@ -453,6 +453,11 @@ struct arm_smccc_1_2_regs {
 	unsigned long a17;
 };
 
+asmlinkage void __arm_smccc_1_2_hvc(const struct arm_smccc_1_2_regs *args,
+				    struct arm_smccc_1_2_regs *res);
+asmlinkage void __arm_smccc_1_2_smc(const struct arm_smccc_1_2_regs *args,
+				    struct arm_smccc_1_2_regs *res);
+
 /**
  * arm_smccc_1_2_hvc() - make HVC calls
  * @args: arguments passed via struct arm_smccc_1_2_regs
@@ -464,8 +469,13 @@ struct arm_smccc_1_2_regs {
  * are updated with the content from registers on return from the HVC
  * instruction.
  */
-asmlinkage void arm_smccc_1_2_hvc(const struct arm_smccc_1_2_regs *args,
-				  struct arm_smccc_1_2_regs *res);
+static inline void arm_smccc_1_2_hvc(const struct arm_smccc_1_2_regs *args,
+				     struct arm_smccc_1_2_regs *res)
+{
+	__arm_smccc_1_2_hvc(args, res);
+	/* *res is written by assembly code, which KMSAN does not see. */
+	kmsan_unpoison_memory(res, sizeof(*res));
+}
 
 /**
  * arm_smccc_1_2_smc() - make SMC calls
@@ -478,8 +488,13 @@ asmlinkage void arm_smccc_1_2_hvc(const struct arm_smccc_1_2_regs *args,
  * are updated with the content from registers on return from the SMC
  * instruction.
  */
-asmlinkage void arm_smccc_1_2_smc(const struct arm_smccc_1_2_regs *args,
-				  struct arm_smccc_1_2_regs *res);
+static inline void arm_smccc_1_2_smc(const struct arm_smccc_1_2_regs *args,
+				     struct arm_smccc_1_2_regs *res)
+{
+	__arm_smccc_1_2_smc(args, res);
+	/* *res is written by assembly code, which KMSAN does not see. */
+	kmsan_unpoison_memory(res, sizeof(*res));
+}
 #endif
 
 /**

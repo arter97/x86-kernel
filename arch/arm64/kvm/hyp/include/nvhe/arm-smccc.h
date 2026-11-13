@@ -13,10 +13,14 @@
 		trace_hyp_enter(NULL, HYP_REASON_SMC);		\
 	} while (0)
 
+/*
+ * Use __arm_smccc_1_2_smc() directly: the wrapper notifies KMSAN about the
+ * results, which is not possible (nor needed) at EL2.
+ */
 #define hyp_smccc_1_2_smc(...)					\
 	do {							\
 		trace_hyp_exit(NULL, HYP_REASON_SMC);		\
-		arm_smccc_1_2_smc(__VA_ARGS__);			\
+		__arm_smccc_1_2_smc(__VA_ARGS__);		\
 		trace_hyp_enter(NULL, HYP_REASON_SMC);		\
 	} while (0)
 

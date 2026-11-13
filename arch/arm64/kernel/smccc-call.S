@@ -84,19 +84,19 @@ EXPORT_SYMBOL(__arm_smccc_hvc)
 .endm
 
 /*
- * void arm_smccc_1_2_hvc(const struct arm_smccc_1_2_regs *args,
- *			  struct arm_smccc_1_2_regs *res);
+ * void __arm_smccc_1_2_hvc(const struct arm_smccc_1_2_regs *args,
+ *			    struct arm_smccc_1_2_regs *res);
  */
-SYM_FUNC_START(arm_smccc_1_2_hvc)
+SYM_FUNC_START(__arm_smccc_1_2_hvc)
 	SMCCC_1_2 hvc
-SYM_FUNC_END(arm_smccc_1_2_hvc)
-EXPORT_SYMBOL(arm_smccc_1_2_hvc)
+SYM_FUNC_END(__arm_smccc_1_2_hvc)
+EXPORT_SYMBOL(__arm_smccc_1_2_hvc)
 
 /*
- * void arm_smccc_1_2_smc(const struct arm_smccc_1_2_regs *args,
- *			  struct arm_smccc_1_2_regs *res);
+ * void __arm_smccc_1_2_smc(const struct arm_smccc_1_2_regs *args,
+ *			    struct arm_smccc_1_2_regs *res);
  */
-SYM_FUNC_START(arm_smccc_1_2_smc)
+SYM_FUNC_START(__arm_smccc_1_2_smc)
 	SMCCC_1_2 smc
-SYM_FUNC_END(arm_smccc_1_2_smc)
-EXPORT_SYMBOL(arm_smccc_1_2_smc)
+SYM_FUNC_END(__arm_smccc_1_2_smc)
+EXPORT_SYMBOL(__arm_smccc_1_2_smc)

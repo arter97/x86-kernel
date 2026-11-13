@@ -9,6 +9,7 @@
 #include <linux/init.h>
 
 #ifndef __ASSEMBLY__
+#include <linux/kmsan-checks.h>
 #include <linux/uuid.h>
 #endif
 
@@ -538,13 +539,25 @@ asmlinkage void __arm_smccc_hvc(unsigned long a0, unsigned long a1,
 			unsigned long a5, unsigned long a6, unsigned long a7,
 			struct arm_smccc_res *res, struct arm_smccc_quirk *quirk);
 
-#define arm_smccc_smc(...) __arm_smccc_smc(__VA_ARGS__, NULL)
+/*
+ * The results are written to *res by assembly code, which KMSAN does not see,
+ * so tell it that they are initialized.
+ */
+#define __arm_smccc_call(fn, a0, a1, a2, a3, a4, a5, a6, a7, res, quirk)	\
+	({									\
+		struct arm_smccc_res *___res = (res);				\
+										\
+		fn(a0, a1, a2, a3, a4, a5, a6, a7, ___res, quirk);		\
+		kmsan_unpoison_memory(___res, sizeof(*___res));			\
+	})
 
-#define arm_smccc_smc_quirk(...) __arm_smccc_smc(__VA_ARGS__)
+#define arm_smccc_smc(...) __arm_smccc_call(__arm_smccc_smc, __VA_ARGS__, NULL)
 
-#define arm_smccc_hvc(...) __arm_smccc_hvc(__VA_ARGS__, NULL)
+#define arm_smccc_smc_quirk(...) __arm_smccc_call(__arm_smccc_smc, __VA_ARGS__)
 
-#define arm_smccc_hvc_quirk(...) __arm_smccc_hvc(__VA_ARGS__)
+#define arm_smccc_hvc(...) __arm_smccc_call(__arm_smccc_hvc, __VA_ARGS__, NULL)
+
+#define arm_smccc_hvc_quirk(...) __arm_smccc_call(__arm_smccc_hvc, __VA_ARGS__)
 
 /* SMCCC v1.1 implementation madness follows */
 #ifdef CONFIG_ARM64

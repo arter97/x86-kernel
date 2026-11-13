@@ -7,6 +7,7 @@
  */
 
 #include <linux/bitops.h>
+#include <linux/kmsan.h>
 #include <linux/mm.h>
 
 #include <asm/page.h>
@@ -23,6 +24,7 @@ void copy_highpage(struct page *to, struct page *from)
 	unsigned int i, nr_pages;
 
 	copy_page(kto, kfrom);
+	kmsan_copy_page_meta(to, from);
 
 	if (kasan_hw_tags_enabled())
 		page_kasan_tag_reset(to);

@@ -24,14 +24,21 @@
 
 #define origin_page_for(page) ((page)->kmsan_origin)
 
+/*
+ * Metadata pages always belong to the linear map, so compute their addresses
+ * directly instead of using page_address(). The latter may call pfn_valid()
+ * (e.g. via page_to_phys() with CONFIG_DEBUG_VIRTUAL=y), which is a preemption
+ * point. Rescheduling from here would call into instrumented code, which would
+ * in turn look up metadata again, recursing until the stack overflows.
+ */
 static void *shadow_ptr_for(struct page *page)
 {
-	return page_address(shadow_page_for(page));
+	return __va(PFN_PHYS(page_to_pfn(shadow_page_for(page))));
 }
 
 static void *origin_ptr_for(struct page *page)
 {
-	return page_address(origin_page_for(page));
+	return __va(PFN_PHYS(page_to_pfn(origin_page_for(page))));
 }
 
 static bool page_has_metadata(struct page *page)

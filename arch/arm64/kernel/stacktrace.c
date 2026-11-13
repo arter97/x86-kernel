@@ -474,6 +474,12 @@ static bool dump_backtrace_entry(const struct kunwind_state *state, void *arg)
 	return true;
 }
 
+/*
+ * This function reads frame records from the stack, which may not have their
+ * KMSAN shadow set up properly, resulting in false positive reports. The other
+ * users of kunwind_stack_walk() are noinstr, so they are not affected.
+ */
+__no_kmsan_checks
 void dump_backtrace(struct pt_regs *regs, struct task_struct *tsk,
 		    const char *loglvl)
 {

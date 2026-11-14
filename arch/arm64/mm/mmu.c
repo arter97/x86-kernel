@@ -26,6 +26,7 @@
 #include <linux/set_memory.h>
 #include <linux/suspend.h>
 #include <linux/kfence.h>
+#include <linux/kmsan-checks.h>
 #include <linux/pkeys.h>
 #include <linux/mm_inline.h>
 #include <linux/pagewalk.h>
@@ -552,6 +553,13 @@ static phys_addr_t __pgd_pgtable_alloc(struct mm_struct *mm, gfp_t gfp,
 		return INVALID_PHYS_ADDR;
 
 	pa = page_to_phys(ptdesc_page(ptdesc));
+
+	/*
+	 * Callers either fill in every entry, or clear the table with
+	 * clear_page() and write its entries through the fixmap. KMSAN sees
+	 * neither of the latter, so mark the table as initialized here.
+	 */
+	kmsan_unpoison_memory(page_address(ptdesc_page(ptdesc)), PAGE_SIZE);
 
 	switch (pgtable_level) {
 	case PGTABLE_LEVEL_PTE:

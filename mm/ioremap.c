@@ -11,6 +11,7 @@
 #include <linux/io.h>
 #include <linux/export.h>
 #include <linux/ioremap.h>
+#include <linux/kmsan.h>
 
 void __iomem *generic_ioremap_prot(phys_addr_t phys_addr, size_t size,
 				   pgprot_t prot)
@@ -60,9 +61,22 @@ EXPORT_SYMBOL(ioremap_prot);
 void generic_iounmap(volatile void __iomem *addr)
 {
 	void *vaddr = (void *)((unsigned long)addr & PAGE_MASK);
+	struct vm_struct *area;
 
-	if (is_ioremap_addr(vaddr))
-		vunmap(vaddr);
+	if (!is_ioremap_addr(vaddr))
+		return;
+
+	/*
+	 * ioremap_page_range() allocated KMSAN metadata for the mapping, which
+	 * vunmap() would only unmap. Free it while the area is still there.
+	 */
+	if (IS_ENABLED(CONFIG_KMSAN)) {
+		area = find_vm_area(vaddr);
+		if (area)
+			kmsan_iounmap_page_range((unsigned long)vaddr,
+				(unsigned long)vaddr + get_vm_area_size(area));
+	}
+	vunmap(vaddr);
 }
 
 #ifndef iounmap

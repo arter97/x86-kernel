@@ -442,7 +442,7 @@ int rtc_read_alarm(struct rtc_device *rtc, struct rtc_wkalrm *alarm)
 	}
 	mutex_unlock(&rtc->ops_lock);
 
-	trace_rtc_read_alarm(rtc_tm_to_time64(&alarm->time), err);
+	trace_rtc_read_alarm(err ? 0 : rtc_tm_to_time64(&alarm->time), err);
 	return err;
 }
 EXPORT_SYMBOL_GPL(rtc_read_alarm);

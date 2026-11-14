@@ -165,8 +165,6 @@ void kmsan_vunmap_range_noflush(unsigned long start, unsigned long end)
 	flush_cache_vmap(origin, origin + size);
 }
 
-#define KMSAN_IOREMAP_META_ORDER 1
-
 static void kmsan_iounmap_pages(unsigned long start, unsigned long end)
 {
 	unsigned long shadow_start = vmalloc_shadow(start),
@@ -185,9 +183,9 @@ static void kmsan_iounmap_pages(unsigned long start, unsigned long end)
 		shadow = kmsan_vmalloc_to_page_or_null((void *)v_shadow);
 		origin = kmsan_vmalloc_to_page_or_null((void *)v_origin);
 		if (shadow)
-			__free_pages(shadow, KMSAN_IOREMAP_META_ORDER);
+			__free_page(shadow);
 		if (origin)
-			__free_pages(origin, KMSAN_IOREMAP_META_ORDER);
+			__free_page(origin);
 	}
 	__vunmap_range_noflush(shadow_start, shadow_end);
 	__vunmap_range_noflush(origin_start, origin_end);
@@ -218,8 +216,8 @@ int kmsan_ioremap_page_range(unsigned long start, unsigned long end,
 	nr = (end - start) / PAGE_SIZE;
 	kmsan_enter_runtime();
 	for (int i = 0; i < nr; i++, off += PAGE_SIZE) {
-		shadow = alloc_pages(gfp_mask, KMSAN_IOREMAP_META_ORDER);
-		origin = alloc_pages(gfp_mask, KMSAN_IOREMAP_META_ORDER);
+		shadow = alloc_page(gfp_mask);
+		origin = alloc_page(gfp_mask);
 		if (!shadow || !origin) {
 			err = -ENOMEM;
 			goto ret;
@@ -248,9 +246,9 @@ int kmsan_ioremap_page_range(unsigned long start, unsigned long end,
 ret:
 	if (err) {
 		if (shadow)
-			__free_pages(shadow, KMSAN_IOREMAP_META_ORDER);
+			__free_page(shadow);
 		if (origin)
-			__free_pages(origin, KMSAN_IOREMAP_META_ORDER);
+			__free_page(origin);
 
 		if (mapped_end > start)
 			kmsan_iounmap_pages(start, mapped_end);

@@ -27,6 +27,7 @@
 #include <linux/bug.h>
 #include <linux/efi.h>
 #include <linux/irqflags.h>
+#include <linux/kmsan-checks.h>
 #include <linux/mutex.h>
 #include <linux/semaphore.h>
 #include <linux/stringify.h>
@@ -238,6 +239,90 @@ void __noreturn efi_rts_park_worker(void)
 	}
 }
 
+static void efi_unpoison(const void *p, size_t size)
+{
+	if (p)
+		kmsan_unpoison_memory(p, size);
+}
+
+static void efi_unpoison_query_variable_info(u64 *storage_space,
+					     u64 *remaining_space,
+					     u64 *max_variable_size)
+{
+	efi_unpoison(storage_space, sizeof(*storage_space));
+	efi_unpoison(remaining_space, sizeof(*remaining_space));
+	efi_unpoison(max_variable_size, sizeof(*max_variable_size));
+}
+
+/*
+ * The firmware writes the results of runtime services to memory without
+ * KMSAN noticing, so tell it which output arguments have been initialized.
+ * Sizes are also returned along with EFI_BUFFER_TOO_SMALL, everything else
+ * only on success.
+ */
+static void efi_rts_unpoison_results(enum efi_rts_ids id,
+				     const union efi_rts_args *args,
+				     efi_status_t status)
+{
+	if (!IS_ENABLED(CONFIG_KMSAN))
+		return;
+
+	if (status == EFI_BUFFER_TOO_SMALL) {
+		if (id == EFI_GET_VARIABLE)
+			efi_unpoison(args->GET_VARIABLE.data_size,
+				     sizeof(*args->GET_VARIABLE.data_size));
+		if (id == EFI_GET_NEXT_VARIABLE)
+			efi_unpoison(args->GET_NEXT_VARIABLE.name_size,
+				     sizeof(*args->GET_NEXT_VARIABLE.name_size));
+		return;
+	}
+	if (status != EFI_SUCCESS)
+		return;
+
+	switch (id) {
+	case EFI_GET_TIME:
+		efi_unpoison(args->GET_TIME.time, sizeof(efi_time_t));
+		efi_unpoison(args->GET_TIME.capabilities,
+			     sizeof(efi_time_cap_t));
+		break;
+	case EFI_GET_WAKEUP_TIME:
+		efi_unpoison(args->GET_WAKEUP_TIME.enabled, sizeof(efi_bool_t));
+		efi_unpoison(args->GET_WAKEUP_TIME.pending, sizeof(efi_bool_t));
+		efi_unpoison(args->GET_WAKEUP_TIME.time, sizeof(efi_time_t));
+		break;
+	case EFI_GET_VARIABLE:
+		efi_unpoison(args->GET_VARIABLE.attr, sizeof(u32));
+		efi_unpoison(args->GET_VARIABLE.data_size,
+			     sizeof(*args->GET_VARIABLE.data_size));
+		efi_unpoison(args->GET_VARIABLE.data,
+			     *args->GET_VARIABLE.data_size);
+		break;
+	case EFI_GET_NEXT_VARIABLE:
+		efi_unpoison(args->GET_NEXT_VARIABLE.name_size,
+			     sizeof(*args->GET_NEXT_VARIABLE.name_size));
+		efi_unpoison(args->GET_NEXT_VARIABLE.name,
+			     *args->GET_NEXT_VARIABLE.name_size);
+		efi_unpoison(args->GET_NEXT_VARIABLE.vendor, sizeof(efi_guid_t));
+		break;
+	case EFI_QUERY_VARIABLE_INFO:
+		efi_unpoison_query_variable_info(
+			args->QUERY_VARIABLE_INFO.storage_space,
+			args->QUERY_VARIABLE_INFO.remaining_space,
+			args->QUERY_VARIABLE_INFO.max_variable_size);
+		break;
+	case EFI_GET_NEXT_HIGH_MONO_COUNT:
+		efi_unpoison(args->GET_NEXT_HIGH_MONO_COUNT.high_count,
+			     sizeof(u32));
+		break;
+	case EFI_QUERY_CAPSULE_CAPS:
+		efi_unpoison(args->QUERY_CAPSULE_CAPS.max_size, sizeof(u64));
+		efi_unpoison(args->QUERY_CAPSULE_CAPS.reset_type, sizeof(int));
+		break;
+	default:
+		break;
+	}
+}
+
 /*
  * Calls the appropriate efi_runtime_service() with the appropriate
  * arguments.
@@ -375,6 +460,7 @@ static void __nocfi efi_call_rts(struct work_struct *work)
 	if (READ_ONCE(efi_rts_abandoned))
 		efi_rts_park_worker();
 
+	efi_rts_unpoison_results(efi_rts_work.efi_rts_id, args, status);
 	efi_rts_work.status = status;
 	complete(&efi_rts_work.efi_rts_comp);
 	efi_runtime_lock_owner = NULL;
@@ -573,6 +659,9 @@ virt_efi_query_variable_info_nb(u32 attr, u64 *storage_space,
 	status = efi_call_virt_pointer(efi.runtime, query_variable_info, attr,
 				       storage_space, remaining_space,
 				       max_variable_size);
+	if (IS_ENABLED(CONFIG_KMSAN) && status == EFI_SUCCESS)
+		efi_unpoison_query_variable_info(storage_space, remaining_space,
+						 max_variable_size);
 	efi_runtime_lock_owner = NULL;
 	up(&efi_runtime_lock);
 	return status;

@@ -225,10 +225,15 @@ int kmsan_vmap_pages_range_noflush(unsigned long start, unsigned long end,
 	if (!kmsan_enabled)
 		return 0;
 
+	/*
+	 * The metadata of [start, end) is contiguous. Do not compute the end of
+	 * its range from @end, which may lie right past the end of the vmalloc
+	 * area (e.g. for percpu chunks, which are allocated at its very top).
+	 */
 	shadow_start = vmalloc_meta((void *)start, KMSAN_META_SHADOW);
-	shadow_end = vmalloc_meta((void *)end, KMSAN_META_SHADOW);
 	if (!shadow_start)
 		return 0;
+	shadow_end = shadow_start + (end - start);
 
 	nr = (end - start) / PAGE_SIZE;
 	s_pages = kzalloc_objs(*s_pages, nr, gfp_mask);
@@ -244,7 +249,7 @@ int kmsan_vmap_pages_range_noflush(unsigned long start, unsigned long end,
 	prot = PAGE_KERNEL;
 
 	origin_start = vmalloc_meta((void *)start, KMSAN_META_ORIGIN);
-	origin_end = vmalloc_meta((void *)end, KMSAN_META_ORIGIN);
+	origin_end = origin_start + (end - start);
 	kmsan_enter_runtime();
 	mapped = __vmap_pages_range_noflush(shadow_start, shadow_end, prot,
 					    s_pages, page_shift);

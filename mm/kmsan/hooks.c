@@ -136,12 +136,22 @@ static unsigned long vmalloc_origin(unsigned long addr)
 						 KMSAN_META_ORIGIN);
 }
 
+/*
+ * The metadata of [start, end) is contiguous, so the end of its range is
+ * computed from @start. @end itself may lie right past the end of the vmalloc
+ * area (e.g. for percpu chunks, which are allocated at its very top), so it
+ * cannot be passed to vmalloc_shadow() or vmalloc_origin().
+ */
 void kmsan_vunmap_range_noflush(unsigned long start, unsigned long end)
 {
-	__vunmap_range_noflush(vmalloc_shadow(start), vmalloc_shadow(end));
-	__vunmap_range_noflush(vmalloc_origin(start), vmalloc_origin(end));
-	flush_cache_vmap(vmalloc_shadow(start), vmalloc_shadow(end));
-	flush_cache_vmap(vmalloc_origin(start), vmalloc_origin(end));
+	unsigned long shadow = vmalloc_shadow(start);
+	unsigned long origin = vmalloc_origin(start);
+	unsigned long size = end - start;
+
+	__vunmap_range_noflush(shadow, shadow + size);
+	__vunmap_range_noflush(origin, origin + size);
+	flush_cache_vmap(shadow, shadow + size);
+	flush_cache_vmap(origin, origin + size);
 }
 
 #define KMSAN_IOREMAP_META_ORDER 1
@@ -149,9 +159,9 @@ void kmsan_vunmap_range_noflush(unsigned long start, unsigned long end)
 static void kmsan_iounmap_pages(unsigned long start, unsigned long end)
 {
 	unsigned long shadow_start = vmalloc_shadow(start),
-		      shadow_end = vmalloc_shadow(end);
+		      shadow_end = shadow_start + (end - start);
 	unsigned long origin_start = vmalloc_origin(start),
-		      origin_end = vmalloc_origin(end);
+		      origin_end = origin_start + (end - start);
 	unsigned long v_shadow, v_origin;
 	struct page *shadow, *origin;
 	int nr;
@@ -203,7 +213,7 @@ int kmsan_ioremap_page_range(unsigned long start, unsigned long end,
 		}
 		mapped = __vmap_pages_range_noflush(
 			vmalloc_shadow(start + off),
-			vmalloc_shadow(start + off + PAGE_SIZE), prot, &shadow,
+			vmalloc_shadow(start + off) + PAGE_SIZE, prot, &shadow,
 			PAGE_SHIFT);
 		if (mapped) {
 			err = mapped;
@@ -213,7 +223,7 @@ int kmsan_ioremap_page_range(unsigned long start, unsigned long end,
 		mapped_end = start + off + PAGE_SIZE;
 		mapped = __vmap_pages_range_noflush(
 			vmalloc_origin(start + off),
-			vmalloc_origin(start + off + PAGE_SIZE), prot, &origin,
+			vmalloc_origin(start + off) + PAGE_SIZE, prot, &origin,
 			PAGE_SHIFT);
 		if (mapped) {
 			err = mapped;
@@ -232,8 +242,10 @@ ret:
 		if (mapped_end > start)
 			kmsan_iounmap_pages(start, mapped_end);
 	}
-	flush_cache_vmap(vmalloc_shadow(start), vmalloc_shadow(end));
-	flush_cache_vmap(vmalloc_origin(start), vmalloc_origin(end));
+	flush_cache_vmap(vmalloc_shadow(start),
+			 vmalloc_shadow(start) + (end - start));
+	flush_cache_vmap(vmalloc_origin(start),
+			 vmalloc_origin(start) + (end - start));
 	kmsan_leave_runtime();
 	return err;
 }
@@ -245,8 +257,10 @@ void kmsan_iounmap_page_range(unsigned long start, unsigned long end)
 
 	kmsan_enter_runtime();
 	kmsan_iounmap_pages(start, end);
-	flush_cache_vmap(vmalloc_shadow(start), vmalloc_shadow(end));
-	flush_cache_vmap(vmalloc_origin(start), vmalloc_origin(end));
+	flush_cache_vmap(vmalloc_shadow(start),
+			 vmalloc_shadow(start) + (end - start));
+	flush_cache_vmap(vmalloc_origin(start),
+			 vmalloc_origin(start) + (end - start));
 	kmsan_leave_runtime();
 }
 
